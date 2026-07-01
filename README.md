@@ -23,12 +23,38 @@ Four properties every backend here aims for:
 
 ## Backends
 
-| Backend | Status |
-|---|---|
-| [`backends/claude-code`](backends/claude-code) | Working |
-| [`backends/opencode-ollama`](backends/opencode-ollama) | Working |
+| Backend | Linux | macOS |
+|---|---|---|
+| [`backends/claude-code`](backends/claude-code) | systemd | LaunchAgents |
+| [`backends/opencode-ollama`](backends/opencode-ollama) | systemd | LaunchAgents |
 
 ## Quickstart (Claude Code backend)
+
+### macOS
+
+```sh
+git clone https://github.com/m-rk/agentmux.git
+cd agentmux/backends/claude-code
+AGENTMUX_SESSION_NAME="my-mac" ./install-macos.sh
+```
+
+This installs two user LaunchAgents, without `sudo`:
+
+- `com.agentmux.claude-code` runs `rc-start.sh` at login and every five
+  minutes by default, creating the tmux session if it is missing.
+- `com.agentmux.claude-code.update` runs nightly at 03:00 local time by
+  default, updates Claude Code, and restarts the tmux session only when the
+  version changed.
+
+Logs go to `~/Library/Logs/agentmux`. Reattach with
+`tmux attach -t $AGENTMUX_SESSION_NAME`, or from the Claude Code mobile app
+via Remote Control. On first launch, Claude Code may ask you to trust the
+dedicated workdir; attach once and confirm it if prompted.
+
+To remove the LaunchAgents: `./uninstall-macos.sh` (leaves any running tmux
+session alone).
+
+### Linux systemd
 
 ```sh
 git clone https://github.com/m-rk/agentmux.git
@@ -54,10 +80,33 @@ Claude Code mobile app via Remote Control (the session shows up under
 
 To remove: `sudo ./uninstall.sh` (leaves any running tmux session alone).
 
-See [`backends/claude-code`](backends/claude-code) for the scripts and unit
-templates.
+See [`backends/claude-code`](backends/claude-code) for the scripts,
+LaunchAgent templates, and systemd unit templates.
 
 ## Quickstart (opencode + Ollama Cloud backend)
+
+### macOS
+
+```sh
+# one-time, manual:
+brew install tmux ollama
+brew services start ollama
+ollama signin
+npm install -g opencode-ai
+
+git clone https://github.com/m-rk/agentmux.git
+cd agentmux/backends/opencode-ollama
+AGENTMUX_SESSION_NAME="my-opencode" ./install-macos.sh
+```
+
+The macOS backend assumes the local Ollama daemon is already reachable. You
+can use `brew services start ollama`, the Ollama app, or a separate
+`ollama serve` process; agentmux does not own that daemon on macOS.
+
+To remove the LaunchAgents: `./uninstall-macos.sh` (leaves any running tmux
+session and Ollama alone).
+
+### Linux systemd
 
 ```sh
 # one-time, manual (see backends/opencode-ollama/README.md for why):

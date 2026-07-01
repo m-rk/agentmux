@@ -7,9 +7,24 @@ set -uo pipefail
 : "${AGENTMUX_SESSION_NAME:=agentmux-opencode}"
 : "${AGENTMUX_WORKDIR:=$HOME/.agentmux/opencode-ollama}"
 : "${AGENTMUX_OLLAMA_MODEL:=gpt-oss:20b-cloud}"
+: "${AGENTMUX_OLLAMA_WAIT_SECONDS:=60}"
 
-export PATH="$HOME/.npm-global/bin:$PATH"
+export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 mkdir -p "$AGENTMUX_WORKDIR"
+
+wait_for_ollama() {
+    local deadline=$((SECONDS + AGENTMUX_OLLAMA_WAIT_SECONDS))
+
+    while ! ollama list >/dev/null 2>&1; do
+        if [ "$SECONDS" -ge "$deadline" ]; then
+            echo "ollama is not reachable after ${AGENTMUX_OLLAMA_WAIT_SECONDS}s; start ollama and re-run this script" >&2
+            return 1
+        fi
+        sleep 2
+    done
+}
+
+wait_for_ollama || exit 1
 
 # Runs in its own dedicated working directory (not $HOME) so it never
 # collides with whatever interactive conversation is most recent there.

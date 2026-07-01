@@ -7,7 +7,7 @@ set -uo pipefail
 : "${AGENTMUX_SESSION_NAME:=agentmux}"
 : "${AGENTMUX_WORKDIR:=$HOME/.agentmux/claude-code}"
 
-export PATH="$HOME/.npm-global/bin:$PATH"
+export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 mkdir -p "$AGENTMUX_WORKDIR"
 
 # Runs in its own dedicated working directory (not $HOME) so it never
