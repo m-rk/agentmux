@@ -16,8 +16,11 @@ Four properties every backend here aims for:
   own remote-control feature if it has one).
 - **Self-maintenance** — a scheduled job updates the CLI and restarts the
   session only when the version actually changed, so it doesn't go stale.
-- **Redundancy** — (roadmap) running more than one instance/host so a single
-  box going down doesn't take out your only point of access.
+- **Redundancy** — running more than one backend side by side (different
+  CLIs, different model providers) so an outage or degraded provider
+  doesn't take out your only agent, and gives you a choice of agent/model
+  for the task at hand. This box runs both `claude-code` and
+  `opencode-ollama` at once for exactly that reason.
 
 ## Backends
 
@@ -77,6 +80,7 @@ holding an API key.
 
 ## Roadmap
 
-- Multi-instance / multi-host redundancy (systemd template units, one
-  `install.sh` invocation per instance)
+- More backends (Codex CLI, Gemini CLI, whatever comes next) — each one
+  running side by side adds to the redundancy/variety this repo is going
+  for
 - Health-check / notification on failed updates instead of just journal logs
