@@ -1,0 +1,9 @@
+[Unit]
+Description=Update opencode CLI and restart the @@SESSION_NAME@@ session
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=@@ENV_FILE@@
+ExecStart=@@REPO_DIR@@/rc-update.sh

@@ -24,7 +24,7 @@ Four properties every backend here aims for:
 | Backend | Status |
 |---|---|
 | [`backends/claude-code`](backends/claude-code) | Working |
-| [`backends/opencode-ollama`](backends/opencode-ollama) | Planned |
+| [`backends/opencode-ollama`](backends/opencode-ollama) | Working |
 
 ## Quickstart (Claude Code backend)
 
@@ -55,9 +55,28 @@ To remove: `sudo ./uninstall.sh` (leaves any running tmux session alone).
 See [`backends/claude-code`](backends/claude-code) for the scripts and unit
 templates.
 
+## Quickstart (opencode + Ollama Cloud backend)
+
+```sh
+# one-time, manual (see backends/opencode-ollama/README.md for why):
+curl -fsSL https://ollama.com/install.sh | sh
+ollama signin
+npm install -g opencode-ai
+
+git clone https://github.com/m-rk/agentmux.git
+cd agentmux/backends/opencode-ollama
+sudo AGENTMUX_SESSION_NAME="my-opencode" ./install.sh
+```
+
+Reattach with `tmux attach -t $AGENTMUX_SESSION_NAME`. Unlike the Claude
+Code backend there's no remote-control feature yet, so this is SSH +
+`tmux attach` only. See
+[`backends/opencode-ollama`](backends/opencode-ollama) for details, including
+how Ollama Cloud auth flows through to opencode without opencode ever
+holding an API key.
+
 ## Roadmap
 
-- opencode + ollama backend
 - Multi-instance / multi-host redundancy (systemd template units, one
   `install.sh` invocation per instance)
 - Health-check / notification on failed updates instead of just journal logs
