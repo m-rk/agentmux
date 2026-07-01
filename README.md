@@ -35,10 +35,26 @@ Four properties every backend here aims for:
 ```sh
 git clone https://github.com/m-rk/agentmux.git
 cd agentmux/backends/claude-code
-AGENTMUX_SESSION_NAME="my-mac" ./install-macos.sh
+./install-macos.sh
 ```
 
-This installs two user LaunchAgents, without `sudo`:
+When run from a terminal, the installer prompts for the tmux session name,
+Claude display name, update time, and final confirmation. The
+default tmux name is `<machine-slug>-claude-YYYY-MM-DD`; the default display
+name is `<machine-name> agentmux`. For unattended installs, pass flags
+instead:
+
+```sh
+./install-macos.sh \
+  --tmux-session work-claude \
+  --display-name "Work Claude" \
+  --update-time 03:00 \
+  --yes
+```
+
+Use `./install-macos.sh --plan` to preview the LaunchAgents and settings
+without writing files. A normal install creates two user LaunchAgents,
+without `sudo`:
 
 - `com.agentmux.claude-code` runs `rc-start.sh` at login and every five
   minutes by default, creating the tmux session if it is missing.
@@ -46,10 +62,10 @@ This installs two user LaunchAgents, without `sudo`:
   default, updates Claude Code, and restarts the tmux session only when the
   version changed.
 
-Logs go to `~/Library/Logs/agentmux`. Reattach with
-`tmux attach -t $AGENTMUX_SESSION_NAME`, or from the Claude Code mobile app
-via Remote Control. On first launch, Claude Code may ask you to trust the
-dedicated workdir; attach once and confirm it if prompted.
+Logs go to `~/Library/Logs/agentmux`. Reattach with the configured tmux
+session name, or from the Claude Code mobile app via Remote Control. On
+first launch, Claude Code may ask you to trust the dedicated workdir; attach
+once and confirm it if prompted.
 
 To remove the LaunchAgents: `./uninstall-macos.sh` (leaves any running tmux
 session alone).
@@ -96,12 +112,27 @@ npm install -g opencode-ai
 
 git clone https://github.com/m-rk/agentmux.git
 cd agentmux/backends/opencode-ollama
-AGENTMUX_SESSION_NAME="my-opencode" ./install-macos.sh
+./install-macos.sh
 ```
 
-The macOS backend assumes the local Ollama daemon is already reachable. You
-can use `brew services start ollama`, the Ollama app, or a separate
-`ollama serve` process; agentmux does not own that daemon on macOS.
+When run from a terminal, the installer prompts for the tmux session name,
+Ollama model, update time, and final confirmation. The default tmux name is
+`<machine-slug>-opencode-YYYY-MM-DD`. For unattended installs, pass flags
+instead:
+
+```sh
+./install-macos.sh \
+  --tmux-session work-opencode \
+  --ollama-model gpt-oss:20b-cloud \
+  --update-time 03:00 \
+  --yes
+```
+
+Use `./install-macos.sh --plan` to preview the LaunchAgents and settings
+without writing files. The macOS backend assumes the local Ollama daemon is
+already reachable. You can use `brew services start ollama`, the Ollama app,
+or a separate `ollama serve` process; agentmux does not own that daemon on
+macOS.
 
 To remove the LaunchAgents: `./uninstall-macos.sh` (leaves any running tmux
 session and Ollama alone).

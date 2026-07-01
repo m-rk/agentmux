@@ -13,7 +13,7 @@
 # up, so neither is this script's concern.
 set -uo pipefail
 
-SESSION_NAME="${AGENTMUX_SESSION_NAME:-agentmux-opencode}"
+TMUX_SESSION_NAME="${AGENTMUX_TMUX_SESSION_NAME:-${AGENTMUX_SESSION_NAME:-agentmux-opencode}}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CURRENT_HOME="${HOME:-}"
 
@@ -49,15 +49,15 @@ if [ "$(uname -s)" = "Darwin" ]; then
         exit 1
     fi
 
-    log "restarting tmux session $SESSION_NAME ($BEFORE -> $AFTER)"
-    tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
+    log "restarting tmux session $TMUX_SESSION_NAME ($BEFORE -> $AFTER)"
+    tmux kill-session -t "$TMUX_SESSION_NAME" 2>/dev/null || true
     "$SCRIPT_DIR/rc-start.sh"
 
     sleep 5
-    if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-        log "$SESSION_NAME session is back up on $AFTER"
+    if tmux has-session -t "$TMUX_SESSION_NAME" 2>/dev/null; then
+        log "$TMUX_SESSION_NAME session is back up on $AFTER"
     else
-        log "ERROR: $SESSION_NAME session did not come back up after updating to $AFTER"
+        log "ERROR: $TMUX_SESSION_NAME session did not come back up after updating to $AFTER"
         exit 1
     fi
 
@@ -91,9 +91,9 @@ log "restarting $SERVICE_NAME ($BEFORE -> $AFTER)"
 systemctl restart "$SERVICE_NAME"
 
 sleep 5
-if "${AS_USER[@]}" tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-    log "$SESSION_NAME session is back up on $AFTER"
+if "${AS_USER[@]}" tmux has-session -t "$TMUX_SESSION_NAME" 2>/dev/null; then
+    log "$TMUX_SESSION_NAME session is back up on $AFTER"
 else
-    log "ERROR: $SESSION_NAME session did not come back up after updating to $AFTER"
+    log "ERROR: $TMUX_SESSION_NAME session did not come back up after updating to $AFTER"
     exit 1
 fi

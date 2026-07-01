@@ -4,7 +4,7 @@
 # re-run any time, including from the periodic update service.
 set -uo pipefail
 
-: "${AGENTMUX_SESSION_NAME:=agentmux-opencode}"
+: "${AGENTMUX_TMUX_SESSION_NAME:=${AGENTMUX_SESSION_NAME:-agentmux-opencode}}"
 : "${AGENTMUX_WORKDIR:=$HOME/.agentmux/opencode-ollama}"
 : "${AGENTMUX_OLLAMA_MODEL:=gpt-oss:20b-cloud}"
 : "${AGENTMUX_OLLAMA_WAIT_SECONDS:=60}"
@@ -58,6 +58,6 @@ if [ ! -f "$CONFIG_FILE" ]; then
 EOF
 fi
 
-if ! tmux has-session -t "$AGENTMUX_SESSION_NAME" 2>/dev/null; then
-    tmux new-session -d -s "$AGENTMUX_SESSION_NAME" -c "$AGENTMUX_WORKDIR" "opencode"
+if ! tmux has-session -t "$AGENTMUX_TMUX_SESSION_NAME" 2>/dev/null; then
+    tmux new-session -d -s "$AGENTMUX_TMUX_SESSION_NAME" -c "$AGENTMUX_WORKDIR" "opencode"
 fi

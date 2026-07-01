@@ -89,8 +89,25 @@ Run as your macOS user, not with `sudo`:
 ```sh
 git clone https://github.com/m-rk/agentmux.git
 cd agentmux/backends/opencode-ollama
-AGENTMUX_SESSION_NAME="my-opencode" ./install-macos.sh
+./install-macos.sh
 ```
+
+When run from a terminal, the installer prompts for the tmux session name,
+Ollama model, update time, and final confirmation. The generated default
+tmux name is `<machine-slug>-opencode-YYYY-MM-DD`.
+
+For unattended installs, pass flags instead:
+
+```sh
+./install-macos.sh \
+  --tmux-session work-opencode \
+  --ollama-model gpt-oss:20b-cloud \
+  --update-time 03:00 \
+  --yes
+```
+
+Use `./install-macos.sh --plan` to preview the LaunchAgents and settings
+without writing files.
 
 This writes:
 
@@ -105,13 +122,12 @@ are written under `~/Library/Logs/agentmux`.
 Useful overrides:
 
 ```sh
-AGENTMUX_SESSION_NAME="my-opencode" \
+AGENTMUX_TMUX_SESSION_NAME="work-opencode" \
 AGENTMUX_OLLAMA_MODEL="gpt-oss:20b-cloud" \
 AGENTMUX_OLLAMA_WAIT_SECONDS=60 \
-AGENTMUX_UPDATE_HOUR=3 \
-AGENTMUX_UPDATE_MINUTE=0 \
+AGENTMUX_UPDATE_TIME=03:00 \
 AGENTMUX_START_INTERVAL=300 \
-./install-macos.sh
+./install-macos.sh --yes
 ```
 
 Uninstall:

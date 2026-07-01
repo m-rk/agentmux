@@ -11,8 +11,26 @@ Run as your macOS user, not with `sudo`:
 
 ```sh
 cd backends/claude-code
-AGENTMUX_SESSION_NAME="my-mac" ./install-macos.sh
+./install-macos.sh
 ```
+
+When run from a terminal, the installer prompts for the tmux session name,
+Claude display name, update time, and final confirmation. The
+generated default tmux name is `<machine-slug>-claude-YYYY-MM-DD`; the
+generated default display name is `<machine-name> agentmux`.
+
+For unattended installs, pass flags instead:
+
+```sh
+./install-macos.sh \
+  --tmux-session work-claude \
+  --display-name "Work Claude" \
+  --update-time 03:00 \
+  --yes
+```
+
+Use `./install-macos.sh --plan` to preview the LaunchAgents and settings
+without writing files.
 
 This writes:
 
@@ -24,25 +42,25 @@ The update LaunchAgent runs at 03:00 local time by default. Logs are written
 under `~/Library/Logs/agentmux`.
 
 On first launch, Claude Code may stop at its workspace trust prompt for the
-dedicated workdir. Attach once with `tmux attach -t "$AGENTMUX_SESSION_NAME"`
-and confirm trust for `~/.agentmux/claude-code`; later restarts use that
-same workdir.
+dedicated workdir. Attach once with `tmux attach -t <tmux-session-name>` and
+confirm trust for `~/.agentmux/claude-code`; later restarts use that same
+workdir.
 
 Useful overrides:
 
 ```sh
-AGENTMUX_SESSION_NAME="my-mac" \
+AGENTMUX_TMUX_SESSION_NAME="work-claude" \
+AGENTMUX_DISPLAY_NAME="Work Claude" \
 AGENTMUX_WORKDIR="$HOME/.agentmux/claude-code" \
-AGENTMUX_UPDATE_HOUR=3 \
-AGENTMUX_UPDATE_MINUTE=0 \
+AGENTMUX_UPDATE_TIME=03:00 \
 AGENTMUX_START_INTERVAL=300 \
-./install-macos.sh
+./install-macos.sh --yes
 ```
 
 Reattach:
 
 ```sh
-tmux attach -t "$AGENTMUX_SESSION_NAME"
+tmux attach -t "$AGENTMUX_TMUX_SESSION_NAME"
 ```
 
 Uninstall:
@@ -76,7 +94,7 @@ Useful overrides:
 
 ```sh
 AGENTMUX_SESSION_NAME="my-session"   # tmux session / Remote Control display name
-AGENTMUX_RUN_USER="mark"             # defaults to SUDO_USER
+AGENTMUX_RUN_USER="runner"           # defaults to SUDO_USER
 AGENTMUX_ON_CALENDAR="*-*-* 03:00:00 UTC"
 ```
 
