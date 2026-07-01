@@ -10,6 +10,8 @@
 #   --update-time HH:MM     local-time update schedule
 #   --start-interval SEC    seconds between idempotent start checks
 #   --path PATH             launchd PATH seed; detected tool dirs are prepended
+#   --attach                attach to the tmux session after installing
+#   --no-attach             do not attach after installing
 #   --yes                   do not prompt before installing
 #   --plan                  print the install plan without writing files
 #   --help                  show usage
@@ -20,6 +22,7 @@
 #   AGENTMUX_WORKDIR, AGENTMUX_UPDATE_TIME
 #   AGENTMUX_UPDATE_HOUR, AGENTMUX_UPDATE_MINUTE
 #   AGENTMUX_START_INTERVAL, AGENTMUX_PATH
+#   AGENTMUX_ATTACH_AFTER_INSTALL
 set -euo pipefail
 
 usage() {
@@ -35,6 +38,8 @@ Flags:
   --update-time HH:MM     local-time update schedule
   --start-interval SEC    seconds between idempotent start checks
   --path PATH             launchd PATH seed; detected tool dirs are prepended
+  --attach                attach to the tmux session after installing
+  --no-attach             do not attach after installing
   --yes                   do not prompt before installing
   --plan                  print the install plan without writing files
   --help                  show usage
@@ -45,6 +50,7 @@ Env aliases:
   AGENTMUX_WORKDIR, AGENTMUX_UPDATE_TIME
   AGENTMUX_UPDATE_HOUR, AGENTMUX_UPDATE_MINUTE
   AGENTMUX_START_INTERVAL, AGENTMUX_PATH
+  AGENTMUX_ATTACH_AFTER_INSTALL
 EOF
 }
 
@@ -61,6 +67,7 @@ fi
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 YES=0
 PLAN=0
+ATTACH_AFTER_INSTALL="${AGENTMUX_ATTACH_AFTER_INSTALL:-}"
 
 machine_name() {
     local name=""
@@ -157,6 +164,14 @@ while [ "$#" -gt 0 ]; do
             LAUNCHD_PATH="$2"
             shift 2
             ;;
+        --attach)
+            ATTACH_AFTER_INSTALL=1
+            shift
+            ;;
+        --no-attach)
+            ATTACH_AFTER_INSTALL=0
+            shift
+            ;;
         --yes | -y)
             YES=1
             shift
@@ -196,6 +211,16 @@ validate_tmux_session() {
     fi
 }
 
+validate_attach_after_install() {
+    case "$ATTACH_AFTER_INSTALL" in
+        0 | 1) ;;
+        *)
+            echo "AGENTMUX_ATTACH_AFTER_INSTALL must be 0 or 1" >&2
+            exit 1
+            ;;
+    esac
+}
+
 prompt_value() {
     local label="$1"
     local default="$2"
@@ -215,6 +240,16 @@ confirm_install() {
     esac
 }
 
+confirm_attach() {
+    local answer
+
+    read -r -p "Attach to Claude Code now to finish first-run login/trust? [Y/n]: " answer
+    case "$answer" in
+        "" | [Yy] | [Yy][Ee][Ss]) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 if [ "$PLAN" -eq 0 ] && [ "$YES" -eq 0 ] && [ -t 0 ]; then
     TMUX_SESSION_NAME="$(prompt_value "Tmux session name" "$TMUX_SESSION_NAME")"
     DISPLAY_NAME="$(prompt_value "Claude display name" "$DISPLAY_NAME")"
@@ -224,6 +259,18 @@ if [ "$PLAN" -eq 0 ] && [ "$YES" -eq 0 ] && [ -t 0 ]; then
         echo "Cancelled."
         exit 0
     fi
+
+    if [ -z "$ATTACH_AFTER_INSTALL" ]; then
+        if confirm_attach; then
+            ATTACH_AFTER_INSTALL=1
+        else
+            ATTACH_AFTER_INSTALL=0
+        fi
+    fi
+fi
+
+if [ -z "$ATTACH_AFTER_INSTALL" ]; then
+    ATTACH_AFTER_INSTALL=0
 fi
 
 require_int_range AGENTMUX_UPDATE_HOUR "$UPDATE_HOUR" 0 23
@@ -233,6 +280,7 @@ UPDATE_HOUR=$((10#$UPDATE_HOUR))
 UPDATE_MINUTE=$((10#$UPDATE_MINUTE))
 START_INTERVAL=$((10#$START_INTERVAL))
 validate_tmux_session
+validate_attach_after_install
 
 prepend_path_dir() {
     local dir="$1"
@@ -266,6 +314,7 @@ print_plan() {
     echo "  start plist  : $START_PLIST"
     echo "  update plist : $UPDATE_PLIST"
     echo "  logs         : $LOG_DIR"
+    echo "  attach after : $ATTACH_AFTER_INSTALL"
     if [ "${#MISSING_TOOLS[@]}" -gt 0 ]; then
         echo "  missing tools: ${MISSING_TOOLS[*]}"
     fi
@@ -281,6 +330,38 @@ if [ "${#MISSING_TOOLS[@]}" -gt 0 ]; then
     echo "PATH checked for launchd: $LAUNCHD_PATH" >&2
     exit 1
 fi
+
+wait_for_tmux_session() {
+    local attempts=40
+
+    while [ "$attempts" -gt 0 ]; do
+        if tmux has-session -t "$TMUX_SESSION_NAME" 2>/dev/null; then
+            return 0
+        fi
+        attempts=$((attempts - 1))
+        sleep 0.25
+    done
+
+    return 1
+}
+
+attach_tmux_session() {
+    if [ ! -t 0 ]; then
+        echo "Cannot attach because stdin is not a terminal." >&2
+        return 1
+    fi
+
+    if ! wait_for_tmux_session; then
+        echo "Cannot attach because tmux session '$TMUX_SESSION_NAME' is not running yet." >&2
+        return 1
+    fi
+
+    if [ -n "${TMUX:-}" ]; then
+        exec tmux switch-client -t "$TMUX_SESSION_NAME"
+    fi
+
+    exec tmux attach -t "$TMUX_SESSION_NAME"
+}
 
 xml_escape() {
     local value="$1"
@@ -324,6 +405,7 @@ echo "  tmux session : $TMUX_SESSION_NAME"
 echo "  display name : $DISPLAY_NAME"
 echo "  update time  : $(printf '%02d:%02d' "$UPDATE_HOUR" "$UPDATE_MINUTE") local"
 echo "  start check  : every ${START_INTERVAL}s"
+echo "  attach after : $ATTACH_AFTER_INSTALL"
 echo "  repo dir     : $REPO_DIR"
 
 chmod +x "$REPO_DIR/rc-start.sh" "$REPO_DIR/rc-update.sh"
@@ -344,3 +426,9 @@ echo "Done. Reattach with: tmux attach -t $TMUX_SESSION_NAME"
 echo "First run may ask you to trust '$WORKDIR'; attach once and confirm it if prompted."
 echo "Logs: tail -f '$LOG_DIR/claude-code.log' '$LOG_DIR/claude-code.err.log'"
 echo "Status: launchctl print '$DOMAIN/$START_LABEL'"
+
+if [ "$ATTACH_AFTER_INSTALL" -eq 1 ]; then
+    echo
+    echo "Attaching to Claude Code now. Detach later with: Ctrl-b then d"
+    attach_tmux_session
+fi

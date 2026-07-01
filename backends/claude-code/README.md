@@ -15,9 +15,10 @@ cd backends/claude-code
 ```
 
 When run from a terminal, the installer prompts for the tmux session name,
-Claude display name, update time, and final confirmation. The
-generated default tmux name is `<machine-slug>-claude-YYYY-MM-DD`; the
-generated default display name is `<machine-name> agentmux`.
+Claude display name, update time, final confirmation, and whether to attach
+to the tmux session immediately. The generated default tmux name is
+`<machine-slug>-claude-YYYY-MM-DD`; the generated default display name is
+`<machine-name> agentmux`.
 
 For unattended installs, pass flags instead:
 
@@ -28,6 +29,11 @@ For unattended installs, pass flags instead:
   --update-time 03:00 \
   --yes
 ```
+
+Add `--attach` to attach immediately after installing, which is useful on
+first run so you can complete Claude Code login and trust prompts before
+leaving the session detached. Use `--no-attach` to make that explicit in
+scripts.
 
 Use `./install-macos.sh --plan` to preview the LaunchAgents and settings
 without writing files.
@@ -41,10 +47,11 @@ The start LaunchAgent runs at login and then every five minutes by default.
 The update LaunchAgent runs at 03:00 local time by default. Logs are written
 under `~/Library/Logs/agentmux`.
 
-On first launch, Claude Code may stop at its workspace trust prompt for the
-dedicated workdir. Attach once with `tmux attach -t <tmux-session-name>` and
-confirm trust for `~/.agentmux/claude-code`; later restarts use that same
-workdir.
+On first launch, Claude Code may stop at login or at its workspace trust
+prompt for the dedicated workdir. If you let the installer attach after
+installing, complete those prompts there. Otherwise attach once with
+`tmux attach -t <tmux-session-name>` and finish login/trust for
+`~/.agentmux/claude-code`; later restarts use that same workdir.
 
 Useful overrides:
 

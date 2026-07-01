@@ -39,10 +39,10 @@ cd agentmux/backends/claude-code
 ```
 
 When run from a terminal, the installer prompts for the tmux session name,
-Claude display name, update time, and final confirmation. The
-default tmux name is `<machine-slug>-claude-YYYY-MM-DD`; the default display
-name is `<machine-name> agentmux`. For unattended installs, pass flags
-instead:
+Claude display name, update time, final confirmation, and whether to attach
+to the tmux session immediately. The default tmux name is
+`<machine-slug>-claude-YYYY-MM-DD`; the default display name is
+`<machine-name> agentmux`. For unattended installs, pass flags instead:
 
 ```sh
 ./install-macos.sh \
@@ -51,6 +51,10 @@ instead:
   --update-time 03:00 \
   --yes
 ```
+
+Add `--attach` to attach immediately after installing, which is useful on
+first run so you can complete Claude Code login and trust prompts before
+leaving the session detached.
 
 Use `./install-macos.sh --plan` to preview the LaunchAgents and settings
 without writing files. A normal install creates two user LaunchAgents,
@@ -64,8 +68,9 @@ without `sudo`:
 
 Logs go to `~/Library/Logs/agentmux`. Reattach with the configured tmux
 session name, or from the Claude Code mobile app via Remote Control. On
-first launch, Claude Code may ask you to trust the dedicated workdir; attach
-once and confirm it if prompted.
+first launch, Claude Code may ask you to log in or trust the dedicated
+workdir; let the installer attach after installing, or attach once and
+complete those prompts if needed.
 
 To remove the LaunchAgents: `./uninstall-macos.sh` (leaves any running tmux
 session alone).
