@@ -16,11 +16,10 @@ Four properties every backend here aims for:
   own remote-control feature if it has one).
 - **Self-maintenance** — a scheduled job updates the CLI and restarts the
   session only when the version actually changed, so it doesn't go stale.
-- **Redundancy** — running more than one backend side by side (different
-  CLIs, different model providers) so an outage or degraded provider
-  doesn't take out your only agent, and gives you a choice of agent/model
-  for the task at hand. This box runs both `claude-code` and
-  `opencode-ollama` at once for exactly that reason.
+- **Redundancy** — running more than one backend side by side on the same
+  box (different CLIs, different model providers) so an outage or degraded
+  provider doesn't take out your only agent, and gives you a choice of
+  agent/model for the task at hand.
 
 ## Backends
 
