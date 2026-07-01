@@ -22,7 +22,7 @@ opencode never sees an API key directly. Instead:
    `opencode.json` (written automatically by `rc-start.sh` on first run):
    ```json
    {
-     "model": "ollama/glm-5.2:cloud",
+     "model": "ollama/gpt-oss:20b-cloud",
      "provider": {
        "ollama": {
          "npm": "@ai-sdk/openai-compatible",

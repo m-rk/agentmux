@@ -16,10 +16,11 @@
 #   AGENTMUX_ON_CALENDAR   systemd OnCalendar expression for the update timer
 #                          (default: "*-*-* 03:00:00 UTC")
 #   AGENTMUX_OLLAMA_MODEL  ollama cloud model tag to default to, e.g.
-#                          "gpt-oss:120b-cloud" or "glm-4.7:cloud"
-#                          (default: glm-5.2:cloud) — note not every tag is
-#                          included on every Ollama Cloud plan; a 403 from
-#                          `ollama run <tag>` means it needs a plan upgrade
+#                          "glm-4.7:cloud" or "glm-5.2:cloud"
+#                          (default: gpt-oss:20b-cloud, works on the base
+#                          plan) — note not every tag is included on every
+#                          Ollama Cloud plan; a 403 from `ollama run <tag>`
+#                          means it needs a plan upgrade
 #
 # Example:
 #   sudo AGENTMUX_SESSION_NAME="my-server-opencode" ./install.sh
@@ -39,7 +40,7 @@ fi
 RUN_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6)"
 SESSION_NAME="${AGENTMUX_SESSION_NAME:-agentmux-opencode}"
 ON_CALENDAR="${AGENTMUX_ON_CALENDAR:-*-*-* 03:00:00 UTC}"
-OLLAMA_MODEL="${AGENTMUX_OLLAMA_MODEL:-glm-5.2:cloud}"
+OLLAMA_MODEL="${AGENTMUX_OLLAMA_MODEL:-gpt-oss:20b-cloud}"
 SERVICE_NAME="agentmux-opencode-ollama.service"
 ENV_DIR="/etc/agentmux"
 ENV_FILE="$ENV_DIR/opencode-ollama.env"

@@ -6,7 +6,7 @@ set -uo pipefail
 
 : "${AGENTMUX_SESSION_NAME:=agentmux-opencode}"
 : "${AGENTMUX_WORKDIR:=$HOME/.agentmux/opencode-ollama}"
-: "${AGENTMUX_OLLAMA_MODEL:=glm-5.2:cloud}"
+: "${AGENTMUX_OLLAMA_MODEL:=gpt-oss:20b-cloud}"
 
 export PATH="$HOME/.npm-global/bin:$PATH"
 mkdir -p "$AGENTMUX_WORKDIR"
