@@ -100,10 +100,29 @@ This writes:
 Useful overrides:
 
 ```sh
-AGENTMUX_SESSION_NAME="my-session"   # tmux session / Remote Control display name
+AGENTMUX_SESSION_NAME="my-session"   # tmux session name / Remote Control display name
+AGENTMUX_DISPLAY_NAME="My Session"   # Remote Control display name, if different
+                                      # from the tmux session name (default: unset,
+                                      # falls back to AGENTMUX_SESSION_NAME)
 AGENTMUX_RUN_USER="runner"           # defaults to SUDO_USER
 AGENTMUX_ON_CALENDAR="*-*-* 03:00:00 UTC"
 ```
+
+`install.sh` is safe to re-run to change these values, but note it only
+rewrites the systemd units and env file — it does not restart an already
+running session, so `sudo systemctl restart agentmux-claude-code.service`
+afterwards to pick up the change.
+
+### SELinux (RHEL, CentOS, Oracle Linux, Fedora)
+
+On SELinux-enforcing hosts, systemd's `init_t` service context cannot
+directly execute a script labeled `user_home_t` (like `rc-start.sh`, sitting
+under a user's home directory) or a binary labeled `screen_exec_t` (like
+`tmux`). Both show up as the service failing with `status=203/EXEC` and an
+AVC `denied { execute }` in `ausearch -m avc`. `install.sh` avoids this by
+routing `ExecStart`/`ExecStop` through `/bin/bash` rather than exec'ing
+those paths directly, so no extra steps should be needed — this note is
+here in case a similar denial ever resurfaces from a local edit.
 
 Uninstall:
 

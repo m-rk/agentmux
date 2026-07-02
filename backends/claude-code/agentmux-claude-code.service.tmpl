@@ -8,8 +8,8 @@ Type=oneshot
 RemainAfterExit=yes
 User=@@RUN_USER@@
 EnvironmentFile=@@ENV_FILE@@
-ExecStart=@@REPO_DIR@@/rc-start.sh
-ExecStop=/usr/bin/tmux kill-session -t @@SESSION_NAME@@
+ExecStart=/bin/bash @@REPO_DIR@@/rc-start.sh
+ExecStop=/bin/bash -c 'tmux kill-session -t @@SESSION_NAME@@'
 TimeoutStartSec=30
 
 [Install]
