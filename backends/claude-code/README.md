@@ -18,7 +18,9 @@ When run from a terminal, the installer prompts for the tmux session name,
 Claude display name, update time, final confirmation, and whether to attach
 to the tmux session immediately. The generated default tmux name is
 `<machine-slug>-claude-YYYY-MM-DD`; the generated default display name is
-`<machine-name> agentmux`.
+`<machine-name> agentmux`, and `" agentmux"` is appended to any custom
+display name too (flag, env var, or typed at the prompt) unless you pass
+`--no-suffix`.
 
 For unattended installs, pass flags instead:
 
@@ -29,6 +31,9 @@ For unattended installs, pass flags instead:
   --update-time 03:00 \
   --yes
 ```
+
+This installs with display name `Work Claude agentmux`; add `--no-suffix`
+if you want exactly `Work Claude` with no suffix.
 
 Add `--attach` to attach immediately after installing, which is useful on
 first run so you can complete Claude Code login and trust prompts before
@@ -81,14 +86,20 @@ and `~/.agentmux/claude-code` alone.
 
 ## Linux systemd
 
-Run with `sudo`:
+Run with `sudo`. Configure via flags or env vars — flags win over env vars,
+mirroring `install-macos.sh`:
 
 ```sh
 cd backends/claude-code
-sudo AGENTMUX_SESSION_NAME="my-session" \
-     AGENTMUX_ON_CALENDAR="*-*-* 03:00:00 Australia/Perth" \
-     ./install.sh
+sudo ./install.sh \
+  --session-name my-session \
+  --on-calendar "*-*-* 03:00:00 Australia/Perth"
 ```
+
+The default display name is `<machine-name> agentmux`, and `" agentmux"` is
+appended to any custom `--display-name`/`AGENTMUX_DISPLAY_NAME` too, unless
+you pass `--no-suffix`. Use `./install.sh --plan` (no `sudo` required) to
+preview the resolved values without writing anything.
 
 This writes:
 
@@ -97,14 +108,24 @@ This writes:
 - `/etc/systemd/system/agentmux-claude-code-update.timer`
 - `/etc/agentmux/claude-code.env`
 
-Useful overrides:
+Flags (`./install.sh --help` for the full list):
+
+```
+--session-name NAME   tmux session name (also: --tmux-session)
+--display-name NAME   Remote Control display name (also: --remote-name)
+--no-suffix           don't append " agentmux" to the display name
+--run-user USER       user the session runs as (default: $SUDO_USER)
+--on-calendar EXPR    systemd OnCalendar expression for the update timer
+--plan                print the install plan without writing files
+```
+
+Equivalent env vars, for automation:
 
 ```sh
-AGENTMUX_SESSION_NAME="my-session"   # tmux session name / Remote Control display name
-AGENTMUX_DISPLAY_NAME="My Session"   # Remote Control display name, if different
-                                      # from the tmux session name (default: unset,
-                                      # falls back to AGENTMUX_SESSION_NAME)
-AGENTMUX_RUN_USER="runner"           # defaults to SUDO_USER
+AGENTMUX_SESSION_NAME="my-session"       # also: AGENTMUX_TMUX_SESSION_NAME
+AGENTMUX_DISPLAY_NAME="My Session"       # also: AGENTMUX_REMOTE_NAME
+AGENTMUX_DISPLAY_SUFFIX=0                # 0/false/no/off disables the suffix
+AGENTMUX_RUN_USER="runner"               # defaults to SUDO_USER
 AGENTMUX_ON_CALENDAR="*-*-* 03:00:00 UTC"
 ```
 
