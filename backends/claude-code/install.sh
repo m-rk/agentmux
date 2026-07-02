@@ -6,12 +6,20 @@
 #
 # Must be run with sudo. Configure via env vars (all optional):
 #   AGENTMUX_SESSION_NAME  tmux session name / Remote Control display name (default: agentmux)
+#   AGENTMUX_DISPLAY_NAME  Remote Control display name, if different from the
+#                          tmux session name (default: unset, falls back to
+#                          AGENTMUX_SESSION_NAME)
 #   AGENTMUX_RUN_USER      user the session runs as (default: $SUDO_USER)
 #   AGENTMUX_ON_CALENDAR   systemd OnCalendar expression for the update timer
 #                          (default: "*-*-* 03:00:00 UTC")
 #
 # Example:
 #   sudo AGENTMUX_SESSION_NAME="my-server" AGENTMUX_ON_CALENDAR="*-*-* 03:00:00 Australia/Perth" ./install.sh
+#
+# Re-running is safe and rewrites the units/env file with current values,
+# including AGENTMUX_DISPLAY_NAME (the env file is regenerated each time, not
+# merged) — but it does not restart an already-running session, so follow up
+# with `systemctl restart agentmux-claude-code.service` to apply changes.
 set -euo pipefail
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -26,6 +34,7 @@ if [ -z "$RUN_USER" ]; then
     exit 1
 fi
 SESSION_NAME="${AGENTMUX_SESSION_NAME:-agentmux}"
+DISPLAY_NAME="${AGENTMUX_DISPLAY_NAME:-}"
 ON_CALENDAR="${AGENTMUX_ON_CALENDAR:-*-*-* 03:00:00 UTC}"
 SERVICE_NAME="agentmux-claude-code.service"
 ENV_DIR="/etc/agentmux"
@@ -33,6 +42,7 @@ ENV_FILE="$ENV_DIR/claude-code.env"
 
 echo "Installing agentmux claude-code backend:"
 echo "  session name : $SESSION_NAME"
+echo "  display name : ${DISPLAY_NAME:-(same as session name)}"
 echo "  run as       : $RUN_USER"
 echo "  update timer : $ON_CALENDAR"
 echo "  repo dir     : $REPO_DIR"
@@ -45,6 +55,9 @@ AGENTMUX_SESSION_NAME=$SESSION_NAME
 AGENTMUX_RUN_USER=$RUN_USER
 AGENTMUX_SERVICE_NAME=$SERVICE_NAME
 EOF
+if [ -n "$DISPLAY_NAME" ]; then
+    echo "AGENTMUX_DISPLAY_NAME=$DISPLAY_NAME" >> "$ENV_FILE"
+fi
 
 render() {
     sed \

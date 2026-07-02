@@ -6,4 +6,4 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 EnvironmentFile=@@ENV_FILE@@
-ExecStart=@@REPO_DIR@@/rc-update.sh
+ExecStart=/bin/bash @@REPO_DIR@@/rc-update.sh
