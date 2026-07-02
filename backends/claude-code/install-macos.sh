@@ -10,6 +10,7 @@
 #   --update-time HH:MM     local-time update schedule
 #   --start-interval SEC    seconds between idempotent start checks
 #   --path PATH             launchd PATH seed; detected tool dirs are prepended
+#   --no-suffix             don't append " agentmux" to the display name
 #   --attach                attach to the tmux session after installing
 #   --no-attach             do not attach after installing
 #   --yes                   do not prompt before installing
@@ -19,10 +20,15 @@
 # Env aliases:
 #   AGENTMUX_TMUX_SESSION_NAME, AGENTMUX_SESSION_NAME
 #   AGENTMUX_DISPLAY_NAME, AGENTMUX_REMOTE_NAME
+#   AGENTMUX_DISPLAY_SUFFIX (default: 1; set 0/false/no/off to disable)
 #   AGENTMUX_WORKDIR, AGENTMUX_UPDATE_TIME
 #   AGENTMUX_UPDATE_HOUR, AGENTMUX_UPDATE_MINUTE
 #   AGENTMUX_START_INTERVAL, AGENTMUX_PATH
 #   AGENTMUX_ATTACH_AFTER_INSTALL
+#
+# The display name defaults to "<machine name> agentmux" when unset, and
+# gets " agentmux" appended to any explicit name too (flag, env var, or typed
+# at the prompt) unless --no-suffix / AGENTMUX_DISPLAY_SUFFIX=0 is given.
 set -euo pipefail
 
 usage() {
@@ -38,6 +44,7 @@ Flags:
   --update-time HH:MM     local-time update schedule
   --start-interval SEC    seconds between idempotent start checks
   --path PATH             launchd PATH seed; detected tool dirs are prepended
+  --no-suffix             don't append " agentmux" to the display name
   --attach                attach to the tmux session after installing
   --no-attach             do not attach after installing
   --yes                   do not prompt before installing
@@ -47,6 +54,7 @@ Flags:
 Env aliases:
   AGENTMUX_TMUX_SESSION_NAME, AGENTMUX_SESSION_NAME
   AGENTMUX_DISPLAY_NAME, AGENTMUX_REMOTE_NAME
+  AGENTMUX_DISPLAY_SUFFIX (default: 1; set 0/false/no/off to disable)
   AGENTMUX_WORKDIR, AGENTMUX_UPDATE_TIME
   AGENTMUX_UPDATE_HOUR, AGENTMUX_UPDATE_MINUTE
   AGENTMUX_START_INTERVAL, AGENTMUX_PATH
@@ -101,8 +109,22 @@ default_tmux_session() {
     printf '%s-claude-%s' "$base" "$(date +%Y-%m-%d)"
 }
 
+apply_display_suffix() {
+    local name="$1"
+    if [ "$DISPLAY_SUFFIX_ENABLED" -eq 1 ] && [[ "$name" != *" agentmux" ]]; then
+        printf '%s agentmux' "$name"
+    else
+        printf '%s' "$name"
+    fi
+}
+
 TMUX_SESSION_NAME="${AGENTMUX_TMUX_SESSION_NAME:-${AGENTMUX_SESSION_NAME:-$(default_tmux_session)}}"
-DISPLAY_NAME="${AGENTMUX_DISPLAY_NAME:-${AGENTMUX_REMOTE_NAME:-$(machine_name) agentmux}}"
+RAW_DISPLAY_NAME="${AGENTMUX_DISPLAY_NAME:-${AGENTMUX_REMOTE_NAME:-}}"
+DISPLAY_SUFFIX_ENABLED=1
+case "${AGENTMUX_DISPLAY_SUFFIX:-1}" in
+    0 | false | no | off) DISPLAY_SUFFIX_ENABLED=0 ;;
+esac
+DISPLAY_NAME="$(apply_display_suffix "${RAW_DISPLAY_NAME:-$(machine_name)}")"
 WORKDIR="${AGENTMUX_WORKDIR:-$HOME/.agentmux/claude-code}"
 UPDATE_HOUR="${AGENTMUX_UPDATE_HOUR:-3}"
 UPDATE_MINUTE="${AGENTMUX_UPDATE_MINUTE:-0}"
@@ -141,8 +163,12 @@ while [ "$#" -gt 0 ]; do
             ;;
         --display-name | --remote-name)
             [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
-            DISPLAY_NAME="$2"
+            RAW_DISPLAY_NAME="$2"
             shift 2
+            ;;
+        --no-suffix)
+            DISPLAY_SUFFIX_ENABLED=0
+            shift
             ;;
         --workdir)
             [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
@@ -191,6 +217,8 @@ while [ "$#" -gt 0 ]; do
             ;;
     esac
 done
+
+DISPLAY_NAME="$(apply_display_suffix "${RAW_DISPLAY_NAME:-$(machine_name)}")"
 
 require_int_range() {
     local name="$1"
@@ -252,7 +280,7 @@ confirm_attach() {
 
 if [ "$PLAN" -eq 0 ] && [ "$YES" -eq 0 ] && [ -t 0 ]; then
     TMUX_SESSION_NAME="$(prompt_value "Tmux session name" "$TMUX_SESSION_NAME")"
-    DISPLAY_NAME="$(prompt_value "Claude display name" "$DISPLAY_NAME")"
+    DISPLAY_NAME="$(apply_display_suffix "$(prompt_value "Claude display name" "$DISPLAY_NAME")")"
     parse_update_time "$(prompt_value "Update time" "$(printf '%02d:%02d' "$((10#$UPDATE_HOUR))" "$((10#$UPDATE_MINUTE))")")"
 
     if ! confirm_install; then

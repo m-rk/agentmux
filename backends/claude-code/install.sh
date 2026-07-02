@@ -4,60 +4,178 @@
 # reboots by systemd, plus a nightly timer that updates the CLI and restarts
 # the session only when the version actually changes.
 #
-# Must be run with sudo. Configure via env vars (all optional):
-#   AGENTMUX_SESSION_NAME  tmux session name / Remote Control display name (default: agentmux)
-#   AGENTMUX_DISPLAY_NAME  Remote Control display name, if different from the
-#                          tmux session name (default: unset, falls back to
-#                          AGENTMUX_SESSION_NAME)
-#   AGENTMUX_RUN_USER      user the session runs as (default: $SUDO_USER)
-#   AGENTMUX_ON_CALENDAR   systemd OnCalendar expression for the update timer
-#                          (default: "*-*-* 03:00:00 UTC")
+# Must be run with sudo (except --help/--plan). Configure via flags or env
+# vars; flags win over env vars.
+#
+# Flags:
+#   --session-name NAME    tmux session name (also: --tmux-session)
+#   --display-name NAME    Remote Control display name (also: --remote-name)
+#   --no-suffix            don't append " agentmux" to the display name
+#   --run-user USER        user the session runs as
+#   --on-calendar EXPR     systemd OnCalendar expression for the update timer
+#   --plan                 print the install plan without writing files
+#   --help                 show usage
+#
+# Env aliases:
+#   AGENTMUX_TMUX_SESSION_NAME, AGENTMUX_SESSION_NAME
+#   AGENTMUX_DISPLAY_NAME, AGENTMUX_REMOTE_NAME
+#   AGENTMUX_DISPLAY_SUFFIX (default: 1; set 0/false/no/off to disable)
+#   AGENTMUX_RUN_USER (default: $SUDO_USER)
+#   AGENTMUX_ON_CALENDAR (default: "*-*-* 03:00:00 UTC")
+#
+# The display name defaults to "<machine name> agentmux" when unset, and
+# gets " agentmux" appended to any explicit name too unless --no-suffix /
+# AGENTMUX_DISPLAY_SUFFIX=0 is given (matching install-macos.sh's default).
 #
 # Example:
-#   sudo AGENTMUX_SESSION_NAME="my-server" AGENTMUX_ON_CALENDAR="*-*-* 03:00:00 Australia/Perth" ./install.sh
+#   sudo ./install.sh --session-name my-server --on-calendar "*-*-* 03:00:00 Australia/Perth"
 #
-# Re-running is safe and rewrites the units/env file with current values,
-# including AGENTMUX_DISPLAY_NAME (the env file is regenerated each time, not
-# merged) — but it does not restart an already-running session, so follow up
-# with `systemctl restart agentmux-claude-code.service` to apply changes.
+# Re-running is safe and rewrites the units/env file with current values —
+# the env file is regenerated each time, not merged — but it does not
+# restart an already-running session, so follow up with
+# `systemctl restart agentmux-claude-code.service` to apply changes.
 set -euo pipefail
 
-if [ "$(id -u)" -ne 0 ]; then
-    echo "install.sh must be run with sudo" >&2
+usage() {
+    cat <<'EOF'
+Installs the agentmux Claude Code backend on this host via systemd.
+
+Must be run with sudo (except --help/--plan). Configure via flags or env
+vars; flags win over env vars.
+
+Flags:
+  --session-name NAME    tmux session name (also: --tmux-session)
+  --display-name NAME    Remote Control display name (also: --remote-name)
+  --no-suffix            don't append " agentmux" to the display name
+  --run-user USER        user the session runs as
+  --on-calendar EXPR     systemd OnCalendar expression for the update timer
+  --plan                 print the install plan without writing files
+  --help                 show usage
+
+Env aliases:
+  AGENTMUX_TMUX_SESSION_NAME, AGENTMUX_SESSION_NAME
+  AGENTMUX_DISPLAY_NAME, AGENTMUX_REMOTE_NAME
+  AGENTMUX_DISPLAY_SUFFIX (default: 1; set 0/false/no/off to disable)
+  AGENTMUX_RUN_USER (default: $SUDO_USER)
+  AGENTMUX_ON_CALENDAR (default: "*-*-* 03:00:00 UTC")
+EOF
+}
+
+RAW_SESSION_NAME="${AGENTMUX_TMUX_SESSION_NAME:-${AGENTMUX_SESSION_NAME:-}}"
+RAW_DISPLAY_NAME="${AGENTMUX_DISPLAY_NAME:-${AGENTMUX_REMOTE_NAME:-}}"
+DISPLAY_SUFFIX_ENABLED=1
+case "${AGENTMUX_DISPLAY_SUFFIX:-1}" in
+    0 | false | no | off) DISPLAY_SUFFIX_ENABLED=0 ;;
+esac
+RUN_USER="${AGENTMUX_RUN_USER:-${SUDO_USER:-}}"
+ON_CALENDAR="${AGENTMUX_ON_CALENDAR:-*-*-* 03:00:00 UTC}"
+PLAN=0
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --session-name | --tmux-session)
+            [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
+            RAW_SESSION_NAME="$2"
+            shift 2
+            ;;
+        --display-name | --remote-name)
+            [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
+            RAW_DISPLAY_NAME="$2"
+            shift 2
+            ;;
+        --no-suffix)
+            DISPLAY_SUFFIX_ENABLED=0
+            shift
+            ;;
+        --run-user)
+            [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
+            RUN_USER="$2"
+            shift 2
+            ;;
+        --on-calendar)
+            [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
+            ON_CALENDAR="$2"
+            shift 2
+            ;;
+        --plan)
+            PLAN=1
+            shift
+            ;;
+        --help | -h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "unknown option: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [ "$PLAN" -eq 0 ] && [ "$(id -u)" -ne 0 ]; then
+    echo "install.sh must be run with sudo (use --plan to preview without sudo)" >&2
     exit 1
 fi
 
+SESSION_NAME="${RAW_SESSION_NAME:-agentmux}"
+
+machine_name() {
+    local name=""
+    name="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+    if [ -z "$name" ]; then
+        name="linux"
+    fi
+    printf '%s' "$name"
+}
+
+apply_display_suffix() {
+    local name="$1"
+    if [ "$DISPLAY_SUFFIX_ENABLED" -eq 1 ] && [[ "$name" != *" agentmux" ]]; then
+        printf '%s agentmux' "$name"
+    else
+        printf '%s' "$name"
+    fi
+}
+
+DISPLAY_NAME="$(apply_display_suffix "${RAW_DISPLAY_NAME:-$(machine_name)}")"
+
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RUN_USER="${AGENTMUX_RUN_USER:-${SUDO_USER:-}}"
-if [ -z "$RUN_USER" ]; then
-    echo "Could not determine a user to run as; set AGENTMUX_RUN_USER explicitly" >&2
-    exit 1
-fi
-SESSION_NAME="${AGENTMUX_SESSION_NAME:-agentmux}"
-DISPLAY_NAME="${AGENTMUX_DISPLAY_NAME:-}"
-ON_CALENDAR="${AGENTMUX_ON_CALENDAR:-*-*-* 03:00:00 UTC}"
 SERVICE_NAME="agentmux-claude-code.service"
 ENV_DIR="/etc/agentmux"
 ENV_FILE="$ENV_DIR/claude-code.env"
 
+print_plan() {
+    echo "  session name : $SESSION_NAME"
+    echo "  display name : $DISPLAY_NAME"
+    echo "  run as       : ${RUN_USER:-<unset>}"
+    echo "  update timer : $ON_CALENDAR"
+    echo "  repo dir     : $REPO_DIR"
+}
+
+if [ "$PLAN" -eq 1 ]; then
+    echo "agentmux claude-code install plan:"
+    print_plan
+    exit 0
+fi
+
+if [ -z "$RUN_USER" ]; then
+    echo "Could not determine a user to run as; set AGENTMUX_RUN_USER or --run-user explicitly" >&2
+    exit 1
+fi
+
 echo "Installing agentmux claude-code backend:"
-echo "  session name : $SESSION_NAME"
-echo "  display name : ${DISPLAY_NAME:-(same as session name)}"
-echo "  run as       : $RUN_USER"
-echo "  update timer : $ON_CALENDAR"
-echo "  repo dir     : $REPO_DIR"
+print_plan
 
 chmod +x "$REPO_DIR/rc-start.sh" "$REPO_DIR/rc-update.sh"
 
 mkdir -p "$ENV_DIR"
 cat > "$ENV_FILE" <<EOF
 AGENTMUX_SESSION_NAME=$SESSION_NAME
+AGENTMUX_DISPLAY_NAME=$DISPLAY_NAME
 AGENTMUX_RUN_USER=$RUN_USER
 AGENTMUX_SERVICE_NAME=$SERVICE_NAME
 EOF
-if [ -n "$DISPLAY_NAME" ]; then
-    echo "AGENTMUX_DISPLAY_NAME=$DISPLAY_NAME" >> "$ENV_FILE"
-fi
 
 render() {
     sed \
