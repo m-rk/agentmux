@@ -164,12 +164,63 @@ if [ -z "$RUN_USER" ]; then
     exit 1
 fi
 
+USER_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6 2>/dev/null || eval echo "~$RUN_USER")"
+CLAUDE_JSON="$USER_HOME/.claude/.claude.json"
+WORKDIR="${AGENTMUX_WORKDIR:-$USER_HOME/.agentmux/claude-code}"
+
+claude_is_logged_in() {
+    [ -f "$CLAUDE_JSON" ] || return 1
+    command -v python3 >/dev/null 2>&1 || return 1
+    python3 -c "
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        d = json.load(f)
+    sys.exit(0 if d.get('oauthAccount') or d.get('userID') else 1)
+except Exception:
+    sys.exit(1)
+" "$CLAUDE_JSON"
+}
+
+preaccept_workspace_trust() {
+    local workdir="$1"
+    [ -f "$CLAUDE_JSON" ] || return 0
+    command -v python3 >/dev/null 2>&1 || return 0
+
+    # Run as RUN_USER so file writes keep correct ownership
+    su -s /bin/bash "$RUN_USER" -c "python3 - '$workdir' '$CLAUDE_JSON'" <<'PYEOF'
+import json, sys, os
+
+workdir, path = sys.argv[1], sys.argv[2]
+try:
+    with open(path) as f:
+        d = json.load(f)
+    proj = d.setdefault('projects', {}).setdefault(workdir, {})
+    if not proj.get('hasTrustDialogAccepted'):
+        proj['hasTrustDialogAccepted'] = True
+        tmp = path + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(d, f, separators=(',', ':'))
+        os.replace(tmp, path)
+        print(f"  trust pre-accepted for {workdir}")
+except Exception as e:
+    sys.stderr.write(f"Warning: could not pre-accept workspace trust: {e}\n")
+PYEOF
+}
+
+if ! claude_is_logged_in; then
+    echo "Claude Code does not appear to be logged in for user '$RUN_USER'." >&2
+    echo "Run 'claude' once as $RUN_USER to complete login, then rerun this installer." >&2
+    exit 1
+fi
+
 echo "Installing agentmux claude-code backend:"
 print_plan
 
 chmod +x "$REPO_DIR/rc-start.sh" "$REPO_DIR/rc-update.sh"
 
-mkdir -p "$ENV_DIR"
+mkdir -p "$ENV_DIR" "$WORKDIR"
+preaccept_workspace_trust "$WORKDIR"
 cat > "$ENV_FILE" <<EOF
 AGENTMUX_SESSION_NAME=$SESSION_NAME
 AGENTMUX_DISPLAY_NAME=$DISPLAY_NAME

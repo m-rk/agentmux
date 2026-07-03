@@ -35,13 +35,17 @@ For unattended installs, pass flags instead:
 This installs with display name `Work Claude agentmux`; add `--no-suffix`
 if you want exactly `Work Claude` with no suffix.
 
-Add `--attach` to attach immediately after installing, which is useful on
-first run so you can complete Claude Code login and trust prompts before
-leaving the session detached. Use `--no-attach` to make that explicit in
-scripts.
+Add `--attach` to attach immediately after installing. Use `--no-attach` to
+make that explicit in scripts.
 
 Use `./install-macos.sh --plan` to preview the LaunchAgents and settings
 without writing files.
+
+The installer requires Claude Code to already be logged in — it checks
+`~/.claude/.claude.json` for an existing session and exits early with a
+helpful message if none is found. It also pre-accepts the workspace trust
+for the dedicated workdir (`~/.agentmux/claude-code` by default) so the
+session starts fully unattended.
 
 This writes:
 
@@ -51,12 +55,6 @@ This writes:
 The start LaunchAgent runs at login and then every five minutes by default.
 The update LaunchAgent runs at 03:00 local time by default. Logs are written
 under `~/Library/Logs/agentmux`.
-
-On first launch, Claude Code may stop at login or at its workspace trust
-prompt for the dedicated workdir. If you let the installer attach after
-installing, complete those prompts there. Otherwise attach once with
-`tmux attach -t <tmux-session-name>` and finish login/trust for
-`~/.agentmux/claude-code`; later restarts use that same workdir.
 
 Useful overrides:
 

@@ -391,6 +391,48 @@ attach_tmux_session() {
     exec tmux attach -t "$TMUX_SESSION_NAME"
 }
 
+claude_is_logged_in() {
+    local claude_json="$HOME/.claude/.claude.json"
+    [ -f "$claude_json" ] || return 1
+    command -v python3 >/dev/null 2>&1 || return 1
+    python3 -c "
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        d = json.load(f)
+    sys.exit(0 if d.get('oauthAccount') or d.get('userID') else 1)
+except Exception:
+    sys.exit(1)
+" "$claude_json"
+}
+
+preaccept_workspace_trust() {
+    local workdir="$1"
+    local claude_json="$HOME/.claude/.claude.json"
+
+    [ -f "$claude_json" ] || return 0
+    command -v python3 >/dev/null 2>&1 || return 0
+
+    python3 - "$workdir" "$claude_json" <<'PYEOF'
+import json, sys, os
+
+workdir, path = sys.argv[1], sys.argv[2]
+try:
+    with open(path) as f:
+        d = json.load(f)
+    proj = d.setdefault('projects', {}).setdefault(workdir, {})
+    if not proj.get('hasTrustDialogAccepted'):
+        proj['hasTrustDialogAccepted'] = True
+        tmp = path + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(d, f, separators=(',', ':'))
+        os.replace(tmp, path)
+        print(f"  trust pre-accepted for {workdir}")
+except Exception as e:
+    sys.stderr.write(f"Warning: could not pre-accept workspace trust: {e}\n")
+PYEOF
+}
+
 xml_escape() {
     local value="$1"
     value=${value//&/&amp;}
@@ -428,6 +470,12 @@ render() {
         "$source" > "$target"
 }
 
+if ! claude_is_logged_in; then
+    echo "Claude Code does not appear to be logged in." >&2
+    echo "Run 'claude' once in your terminal to complete login, then rerun this installer." >&2
+    exit 1
+fi
+
 echo "Installing agentmux claude-code backend for macOS:"
 echo "  tmux session : $TMUX_SESSION_NAME"
 echo "  display name : $DISPLAY_NAME"
@@ -437,7 +485,8 @@ echo "  attach after : $ATTACH_AFTER_INSTALL"
 echo "  repo dir     : $REPO_DIR"
 
 chmod +x "$REPO_DIR/rc-start.sh" "$REPO_DIR/rc-update.sh"
-mkdir -p "$LAUNCH_AGENTS_DIR" "$LOG_DIR"
+mkdir -p "$LAUNCH_AGENTS_DIR" "$LOG_DIR" "$WORKDIR"
+preaccept_workspace_trust "$WORKDIR"
 
 launchctl bootout "$DOMAIN" "$UPDATE_PLIST" 2>/dev/null || true
 launchctl bootout "$DOMAIN" "$START_PLIST" 2>/dev/null || true
@@ -451,7 +500,6 @@ launchctl kickstart -k "$DOMAIN/$START_LABEL" 2>/dev/null || true
 
 echo
 echo "Done. Reattach with: tmux attach -t $TMUX_SESSION_NAME"
-echo "First run may ask you to trust '$WORKDIR'; attach once and confirm it if prompted."
 echo "Logs: tail -f '$LOG_DIR/claude-code.log' '$LOG_DIR/claude-code.err.log'"
 echo "Status: launchctl print '$DOMAIN/$START_LABEL'"
 
