@@ -81,6 +81,21 @@ sudo ./install.sh \
 See [`backends/agentmux`](backends/agentmux) for supported agent/provider
 combinations and all install flags.
 
+## Tests
+
+Run the lightweight regression harness:
+
+```sh
+tests/smoke.sh
+```
+
+By default it uses fake local tools for provider/agent checks, so it does not
+need a running model provider. To include a real Ollama + Zero generation smoke:
+
+```sh
+AGENTMUX_LIVE_OLLAMA=1 tests/smoke.sh
+```
+
 ## Quickstart (Claude Code backend)
 
 ### macOS
