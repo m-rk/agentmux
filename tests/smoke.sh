@@ -230,9 +230,42 @@ check_live_ollama() {
     tmux kill-session -t "$session" 2>/dev/null || true
 }
 
+check_live_opencode() {
+    if [ "${AGENTMUX_LIVE_OPENCODE:-0}" != "1" ]; then
+        pass "live opencode smoke skipped"
+        return
+    fi
+
+    command -v ollama >/dev/null 2>&1 || fail "live opencode smoke requires ollama"
+    command -v opencode >/dev/null 2>&1 || fail "live opencode smoke requires opencode"
+    command -v tmux >/dev/null 2>&1 || fail "live opencode smoke requires tmux"
+
+    local workdir="$TMP_ROOT/live-opencode-work"
+    local session="agentmux-live-opencode-$$"
+    local model="${AGENTMUX_LIVE_MODEL:-gpt-oss:20b-cloud}"
+    local output="$TMP_ROOT/live-opencode-output"
+
+    AGENTMUX_INSTANCE_NAME="$session" \
+    AGENTMUX_AGENT="opencode" \
+    AGENTMUX_PROVIDER="ollama" \
+    AGENTMUX_MODEL="$model" \
+    AGENTMUX_TMUX_SESSION_NAME="$session" \
+    AGENTMUX_WORKDIR="$workdir" \
+    AGENTMUX_PROVIDER_WAIT_SECONDS=5 \
+        bash "$ROOT/backends/agentmux/rc-start.sh"
+
+    if ! (cd "$workdir" && opencode run --model "ollama/$model" "reply with exactly: ok" > "$output"); then
+        tmux kill-session -t "$session" 2>/dev/null || true
+        fail "live opencode run"
+    fi
+    assert_file_contains "$output" "ok" "live opencode run"
+    tmux kill-session -t "$session" 2>/dev/null || true
+}
+
 write_fake_tools
 check_shell_syntax
 check_plan_modes
 check_zero_config_rendering
 check_opencode_config_rendering
 check_live_ollama
+check_live_opencode

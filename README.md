@@ -96,6 +96,12 @@ need a running model provider. To include a real Ollama + Zero generation smoke:
 AGENTMUX_LIVE_OLLAMA=1 tests/smoke.sh
 ```
 
+To include a real Ollama + opencode generation smoke:
+
+```sh
+AGENTMUX_LIVE_OPENCODE=1 tests/smoke.sh
+```
+
 ## Quickstart (Claude Code backend)
 
 ### macOS
