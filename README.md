@@ -2,8 +2,9 @@
 
 Agents that are remote controlled, persistent, redundant and self-maintained.
 
-The idea: coding-agent CLIs (Claude Code, [opencode](https://opencode.ai) +
-ollama, and whatever comes next) are most useful when there's always a live
+The idea: coding-agent CLIs (Claude Code, [opencode](https://opencode.ai),
+[Zero](https://github.com/Gitlawb/zero), and whatever comes next) are most
+useful when there's always a live
 session you can drop into from anywhere — not just while a terminal happens
 to be open. agentmux keeps one running per backend, brings it back after a
 reboot, and keeps the CLI itself up to date without you babysitting it.
@@ -25,8 +26,60 @@ Four properties every backend here aims for:
 
 | Backend | Linux | macOS |
 |---|---|---|
+| [`backends/agentmux`](backends/agentmux) | systemd | LaunchAgents |
 | [`backends/claude-code`](backends/claude-code) | systemd | LaunchAgents |
-| [`backends/opencode-ollama`](backends/opencode-ollama) | systemd | LaunchAgents |
+
+`backends/agentmux` is the direction of travel: one named instance combines an
+agent CLI, a model provider, a model, a workdir, and host supervisor wiring.
+Provider-specific backends like `opencode-ollama` and `zero-ollama` are avoided
+so new agents/providers/models can be mixed without cloning whole directories.
+
+## Quickstart (configurable backend)
+
+### macOS
+
+```sh
+# one-time, manual:
+brew install tmux ollama
+brew services start ollama
+ollama signin
+npm install -g @gitlawb/zero
+
+git clone https://github.com/m-rk/agentmux.git
+cd agentmux/backends/agentmux
+./install-macos.sh \
+  --instance work-zero \
+  --agent zero \
+  --provider ollama \
+  --model gpt-oss:20b-cloud \
+  --yes
+```
+
+This creates `com.agentmux.work-zero` and
+`com.agentmux.work-zero.update` LaunchAgents, plus a dedicated workdir at
+`~/.agentmux/work-zero`. Reattach with:
+
+```sh
+tmux attach -t work-zero
+```
+
+Use another instance name, agent, model, or workdir to run multiple agentmux
+instances side by side on the same machine.
+
+### Linux systemd
+
+```sh
+git clone https://github.com/m-rk/agentmux.git
+cd agentmux/backends/agentmux
+sudo ./install.sh \
+  --instance work-zero \
+  --agent zero \
+  --provider ollama \
+  --model gpt-oss:20b-cloud
+```
+
+See [`backends/agentmux`](backends/agentmux) for supported agent/provider
+combinations and all install flags.
 
 ## Quickstart (Claude Code backend)
 
@@ -107,64 +160,6 @@ To remove: `sudo ./uninstall.sh` (leaves any running tmux session alone).
 
 See [`backends/claude-code`](backends/claude-code) for the scripts,
 LaunchAgent templates, and systemd unit templates.
-
-## Quickstart (opencode + Ollama Cloud backend)
-
-### macOS
-
-```sh
-# one-time, manual:
-brew install tmux ollama
-brew services start ollama
-ollama signin
-npm install -g opencode-ai
-
-git clone https://github.com/m-rk/agentmux.git
-cd agentmux/backends/opencode-ollama
-./install-macos.sh
-```
-
-When run from a terminal, the installer prompts for the tmux session name,
-Ollama model, update time, and final confirmation. The default tmux name is
-`<machine-slug>-opencode-YYYY-MM-DD`. For unattended installs, pass flags
-instead:
-
-```sh
-./install-macos.sh \
-  --tmux-session work-opencode \
-  --ollama-model gpt-oss:20b-cloud \
-  --update-time 03:00 \
-  --yes
-```
-
-Use `./install-macos.sh --plan` to preview the LaunchAgents and settings
-without writing files. The macOS backend assumes the local Ollama daemon is
-already reachable. You can use `brew services start ollama`, the Ollama app,
-or a separate `ollama serve` process; agentmux does not own that daemon on
-macOS.
-
-To remove the LaunchAgents: `./uninstall-macos.sh` (leaves any running tmux
-session and Ollama alone).
-
-### Linux systemd
-
-```sh
-# one-time, manual (see backends/opencode-ollama/README.md for why):
-curl -fsSL https://ollama.com/install.sh | sh
-ollama signin
-npm install -g opencode-ai
-
-git clone https://github.com/m-rk/agentmux.git
-cd agentmux/backends/opencode-ollama
-sudo AGENTMUX_SESSION_NAME="my-opencode" ./install.sh
-```
-
-Reattach with `tmux attach -t $AGENTMUX_SESSION_NAME`. Unlike the Claude
-Code backend there's no remote-control feature yet, so this is SSH +
-`tmux attach` only. See
-[`backends/opencode-ollama`](backends/opencode-ollama) for details, including
-how Ollama Cloud auth flows through to opencode without opencode ever
-holding an API key.
 
 ## Roadmap
 

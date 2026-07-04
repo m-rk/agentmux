@@ -1,64 +1,37 @@
 #!/bin/bash
-# Installs the agentmux opencode + Ollama Cloud backend on macOS using user
-# LaunchAgents.
-#
-# Prerequisites (not installed by this script):
-#   - ollama installed and reachable via the local daemon
-#   - `ollama signin` has been run once
-#   - opencode-ai installed globally via npm
-#
-# Configure via flags or env vars. Flags win over env vars.
-#
-# Flags:
-#   --tmux-session NAME          tmux session name
-#   --workdir PATH               working directory for the session
-#   --update-time HH:MM          local-time update schedule
-#   --start-interval SEC         seconds between idempotent start checks
-#   --ollama-model MODEL         ollama cloud model tag
-#   --ollama-wait-seconds SEC    seconds to wait for ollama at start
-#   --path PATH                  launchd PATH seed; detected tool dirs are prepended
-#   --yes                        do not prompt before installing
-#   --plan                       print the install plan without writing files
-#   --help                       show usage
-#
-# Env aliases:
-#   AGENTMUX_TMUX_SESSION_NAME, AGENTMUX_SESSION_NAME
-#   AGENTMUX_WORKDIR, AGENTMUX_UPDATE_TIME
-#   AGENTMUX_UPDATE_HOUR, AGENTMUX_UPDATE_MINUTE
-#   AGENTMUX_START_INTERVAL, AGENTMUX_OLLAMA_MODEL
-#   AGENTMUX_OLLAMA_WAIT_SECONDS, AGENTMUX_PATH
+# Installs one agentmux instance on macOS using user LaunchAgents.
 set -euo pipefail
 
 usage() {
     cat <<'EOF'
-Installs the agentmux opencode + Ollama Cloud backend on macOS using user
-LaunchAgents.
+Installs one agentmux instance on macOS using user LaunchAgents.
 
-Prerequisites (not installed by this script):
-  - ollama installed and reachable via the local daemon
-  - `ollama signin` has been run once
-  - opencode-ai installed globally via npm
-
-Configure via flags or env vars. Flags win over env vars.
+An instance is an agent CLI + provider + model + workdir + tmux session.
 
 Flags:
+  --instance NAME              instance name and default tmux session
+  --agent NAME                 agent CLI: zero or opencode
+  --provider NAME              model provider: ollama
+  --model MODEL                provider model id/tag
+  --provider-base-url URL      provider OpenAI-compatible base URL
+  --provider-wait-seconds SEC  seconds to wait for provider at start
   --tmux-session NAME          tmux session name
-  --workdir PATH               working directory for the session
+  --workdir PATH               working directory for this instance
   --update-time HH:MM          local-time update schedule
   --start-interval SEC         seconds between idempotent start checks
-  --ollama-model MODEL         ollama cloud model tag
-  --ollama-wait-seconds SEC    seconds to wait for ollama at start
   --path PATH                  launchd PATH seed; detected tool dirs are prepended
   --yes                        do not prompt before installing
   --plan                       print the install plan without writing files
   --help                       show usage
 
 Env aliases:
+  AGENTMUX_INSTANCE_NAME, AGENTMUX_AGENT, AGENTMUX_PROVIDER, AGENTMUX_MODEL
+  AGENTMUX_PROVIDER_BASE_URL, AGENTMUX_PROVIDER_WAIT_SECONDS
   AGENTMUX_TMUX_SESSION_NAME, AGENTMUX_SESSION_NAME
   AGENTMUX_WORKDIR, AGENTMUX_UPDATE_TIME
   AGENTMUX_UPDATE_HOUR, AGENTMUX_UPDATE_MINUTE
-  AGENTMUX_START_INTERVAL, AGENTMUX_OLLAMA_MODEL
-  AGENTMUX_OLLAMA_WAIT_SECONDS, AGENTMUX_PATH
+  AGENTMUX_START_INTERVAL, AGENTMUX_PATH
+  AGENTMUX_OLLAMA_MODEL and AGENTMUX_OLLAMA_BASE_URL are compatibility aliases.
 EOF
 }
 
@@ -98,30 +71,21 @@ slugify() {
         sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-+/-/g'
 }
 
-default_tmux_session() {
-    local base
-    base="$(slugify "$(machine_name)")"
-    if [ -z "$base" ]; then
-        base="mac"
-    fi
-
-    printf '%s-opencode-%s' "$base" "$(date +%Y-%m-%d)"
-}
-
-TMUX_SESSION_NAME="${AGENTMUX_TMUX_SESSION_NAME:-${AGENTMUX_SESSION_NAME:-$(default_tmux_session)}}"
-WORKDIR="${AGENTMUX_WORKDIR:-$HOME/.agentmux/opencode-ollama}"
+DEFAULT_INSTANCE="$(slugify "$(machine_name)")-agentmux"
+INSTANCE_NAME="${AGENTMUX_INSTANCE_NAME:-$DEFAULT_INSTANCE}"
+AGENT="${AGENTMUX_AGENT:-zero}"
+PROVIDER="${AGENTMUX_PROVIDER:-ollama}"
+MODEL="${AGENTMUX_MODEL:-${AGENTMUX_OLLAMA_MODEL:-gpt-oss:20b-cloud}}"
+PROVIDER_BASE_URL="${AGENTMUX_PROVIDER_BASE_URL:-${AGENTMUX_OLLAMA_BASE_URL:-}}"
+PROVIDER_WAIT_SECONDS="${AGENTMUX_PROVIDER_WAIT_SECONDS:-${AGENTMUX_OLLAMA_WAIT_SECONDS:-60}}"
+TMUX_SESSION_NAME="${AGENTMUX_TMUX_SESSION_NAME:-${AGENTMUX_SESSION_NAME:-}}"
+WORKDIR="${AGENTMUX_WORKDIR:-}"
 UPDATE_HOUR="${AGENTMUX_UPDATE_HOUR:-3}"
 UPDATE_MINUTE="${AGENTMUX_UPDATE_MINUTE:-0}"
 START_INTERVAL="${AGENTMUX_START_INTERVAL:-300}"
-OLLAMA_MODEL="${AGENTMUX_OLLAMA_MODEL:-gpt-oss:20b-cloud}"
-OLLAMA_WAIT_SECONDS="${AGENTMUX_OLLAMA_WAIT_SECONDS:-60}"
 LAUNCHD_PATH="${AGENTMUX_PATH:-$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin}"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 LOG_DIR="$HOME/Library/Logs/agentmux"
-START_LABEL="com.agentmux.opencode-ollama"
-UPDATE_LABEL="com.agentmux.opencode-ollama.update"
-START_PLIST="$LAUNCH_AGENTS_DIR/$START_LABEL.plist"
-UPDATE_PLIST="$LAUNCH_AGENTS_DIR/$UPDATE_LABEL.plist"
 DOMAIN="gui/$(id -u)"
 
 parse_update_time() {
@@ -142,6 +106,36 @@ fi
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --instance)
+            [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
+            INSTANCE_NAME="$2"
+            shift 2
+            ;;
+        --agent)
+            [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
+            AGENT="$2"
+            shift 2
+            ;;
+        --provider)
+            [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
+            PROVIDER="$2"
+            shift 2
+            ;;
+        --model)
+            [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
+            MODEL="$2"
+            shift 2
+            ;;
+        --provider-base-url)
+            [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
+            PROVIDER_BASE_URL="$2"
+            shift 2
+            ;;
+        --provider-wait-seconds)
+            [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
+            PROVIDER_WAIT_SECONDS="$2"
+            shift 2
+            ;;
         --tmux-session | --session-name)
             [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
             TMUX_SESSION_NAME="$2"
@@ -160,16 +154,6 @@ while [ "$#" -gt 0 ]; do
         --start-interval)
             [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
             START_INTERVAL="$2"
-            shift 2
-            ;;
-        --ollama-model)
-            [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
-            OLLAMA_MODEL="$2"
-            shift 2
-            ;;
-        --ollama-wait-seconds)
-            [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
-            OLLAMA_WAIT_SECONDS="$2"
             shift 2
             ;;
         --path)
@@ -209,11 +193,21 @@ require_int_range() {
     fi
 }
 
-validate_tmux_session() {
-    if ! [[ "$TMUX_SESSION_NAME" =~ ^[A-Za-z0-9._-]+$ ]]; then
-        echo "tmux session name must contain only letters, numbers, dots, underscores, and hyphens" >&2
+validate_identifier() {
+    local label="$1"
+    local value="$2"
+
+    if ! [[ "$value" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        echo "$label must contain only letters, numbers, dots, underscores, and hyphens" >&2
         exit 1
     fi
+}
+
+validate_supported() {
+    case "$AGENT:$PROVIDER" in
+        zero:ollama | opencode:ollama) ;;
+        *) echo "unsupported agent/provider combination: $AGENT/$PROVIDER" >&2; exit 1 ;;
+    esac
 }
 
 prompt_value() {
@@ -236,8 +230,12 @@ confirm_install() {
 }
 
 if [ "$PLAN" -eq 0 ] && [ "$YES" -eq 0 ] && [ -t 0 ]; then
-    TMUX_SESSION_NAME="$(prompt_value "Tmux session name" "$TMUX_SESSION_NAME")"
-    OLLAMA_MODEL="$(prompt_value "Ollama model" "$OLLAMA_MODEL")"
+    INSTANCE_NAME="$(prompt_value "Instance name" "$INSTANCE_NAME")"
+    AGENT="$(prompt_value "Agent" "$AGENT")"
+    PROVIDER="$(prompt_value "Provider" "$PROVIDER")"
+    MODEL="$(prompt_value "Model" "$MODEL")"
+    TMUX_SESSION_NAME="${TMUX_SESSION_NAME:-$INSTANCE_NAME}"
+    WORKDIR="${WORKDIR:-$HOME/.agentmux/$INSTANCE_NAME}"
     parse_update_time "$(prompt_value "Update time" "$(printf '%02d:%02d' "$((10#$UPDATE_HOUR))" "$((10#$UPDATE_MINUTE))")")"
 
     if ! confirm_install; then
@@ -246,15 +244,29 @@ if [ "$PLAN" -eq 0 ] && [ "$YES" -eq 0 ] && [ -t 0 ]; then
     fi
 fi
 
+case "$PROVIDER" in
+    ollama)
+        PROVIDER_BASE_URL="${PROVIDER_BASE_URL:-http://localhost:11434/v1}"
+        ;;
+esac
+TMUX_SESSION_NAME="${TMUX_SESSION_NAME:-$INSTANCE_NAME}"
+WORKDIR="${WORKDIR:-$HOME/.agentmux/$INSTANCE_NAME}"
+START_LABEL="com.agentmux.$INSTANCE_NAME"
+UPDATE_LABEL="com.agentmux.$INSTANCE_NAME.update"
+START_PLIST="$LAUNCH_AGENTS_DIR/$START_LABEL.plist"
+UPDATE_PLIST="$LAUNCH_AGENTS_DIR/$UPDATE_LABEL.plist"
+
 require_int_range AGENTMUX_UPDATE_HOUR "$UPDATE_HOUR" 0 23
 require_int_range AGENTMUX_UPDATE_MINUTE "$UPDATE_MINUTE" 0 59
 require_int_range AGENTMUX_START_INTERVAL "$START_INTERVAL" 60 86400
-require_int_range AGENTMUX_OLLAMA_WAIT_SECONDS "$OLLAMA_WAIT_SECONDS" 1 600
+require_int_range AGENTMUX_PROVIDER_WAIT_SECONDS "$PROVIDER_WAIT_SECONDS" 1 600
 UPDATE_HOUR=$((10#$UPDATE_HOUR))
 UPDATE_MINUTE=$((10#$UPDATE_MINUTE))
 START_INTERVAL=$((10#$START_INTERVAL))
-OLLAMA_WAIT_SECONDS=$((10#$OLLAMA_WAIT_SECONDS))
-validate_tmux_session
+PROVIDER_WAIT_SECONDS=$((10#$PROVIDER_WAIT_SECONDS))
+validate_identifier "instance name" "$INSTANCE_NAME"
+validate_identifier "tmux session name" "$TMUX_SESSION_NAME"
+validate_supported
 
 prepend_path_dir() {
     local dir="$1"
@@ -267,40 +279,49 @@ prepend_path_dir() {
 
 MISSING_TOOLS=()
 export PATH="$LAUNCHD_PATH:${PATH:-}"
-for cmd in launchctl tmux ollama opencode; do
+for cmd in launchctl tmux "$AGENT"; do
     if cmd_path=$(command -v "$cmd" 2>/dev/null); then
         prepend_path_dir "$(dirname "$cmd_path")"
     else
         MISSING_TOOLS+=("$cmd")
     fi
 done
+if [ "$PROVIDER" = "ollama" ]; then
+    if cmd_path=$(command -v ollama 2>/dev/null); then
+        prepend_path_dir "$(dirname "$cmd_path")"
+    else
+        MISSING_TOOLS+=(ollama)
+    fi
+fi
 export PATH="$LAUNCHD_PATH:${PATH:-}"
 
-OLLAMA_REACHABLE=0
-if command -v ollama >/dev/null 2>&1 && ollama list >/dev/null 2>&1; then
-    OLLAMA_REACHABLE=1
+PROVIDER_REACHABLE=0
+if [ "$PROVIDER" = "ollama" ] && command -v ollama >/dev/null 2>&1 && ollama list >/dev/null 2>&1; then
+    PROVIDER_REACHABLE=1
 fi
 
 print_plan() {
-    echo "agentmux opencode-ollama macOS install plan:"
-    echo "  tmux session : $TMUX_SESSION_NAME"
-    echo "  workdir      : $WORKDIR"
-    echo "  update time  : $(printf '%02d:%02d' "$UPDATE_HOUR" "$UPDATE_MINUTE") local"
-    echo "  start check  : every ${START_INTERVAL}s"
-    echo "  ollama model : $OLLAMA_MODEL"
-    echo "  ollama wait  : ${OLLAMA_WAIT_SECONDS}s"
-    echo "  start label  : $START_LABEL"
-    echo "  update label : $UPDATE_LABEL"
-    echo "  start plist  : $START_PLIST"
-    echo "  update plist : $UPDATE_PLIST"
-    echo "  logs         : $LOG_DIR"
+    echo "agentmux macOS install plan:"
+    echo "  instance      : $INSTANCE_NAME"
+    echo "  agent         : $AGENT"
+    echo "  provider      : $PROVIDER"
+    echo "  model         : $MODEL"
+    echo "  provider url  : $PROVIDER_BASE_URL"
+    echo "  tmux session  : $TMUX_SESSION_NAME"
+    echo "  workdir       : $WORKDIR"
+    echo "  update time   : $(printf '%02d:%02d' "$UPDATE_HOUR" "$UPDATE_MINUTE") local"
+    echo "  start check   : every ${START_INTERVAL}s"
+    echo "  provider wait : ${PROVIDER_WAIT_SECONDS}s"
+    echo "  start label   : $START_LABEL"
+    echo "  update label  : $UPDATE_LABEL"
+    echo "  logs          : $LOG_DIR"
     if [ "${#MISSING_TOOLS[@]}" -gt 0 ]; then
-        echo "  missing tools: ${MISSING_TOOLS[*]}"
+        echo "  missing tools : ${MISSING_TOOLS[*]}"
     fi
-    if [ "$OLLAMA_REACHABLE" -eq 0 ]; then
-        echo "  ollama       : not reachable"
+    if [ "$PROVIDER_REACHABLE" -eq 0 ]; then
+        echo "  provider      : not reachable"
     else
-        echo "  ollama       : reachable"
+        echo "  provider      : reachable"
     fi
 }
 
@@ -315,9 +336,8 @@ if [ "${#MISSING_TOOLS[@]}" -gt 0 ]; then
     exit 1
 fi
 
-if [ "$OLLAMA_REACHABLE" -eq 0 ]; then
-    echo "ollama is installed but not reachable. Start it first, then run this installer again." >&2
-    echo "Examples: brew services start ollama, open Ollama.app, or run ollama serve." >&2
+if [ "$PROVIDER_REACHABLE" -eq 0 ]; then
+    echo "$PROVIDER is installed but not reachable. Start it first, then run this installer again." >&2
     exit 1
 fi
 
@@ -344,11 +364,16 @@ render() {
     local target="$2"
 
     sed \
-        -e "s|@@SESSION_NAME@@|$(template_value "$TMUX_SESSION_NAME")|g" \
+        -e "s|@@INSTANCE_NAME@@|$(template_value "$INSTANCE_NAME")|g" \
+        -e "s|@@AGENT@@|$(template_value "$AGENT")|g" \
+        -e "s|@@PROVIDER@@|$(template_value "$PROVIDER")|g" \
+        -e "s|@@MODEL@@|$(template_value "$MODEL")|g" \
+        -e "s|@@PROVIDER_BASE_URL@@|$(template_value "$PROVIDER_BASE_URL")|g" \
+        -e "s|@@PROVIDER_WAIT_SECONDS@@|$PROVIDER_WAIT_SECONDS|g" \
         -e "s|@@TMUX_SESSION_NAME@@|$(template_value "$TMUX_SESSION_NAME")|g" \
         -e "s|@@WORKDIR@@|$(template_value "$WORKDIR")|g" \
-        -e "s|@@OLLAMA_MODEL@@|$(template_value "$OLLAMA_MODEL")|g" \
-        -e "s|@@OLLAMA_WAIT_SECONDS@@|$OLLAMA_WAIT_SECONDS|g" \
+        -e "s|@@START_LABEL@@|$(template_value "$START_LABEL")|g" \
+        -e "s|@@UPDATE_LABEL@@|$(template_value "$UPDATE_LABEL")|g" \
         -e "s|@@HOME@@|$(template_value "$HOME")|g" \
         -e "s|@@PATH@@|$(template_value "$LAUNCHD_PATH")|g" \
         -e "s|@@LOG_DIR@@|$(template_value "$LOG_DIR")|g" \
@@ -359,21 +384,17 @@ render() {
         "$source" > "$target"
 }
 
-echo "Installing agentmux opencode-ollama backend for macOS:"
-echo "  tmux session : $TMUX_SESSION_NAME"
-echo "  update time  : $(printf '%02d:%02d' "$UPDATE_HOUR" "$UPDATE_MINUTE") local"
-echo "  start check  : every ${START_INTERVAL}s"
-echo "  ollama model : $OLLAMA_MODEL"
-echo "  repo dir     : $REPO_DIR"
+echo "Installing agentmux instance for macOS:"
+print_plan
 
 chmod +x "$REPO_DIR/rc-start.sh" "$REPO_DIR/rc-update.sh"
-mkdir -p "$LAUNCH_AGENTS_DIR" "$LOG_DIR"
+mkdir -p "$LAUNCH_AGENTS_DIR" "$LOG_DIR" "$WORKDIR"
 
 launchctl bootout "$DOMAIN" "$UPDATE_PLIST" 2>/dev/null || true
 launchctl bootout "$DOMAIN" "$START_PLIST" 2>/dev/null || true
 
-render "$REPO_DIR/com.agentmux.opencode-ollama.plist.tmpl" "$START_PLIST"
-render "$REPO_DIR/com.agentmux.opencode-ollama.update.plist.tmpl" "$UPDATE_PLIST"
+render "$REPO_DIR/agentmux.plist.tmpl" "$START_PLIST"
+render "$REPO_DIR/agentmux.update.plist.tmpl" "$UPDATE_PLIST"
 
 launchctl bootstrap "$DOMAIN" "$START_PLIST"
 launchctl bootstrap "$DOMAIN" "$UPDATE_PLIST"
@@ -381,5 +402,5 @@ launchctl kickstart -k "$DOMAIN/$START_LABEL" 2>/dev/null || true
 
 echo
 echo "Done. Reattach with: tmux attach -t $TMUX_SESSION_NAME"
-echo "Logs: tail -f '$LOG_DIR/opencode-ollama.log' '$LOG_DIR/opencode-ollama.err.log'"
+echo "Logs: tail -f '$LOG_DIR/$INSTANCE_NAME.log' '$LOG_DIR/$INSTANCE_NAME.err.log'"
 echo "Status: launchctl print '$DOMAIN/$START_LABEL'"

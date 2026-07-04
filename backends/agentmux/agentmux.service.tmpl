@@ -1,8 +1,7 @@
 [Unit]
-Description=Persistent agentmux opencode session (@@SESSION_NAME@@)
+Description=Persistent agentmux instance @@INSTANCE_NAME@@ (@@AGENT@@ + @@PROVIDER@@)
 After=network-online.target ollama.service
 Wants=network-online.target
-Requires=ollama.service
 
 [Service]
 Type=oneshot
@@ -10,7 +9,7 @@ RemainAfterExit=yes
 User=@@RUN_USER@@
 EnvironmentFile=@@ENV_FILE@@
 ExecStart=@@REPO_DIR@@/rc-start.sh
-ExecStop=/usr/bin/tmux kill-session -t @@SESSION_NAME@@
+ExecStop=/usr/bin/tmux kill-session -t @@TMUX_SESSION_NAME@@
 TimeoutStartSec=30
 
 [Install]
