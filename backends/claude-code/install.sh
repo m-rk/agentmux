@@ -199,7 +199,16 @@ if [ -n "$RUN_USER" ]; then
 else
     USER_HOME="$HOME"
 fi
-CLAUDE_JSON="$USER_HOME/.claude/.claude.json"
+# The real path is $USER_HOME/.claude.json (confirmed directly, not
+# assumed, on the macOS variant of this backend). Fall back to the
+# nested path in case some other Claude Code version/config uses it.
+if [ -f "$USER_HOME/.claude.json" ]; then
+    CLAUDE_JSON="$USER_HOME/.claude.json"
+elif [ -f "$USER_HOME/.claude/.claude.json" ]; then
+    CLAUDE_JSON="$USER_HOME/.claude/.claude.json"
+else
+    CLAUDE_JSON="$USER_HOME/.claude.json"
+fi
 WORKDIR="${AGENTMUX_WORKDIR:-$USER_HOME/.agentmux/$INSTANCE_NAME}"
 
 # Default display name is "<user>:<host> 🤹 <workdir-basename>" — already

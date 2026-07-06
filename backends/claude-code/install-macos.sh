@@ -459,11 +459,21 @@ attach_tmux_session() {
     exec tmux attach -t "$TMUX_SESSION_NAME"
 }
 
+find_claude_json() {
+    # The real path is $HOME/.claude.json (confirmed directly, not
+    # assumed). $HOME/.claude/.claude.json is checked as a fallback in
+    # case some other Claude Code version/config uses that nesting.
+    if [ -f "$HOME/.claude.json" ]; then
+        printf '%s' "$HOME/.claude.json"
+    elif [ -f "$HOME/.claude/.claude.json" ]; then
+        printf '%s' "$HOME/.claude/.claude.json"
+    fi
+}
+
 claude_is_logged_in() {
-    # Legacy check: older Claude Code versions recorded login state in this
-    # JSON file. Kept for backward compatibility.
-    local claude_json="$HOME/.claude/.claude.json"
-    if [ -f "$claude_json" ] && command -v python3 >/dev/null 2>&1; then
+    local claude_json
+    claude_json="$(find_claude_json)"
+    if [ -n "$claude_json" ] && command -v python3 >/dev/null 2>&1; then
         if python3 -c "
 import json, sys
 try:
@@ -496,9 +506,10 @@ except Exception:
 
 preaccept_workspace_trust() {
     local workdir="$1"
-    local claude_json="$HOME/.claude/.claude.json"
+    local claude_json
+    claude_json="$(find_claude_json)"
 
-    [ -f "$claude_json" ] || return 0
+    [ -n "$claude_json" ] || return 0
     command -v python3 >/dev/null 2>&1 || return 0
 
     python3 - "$workdir" "$claude_json" <<'PYEOF'
