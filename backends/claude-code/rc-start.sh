@@ -4,9 +4,10 @@
 # including from the periodic update service.
 set -uo pipefail
 
+: "${AGENTMUX_INSTANCE_NAME:=claude-code}"
 : "${AGENTMUX_TMUX_SESSION_NAME:=${AGENTMUX_SESSION_NAME:-agentmux}}"
 : "${AGENTMUX_DISPLAY_NAME:=${AGENTMUX_REMOTE_NAME:-$AGENTMUX_TMUX_SESSION_NAME}}"
-: "${AGENTMUX_WORKDIR:=$HOME/.agentmux/claude-code}"
+: "${AGENTMUX_WORKDIR:=$HOME/.agentmux/$AGENTMUX_INSTANCE_NAME}"
 
 export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 mkdir -p "$AGENTMUX_WORKDIR"

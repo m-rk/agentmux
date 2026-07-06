@@ -5,6 +5,14 @@ creates a detached `tmux` session running `claude --remote-control` in
 `~/.agentmux/claude-code`; `rc-update.sh` updates the CLI and restarts the
 session only when the version changed.
 
+Each install is a named **instance** (`--instance NAME` /
+`AGENTMUX_INSTANCE_NAME`, default `claude-code`), so a second, third, ...
+instance can run side by side on the same machine with its own workdir,
+tmux session, LaunchAgent/systemd names, and logs. See
+[Multiple Instances](#multiple-instances) below. The default instance name
+(`claude-code`) reproduces every identifier documented in this file exactly,
+so existing installs are unaffected.
+
 ## macOS
 
 Run as your macOS user, not with `sudo`:
@@ -31,6 +39,9 @@ For unattended installs, pass flags instead:
   --update-time 03:00 \
   --yes
 ```
+
+Add `--instance NAME` (default: `claude-code`) to install a second instance
+side by side — see [Multiple Instances](#multiple-instances).
 
 This installs with display name `Work Claude agentmux`; add `--no-suffix`
 if you want exactly `Work Claude` with no suffix.
@@ -59,6 +70,7 @@ under `~/Library/Logs/agentmux`.
 Useful overrides:
 
 ```sh
+AGENTMUX_INSTANCE_NAME="claude-code" \
 AGENTMUX_TMUX_SESSION_NAME="work-claude" \
 AGENTMUX_DISPLAY_NAME="Work Claude" \
 AGENTMUX_WORKDIR="$HOME/.agentmux/claude-code" \
@@ -80,7 +92,8 @@ Uninstall:
 ```
 
 Uninstalling removes the LaunchAgents but leaves any running tmux session
-and `~/.agentmux/claude-code` alone.
+and `~/.agentmux/claude-code` alone. Pass `--instance NAME` to remove a
+non-default instance's LaunchAgents instead.
 
 ## Linux systemd
 
@@ -109,6 +122,7 @@ This writes:
 Flags (`./install.sh --help` for the full list):
 
 ```
+--instance NAME       instance name (default: claude-code)
 --session-name NAME   tmux session name (also: --tmux-session)
 --display-name NAME   Remote Control display name (also: --remote-name)
 --no-suffix           don't append " agentmux" to the display name
@@ -117,9 +131,13 @@ Flags (`./install.sh --help` for the full list):
 --plan                print the install plan without writing files
 ```
 
+Add `--instance NAME` to install a second instance side by side — see
+[Multiple Instances](#multiple-instances).
+
 Equivalent env vars, for automation:
 
 ```sh
+AGENTMUX_INSTANCE_NAME="claude-code"
 AGENTMUX_SESSION_NAME="my-session"       # also: AGENTMUX_TMUX_SESSION_NAME
 AGENTMUX_DISPLAY_NAME="My Session"       # also: AGENTMUX_REMOTE_NAME
 AGENTMUX_DISPLAY_SUFFIX=0                # 0/false/no/off disables the suffix
@@ -150,4 +168,32 @@ sudo ./uninstall.sh
 ```
 
 Uninstalling removes the systemd units and env file but leaves any running
-tmux session and `~/.agentmux/claude-code` alone.
+tmux session and `~/.agentmux/claude-code` alone. Pass `--instance NAME` to
+remove a non-default instance's units instead.
+
+## Multiple Instances
+
+Install a second instance by giving it a different `--instance` and
+`--workdir` (and, if you want tmux/display defaults other than the
+instance name, `--tmux-session`/`--display-name`):
+
+```sh
+# macOS
+./install-macos.sh \
+  --instance pointpost \
+  --workdir "$HOME/projects/pointpost" \
+  --yes
+
+# Linux
+sudo ./install.sh \
+  --instance pointpost \
+  --workdir "$HOME/projects/pointpost"
+```
+
+This creates `com.agentmux.pointpost[.update]` LaunchAgents (or
+`agentmux-pointpost[.service|-update.service|-update.timer]` on Linux),
+a dedicated workdir, a tmux session named `pointpost` by default, and a
+Remote Control display name of `pointpost agentmux` by default — each
+distinct from the default `claude-code` instance so both can run side by
+side without colliding. Remove it with `./uninstall-macos.sh --instance
+pointpost` or `sudo ./uninstall.sh --instance pointpost`.

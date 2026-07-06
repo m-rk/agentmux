@@ -146,6 +146,11 @@ first launch, Claude Code may ask you to log in or trust the dedicated
 workdir; let the installer attach after installing, or attach once and
 complete those prompts if needed.
 
+Pass `--instance NAME` (default: `claude-code`) to install a second, third,
+... instance side by side, each with its own workdir, tmux session, and
+LaunchAgent/systemd names — see
+[`backends/claude-code`](backends/claude-code#multiple-instances).
+
 To remove the LaunchAgents: `./uninstall-macos.sh` (leaves any running tmux
 session alone).
 

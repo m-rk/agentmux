@@ -4,6 +4,7 @@
 # Configure via flags or env vars. Flags win over env vars.
 #
 # Flags:
+#   --instance NAME         instance name (default: claude-code)
 #   --tmux-session NAME     tmux session name
 #   --display-name NAME     Claude display name
 #   --workdir PATH          working directory for the session
@@ -18,6 +19,7 @@
 #   --help                  show usage
 #
 # Env aliases:
+#   AGENTMUX_INSTANCE_NAME (default: claude-code)
 #   AGENTMUX_TMUX_SESSION_NAME, AGENTMUX_SESSION_NAME
 #   AGENTMUX_DISPLAY_NAME, AGENTMUX_REMOTE_NAME
 #   AGENTMUX_DISPLAY_SUFFIX (default: 1; set 0/false/no/off to disable)
@@ -26,9 +28,17 @@
 #   AGENTMUX_START_INTERVAL, AGENTMUX_PATH
 #   AGENTMUX_ATTACH_AFTER_INSTALL
 #
-# The display name defaults to "<machine name> agentmux" when unset, and
-# gets " agentmux" appended to any explicit name too (flag, env var, or typed
-# at the prompt) unless --no-suffix / AGENTMUX_DISPLAY_SUFFIX=0 is given.
+# The instance name defaults to "claude-code" so a zero-flag install
+# reproduces today's exact LaunchAgent labels, workdir, and log paths.
+# Passing --instance NAME (a second, third, ... instance) installs
+# side-by-side with its own labels, workdir, and default tmux
+# session/display name derived from NAME instead.
+#
+# The display name defaults to "<machine name> agentmux" when unset and the
+# instance is the default "claude-code" (or "<instance name> agentmux" for a
+# non-default instance), and gets " agentmux" appended to any explicit name
+# too (flag, env var, or typed at the prompt) unless --no-suffix /
+# AGENTMUX_DISPLAY_SUFFIX=0 is given.
 set -euo pipefail
 
 usage() {
@@ -38,6 +48,7 @@ Installs the agentmux Claude Code backend on macOS using user LaunchAgents.
 Configure via flags or env vars. Flags win over env vars.
 
 Flags:
+  --instance NAME         instance name (default: claude-code)
   --tmux-session NAME     tmux session name
   --display-name NAME     Claude display name
   --workdir PATH          working directory for the session
@@ -52,6 +63,7 @@ Flags:
   --help                  show usage
 
 Env aliases:
+  AGENTMUX_INSTANCE_NAME (default: claude-code)
   AGENTMUX_TMUX_SESSION_NAME, AGENTMUX_SESSION_NAME
   AGENTMUX_DISPLAY_NAME, AGENTMUX_REMOTE_NAME
   AGENTMUX_DISPLAY_SUFFIX (default: 1; set 0/false/no/off to disable)
@@ -59,6 +71,10 @@ Env aliases:
   AGENTMUX_UPDATE_HOUR, AGENTMUX_UPDATE_MINUTE
   AGENTMUX_START_INTERVAL, AGENTMUX_PATH
   AGENTMUX_ATTACH_AFTER_INSTALL
+
+A second (or third, ...) instance can be installed side by side with
+--instance NAME (and typically --workdir), producing distinct LaunchAgent
+labels, workdir, logs, and (by default) tmux session/display name.
 EOF
 }
 
@@ -118,24 +134,21 @@ apply_display_suffix() {
     fi
 }
 
-TMUX_SESSION_NAME="${AGENTMUX_TMUX_SESSION_NAME:-${AGENTMUX_SESSION_NAME:-$(default_tmux_session)}}"
+DEFAULT_INSTANCE_NAME="claude-code"
+INSTANCE_NAME="${AGENTMUX_INSTANCE_NAME:-$DEFAULT_INSTANCE_NAME}"
+TMUX_SESSION_NAME="${AGENTMUX_TMUX_SESSION_NAME:-${AGENTMUX_SESSION_NAME:-}}"
 RAW_DISPLAY_NAME="${AGENTMUX_DISPLAY_NAME:-${AGENTMUX_REMOTE_NAME:-}}"
 DISPLAY_SUFFIX_ENABLED=1
 case "${AGENTMUX_DISPLAY_SUFFIX:-1}" in
     0 | false | no | off) DISPLAY_SUFFIX_ENABLED=0 ;;
 esac
-DISPLAY_NAME="$(apply_display_suffix "${RAW_DISPLAY_NAME:-$(machine_name)}")"
-WORKDIR="${AGENTMUX_WORKDIR:-$HOME/.agentmux/claude-code}"
+WORKDIR="${AGENTMUX_WORKDIR:-}"
 UPDATE_HOUR="${AGENTMUX_UPDATE_HOUR:-3}"
 UPDATE_MINUTE="${AGENTMUX_UPDATE_MINUTE:-0}"
 START_INTERVAL="${AGENTMUX_START_INTERVAL:-300}"
 LAUNCHD_PATH="${AGENTMUX_PATH:-$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin}"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 LOG_DIR="$HOME/Library/Logs/agentmux"
-START_LABEL="com.agentmux.claude-code"
-UPDATE_LABEL="com.agentmux.claude-code.update"
-START_PLIST="$LAUNCH_AGENTS_DIR/$START_LABEL.plist"
-UPDATE_PLIST="$LAUNCH_AGENTS_DIR/$UPDATE_LABEL.plist"
 DOMAIN="gui/$(id -u)"
 
 parse_update_time() {
@@ -156,6 +169,11 @@ fi
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --instance)
+            [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
+            INSTANCE_NAME="$2"
+            shift 2
+            ;;
         --tmux-session | --session-name)
             [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
             TMUX_SESSION_NAME="$2"
@@ -218,7 +236,27 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-DISPLAY_NAME="$(apply_display_suffix "${RAW_DISPLAY_NAME:-$(machine_name)}")"
+if [ -n "$RAW_DISPLAY_NAME" ]; then
+    DISPLAY_NAME="$(apply_display_suffix "$RAW_DISPLAY_NAME")"
+elif [ "$INSTANCE_NAME" = "$DEFAULT_INSTANCE_NAME" ]; then
+    DISPLAY_NAME="$(apply_display_suffix "$(machine_name)")"
+else
+    DISPLAY_NAME="$(apply_display_suffix "$INSTANCE_NAME")"
+fi
+
+if [ -z "$TMUX_SESSION_NAME" ]; then
+    if [ "$INSTANCE_NAME" = "$DEFAULT_INSTANCE_NAME" ]; then
+        TMUX_SESSION_NAME="$(default_tmux_session)"
+    else
+        TMUX_SESSION_NAME="$INSTANCE_NAME"
+    fi
+fi
+
+WORKDIR="${WORKDIR:-$HOME/.agentmux/$INSTANCE_NAME}"
+START_LABEL="com.agentmux.$INSTANCE_NAME"
+UPDATE_LABEL="com.agentmux.$INSTANCE_NAME.update"
+START_PLIST="$LAUNCH_AGENTS_DIR/$START_LABEL.plist"
+UPDATE_PLIST="$LAUNCH_AGENTS_DIR/$UPDATE_LABEL.plist"
 
 require_int_range() {
     local name="$1"
@@ -232,9 +270,12 @@ require_int_range() {
     fi
 }
 
-validate_tmux_session() {
-    if ! [[ "$TMUX_SESSION_NAME" =~ ^[A-Za-z0-9._-]+$ ]]; then
-        echo "tmux session name must contain only letters, numbers, dots, underscores, and hyphens" >&2
+validate_identifier() {
+    local label="$1"
+    local value="$2"
+
+    if ! [[ "$value" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        echo "$label must contain only letters, numbers, dots, underscores, and hyphens" >&2
         exit 1
     fi
 }
@@ -307,7 +348,8 @@ require_int_range AGENTMUX_START_INTERVAL "$START_INTERVAL" 60 86400
 UPDATE_HOUR=$((10#$UPDATE_HOUR))
 UPDATE_MINUTE=$((10#$UPDATE_MINUTE))
 START_INTERVAL=$((10#$START_INTERVAL))
-validate_tmux_session
+validate_identifier "instance name" "$INSTANCE_NAME"
+validate_identifier "tmux session name" "$TMUX_SESSION_NAME"
 validate_attach_after_install
 
 prepend_path_dir() {
@@ -332,6 +374,7 @@ export PATH="$LAUNCHD_PATH:${PATH:-}"
 
 print_plan() {
     echo "agentmux claude-code macOS install plan:"
+    echo "  instance     : $INSTANCE_NAME"
     echo "  tmux session : $TMUX_SESSION_NAME"
     echo "  display name : $DISPLAY_NAME"
     echo "  workdir      : $WORKDIR"
@@ -456,10 +499,13 @@ render() {
     local target="$2"
 
     sed \
+        -e "s|@@INSTANCE_NAME@@|$(template_value "$INSTANCE_NAME")|g" \
         -e "s|@@SESSION_NAME@@|$(template_value "$TMUX_SESSION_NAME")|g" \
         -e "s|@@TMUX_SESSION_NAME@@|$(template_value "$TMUX_SESSION_NAME")|g" \
         -e "s|@@DISPLAY_NAME@@|$(template_value "$DISPLAY_NAME")|g" \
         -e "s|@@WORKDIR@@|$(template_value "$WORKDIR")|g" \
+        -e "s|@@START_LABEL@@|$(template_value "$START_LABEL")|g" \
+        -e "s|@@UPDATE_LABEL@@|$(template_value "$UPDATE_LABEL")|g" \
         -e "s|@@HOME@@|$(template_value "$HOME")|g" \
         -e "s|@@PATH@@|$(template_value "$LAUNCHD_PATH")|g" \
         -e "s|@@LOG_DIR@@|$(template_value "$LOG_DIR")|g" \
@@ -477,6 +523,7 @@ if ! claude_is_logged_in; then
 fi
 
 echo "Installing agentmux claude-code backend for macOS:"
+echo "  instance     : $INSTANCE_NAME"
 echo "  tmux session : $TMUX_SESSION_NAME"
 echo "  display name : $DISPLAY_NAME"
 echo "  update time  : $(printf '%02d:%02d' "$UPDATE_HOUR" "$UPDATE_MINUTE") local"
@@ -491,8 +538,8 @@ preaccept_workspace_trust "$WORKDIR"
 launchctl bootout "$DOMAIN" "$UPDATE_PLIST" 2>/dev/null || true
 launchctl bootout "$DOMAIN" "$START_PLIST" 2>/dev/null || true
 
-render "$REPO_DIR/com.agentmux.claude-code.plist.tmpl" "$START_PLIST"
-render "$REPO_DIR/com.agentmux.claude-code.update.plist.tmpl" "$UPDATE_PLIST"
+render "$REPO_DIR/claude-code.plist.tmpl" "$START_PLIST"
+render "$REPO_DIR/claude-code.update.plist.tmpl" "$UPDATE_PLIST"
 
 launchctl bootstrap "$DOMAIN" "$START_PLIST"
 launchctl bootstrap "$DOMAIN" "$UPDATE_PLIST"
@@ -500,7 +547,7 @@ launchctl kickstart -k "$DOMAIN/$START_LABEL" 2>/dev/null || true
 
 echo
 echo "Done. Reattach with: tmux attach -t $TMUX_SESSION_NAME"
-echo "Logs: tail -f '$LOG_DIR/claude-code.log' '$LOG_DIR/claude-code.err.log'"
+echo "Logs: tail -f '$LOG_DIR/$INSTANCE_NAME.log' '$LOG_DIR/$INSTANCE_NAME.err.log'"
 echo "Status: launchctl print '$DOMAIN/$START_LABEL'"
 
 if [ "$ATTACH_AFTER_INSTALL" -eq 1 ]; then

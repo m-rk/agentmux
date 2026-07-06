@@ -8,6 +8,7 @@
 # vars; flags win over env vars.
 #
 # Flags:
+#   --instance NAME        instance name (default: claude-code)
 #   --session-name NAME    tmux session name (also: --tmux-session)
 #   --display-name NAME    Remote Control display name (also: --remote-name)
 #   --no-suffix            don't append " agentmux" to the display name
@@ -17,11 +18,19 @@
 #   --help                 show usage
 #
 # Env aliases:
+#   AGENTMUX_INSTANCE_NAME (default: claude-code)
 #   AGENTMUX_TMUX_SESSION_NAME, AGENTMUX_SESSION_NAME
 #   AGENTMUX_DISPLAY_NAME, AGENTMUX_REMOTE_NAME
 #   AGENTMUX_DISPLAY_SUFFIX (default: 1; set 0/false/no/off to disable)
 #   AGENTMUX_RUN_USER (default: $SUDO_USER)
 #   AGENTMUX_ON_CALENDAR (default: "*-*-* 03:00:00 UTC")
+#   AGENTMUX_WORKDIR (default: $USER_HOME/.agentmux/$AGENTMUX_INSTANCE_NAME)
+#
+# The instance name defaults to "claude-code" so a zero-flag install
+# reproduces today's exact systemd unit names, env file path, session name
+# (bare "agentmux"), and workdir. Passing --instance NAME installs a second
+# (third, ...) instance side by side with its own units/env file/workdir and
+# a default tmux session name of NAME instead.
 #
 # The display name defaults to "<machine name> agentmux" when unset, and
 # gets " agentmux" appended to any explicit name too unless --no-suffix /
@@ -33,7 +42,8 @@
 # Re-running is safe and rewrites the units/env file with current values —
 # the env file is regenerated each time, not merged — but it does not
 # restart an already-running session, so follow up with
-# `systemctl restart agentmux-claude-code.service` to apply changes.
+# `systemctl restart agentmux-claude-code.service` (or the instance's
+# equivalent unit name) to apply changes.
 set -euo pipefail
 
 usage() {
@@ -44,6 +54,7 @@ Must be run with sudo (except --help/--plan). Configure via flags or env
 vars; flags win over env vars.
 
 Flags:
+  --instance NAME        instance name (default: claude-code)
   --session-name NAME    tmux session name (also: --tmux-session)
   --display-name NAME    Remote Control display name (also: --remote-name)
   --no-suffix            don't append " agentmux" to the display name
@@ -53,14 +64,22 @@ Flags:
   --help                 show usage
 
 Env aliases:
+  AGENTMUX_INSTANCE_NAME (default: claude-code)
   AGENTMUX_TMUX_SESSION_NAME, AGENTMUX_SESSION_NAME
   AGENTMUX_DISPLAY_NAME, AGENTMUX_REMOTE_NAME
   AGENTMUX_DISPLAY_SUFFIX (default: 1; set 0/false/no/off to disable)
   AGENTMUX_RUN_USER (default: $SUDO_USER)
   AGENTMUX_ON_CALENDAR (default: "*-*-* 03:00:00 UTC")
+  AGENTMUX_WORKDIR (default: $USER_HOME/.agentmux/$AGENTMUX_INSTANCE_NAME)
+
+A second (or third, ...) instance can be installed side by side with
+--instance NAME, producing distinct systemd unit names, env file, workdir,
+and (by default) tmux session name.
 EOF
 }
 
+DEFAULT_INSTANCE_NAME="claude-code"
+INSTANCE_NAME="${AGENTMUX_INSTANCE_NAME:-$DEFAULT_INSTANCE_NAME}"
 RAW_SESSION_NAME="${AGENTMUX_TMUX_SESSION_NAME:-${AGENTMUX_SESSION_NAME:-}}"
 RAW_DISPLAY_NAME="${AGENTMUX_DISPLAY_NAME:-${AGENTMUX_REMOTE_NAME:-}}"
 DISPLAY_SUFFIX_ENABLED=1
@@ -73,6 +92,11 @@ PLAN=0
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --instance)
+            [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
+            INSTANCE_NAME="$2"
+            shift 2
+            ;;
         --session-name | --tmux-session)
             [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
             RAW_SESSION_NAME="$2"
@@ -118,7 +142,27 @@ if [ "$PLAN" -eq 0 ] && [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-SESSION_NAME="${RAW_SESSION_NAME:-agentmux}"
+validate_identifier() {
+    local label="$1"
+    local value="$2"
+
+    if ! [[ "$value" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        echo "$label must contain only letters, numbers, dots, underscores, and hyphens" >&2
+        exit 1
+    fi
+}
+
+validate_identifier "instance name" "$INSTANCE_NAME"
+
+if [ -n "$RAW_SESSION_NAME" ]; then
+    SESSION_NAME="$RAW_SESSION_NAME"
+elif [ "$INSTANCE_NAME" = "$DEFAULT_INSTANCE_NAME" ]; then
+    SESSION_NAME="agentmux"
+else
+    SESSION_NAME="$INSTANCE_NAME"
+fi
+
+validate_identifier "tmux session name" "$SESSION_NAME"
 
 machine_name() {
     local name=""
@@ -141,15 +185,19 @@ apply_display_suffix() {
 DISPLAY_NAME="$(apply_display_suffix "${RAW_DISPLAY_NAME:-$(machine_name)}")"
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SERVICE_NAME="agentmux-claude-code.service"
+SERVICE_NAME="agentmux-$INSTANCE_NAME.service"
+UPDATE_SERVICE_NAME="agentmux-$INSTANCE_NAME-update.service"
+TIMER_NAME="agentmux-$INSTANCE_NAME-update.timer"
 ENV_DIR="/etc/agentmux"
-ENV_FILE="$ENV_DIR/claude-code.env"
+ENV_FILE="$ENV_DIR/$INSTANCE_NAME.env"
 
 print_plan() {
+    echo "  instance     : $INSTANCE_NAME"
     echo "  session name : $SESSION_NAME"
     echo "  display name : $DISPLAY_NAME"
     echo "  run as       : ${RUN_USER:-<unset>}"
     echo "  update timer : $ON_CALENDAR"
+    echo "  service      : $SERVICE_NAME"
     echo "  repo dir     : $REPO_DIR"
 }
 
@@ -166,7 +214,7 @@ fi
 
 USER_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6 2>/dev/null || eval echo "~$RUN_USER")"
 CLAUDE_JSON="$USER_HOME/.claude/.claude.json"
-WORKDIR="${AGENTMUX_WORKDIR:-$USER_HOME/.agentmux/claude-code}"
+WORKDIR="${AGENTMUX_WORKDIR:-$USER_HOME/.agentmux/$INSTANCE_NAME}"
 
 claude_is_logged_in() {
     [ -f "$CLAUDE_JSON" ] || return 1
@@ -226,10 +274,12 @@ AGENTMUX_SESSION_NAME=$SESSION_NAME
 AGENTMUX_DISPLAY_NAME=$DISPLAY_NAME
 AGENTMUX_RUN_USER=$RUN_USER
 AGENTMUX_SERVICE_NAME=$SERVICE_NAME
+AGENTMUX_INSTANCE_NAME=$INSTANCE_NAME
 EOF
 
 render() {
     sed \
+        -e "s|@@INSTANCE_NAME@@|$INSTANCE_NAME|g" \
         -e "s|@@SESSION_NAME@@|$SESSION_NAME|g" \
         -e "s|@@RUN_USER@@|$RUN_USER|g" \
         -e "s|@@ENV_FILE@@|$ENV_FILE|g" \
@@ -238,14 +288,14 @@ render() {
         "$1" > "$2"
 }
 
-render "$REPO_DIR/agentmux-claude-code.service.tmpl" "/etc/systemd/system/agentmux-claude-code.service"
-render "$REPO_DIR/agentmux-claude-code-update.service.tmpl" "/etc/systemd/system/agentmux-claude-code-update.service"
-render "$REPO_DIR/agentmux-claude-code-update.timer.tmpl" "/etc/systemd/system/agentmux-claude-code-update.timer"
+render "$REPO_DIR/agentmux-claude-code.service.tmpl" "/etc/systemd/system/$SERVICE_NAME"
+render "$REPO_DIR/agentmux-claude-code-update.service.tmpl" "/etc/systemd/system/$UPDATE_SERVICE_NAME"
+render "$REPO_DIR/agentmux-claude-code-update.timer.tmpl" "/etc/systemd/system/$TIMER_NAME"
 
 systemctl daemon-reload
-systemctl enable --now agentmux-claude-code.service
-systemctl enable --now agentmux-claude-code-update.timer
+systemctl enable --now "$SERVICE_NAME"
+systemctl enable --now "$TIMER_NAME"
 
 echo
 echo "Done. Reattach with: sudo -u $RUN_USER tmux attach -t $SESSION_NAME"
-echo "Update logs: journalctl -u agentmux-claude-code-update.service"
+echo "Update logs: journalctl -u $UPDATE_SERVICE_NAME"

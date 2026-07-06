@@ -8,6 +8,7 @@
 # target user from a LaunchAgent and restarts the tmux session directly.
 set -uo pipefail
 
+: "${AGENTMUX_INSTANCE_NAME:=claude-code}"
 TMUX_SESSION_NAME="${AGENTMUX_TMUX_SESSION_NAME:-${AGENTMUX_SESSION_NAME:-agentmux}}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CURRENT_HOME="${HOME:-}"
@@ -17,7 +18,7 @@ if [ -n "$CURRENT_HOME" ]; then
 else
     export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 fi
-log() { echo "[agentmux-claude-code-update] $*"; }
+log() { echo "[agentmux-$AGENTMUX_INSTANCE_NAME-update] $*"; }
 timestamp() { date '+%Y-%m-%dT%H:%M:%S%z'; }
 
 if [ "$(uname -s)" = "Darwin" ]; then
