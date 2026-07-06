@@ -217,9 +217,10 @@ CLAUDE_JSON="$USER_HOME/.claude/.claude.json"
 WORKDIR="${AGENTMUX_WORKDIR:-$USER_HOME/.agentmux/$INSTANCE_NAME}"
 
 claude_is_logged_in() {
-    [ -f "$CLAUDE_JSON" ] || return 1
-    command -v python3 >/dev/null 2>&1 || return 1
-    python3 -c "
+    # Legacy check: older Claude Code versions recorded login state in this
+    # JSON file. Kept for backward compatibility.
+    if [ -f "$CLAUDE_JSON" ] && command -v python3 >/dev/null 2>&1; then
+        if python3 -c "
 import json, sys
 try:
     with open(sys.argv[1]) as f:
@@ -227,7 +228,26 @@ try:
     sys.exit(0 if d.get('oauthAccount') or d.get('userID') else 1)
 except Exception:
     sys.exit(1)
-" "$CLAUDE_JSON"
+" "$CLAUDE_JSON"; then
+            return 0
+        fi
+    fi
+
+    # Current Claude Code versions may keep credentials in a keyring/secret
+    # store with no on-disk JSON file at all; `claude auth status` is the
+    # authoritative check regardless of where credentials are stored. Must
+    # run as RUN_USER, since credentials are per-user.
+    command -v python3 >/dev/null 2>&1 || return 1
+    local status_json
+    status_json="$(su -s /bin/bash "$RUN_USER" -c 'claude auth status --json' 2>/dev/null)" || return 1
+    python3 -c "
+import json, sys
+try:
+    d = json.loads(sys.argv[1])
+    sys.exit(0 if d.get('loggedIn') else 1)
+except Exception:
+    sys.exit(1)
+" "$status_json"
 }
 
 preaccept_workspace_trust() {

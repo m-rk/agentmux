@@ -435,10 +435,11 @@ attach_tmux_session() {
 }
 
 claude_is_logged_in() {
+    # Legacy check: older Claude Code versions recorded login state in this
+    # JSON file. Kept for backward compatibility.
     local claude_json="$HOME/.claude/.claude.json"
-    [ -f "$claude_json" ] || return 1
-    command -v python3 >/dev/null 2>&1 || return 1
-    python3 -c "
+    if [ -f "$claude_json" ] && command -v python3 >/dev/null 2>&1; then
+        if python3 -c "
 import json, sys
 try:
     with open(sys.argv[1]) as f:
@@ -446,7 +447,26 @@ try:
     sys.exit(0 if d.get('oauthAccount') or d.get('userID') else 1)
 except Exception:
     sys.exit(1)
-" "$claude_json"
+" "$claude_json"; then
+            return 0
+        fi
+    fi
+
+    # Current Claude Code versions may keep credentials in the OS keychain
+    # with no on-disk JSON file at all; `claude auth status` is the
+    # authoritative check regardless of where credentials are stored.
+    command -v claude >/dev/null 2>&1 || return 1
+    command -v python3 >/dev/null 2>&1 || return 1
+    local status_json
+    status_json="$(claude auth status --json 2>/dev/null)" || return 1
+    python3 -c "
+import json, sys
+try:
+    d = json.loads(sys.argv[1])
+    sys.exit(0 if d.get('loggedIn') else 1)
+except Exception:
+    sys.exit(1)
+" "$status_json"
 }
 
 preaccept_workspace_trust() {
