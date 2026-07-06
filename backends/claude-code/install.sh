@@ -202,7 +202,7 @@ fi
 CLAUDE_JSON="$USER_HOME/.claude/.claude.json"
 WORKDIR="${AGENTMUX_WORKDIR:-$USER_HOME/.agentmux/$INSTANCE_NAME}"
 
-# Default display name is "🤹 <user>:<host> <workdir-basename>" — already
+# Default display name is "<user>:<host> 🤹 <workdir-basename>" — already
 # self-identifying (the 🤹 marks it as an agentmux session), so it's left
 # unsuffixed unlike an explicit --display-name, which still gets " agentmux"
 # appended (unless --no-suffix) to distinguish it from an unrelated name.
@@ -213,7 +213,7 @@ else
     if [ "$(real_user_count)" != "1" ]; then
         USER_PREFIX="${RUN_USER:-$(id -un)}:"
     fi
-    DISPLAY_NAME="$(printf '🤹 %s%s %s' "$USER_PREFIX" "$(machine_name)" "$(basename "$WORKDIR")")"
+    DISPLAY_NAME="$(printf '%s%s 🤹 %s' "$USER_PREFIX" "$(machine_name)" "$(basename "$WORKDIR")")"
 fi
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -26,7 +26,7 @@ When run from a terminal, the installer prompts for the tmux session name,
 Claude display name, update time, final confirmation, and whether to attach
 to the tmux session immediately. The generated default tmux name is
 `<machine-slug>-claude-YYYY-MM-DD`; the generated default display name is
-`🤹 <user>:<host> <workdir-basename>` (e.g. `🤹 mark:harley-mini claude-code`)
+`<user>:<host> 🤹 <workdir-basename>` (e.g. `mark:harley-mini 🤹 claude-code`)
 — already self-identifying as an agentmux session, so no suffix is added to
 it. `<host>` is the network/mDNS hostname (e.g. `harley-mini`, the name in
 `harley-mini.local`), not the free-text Computer Name shown in System
@@ -114,7 +114,7 @@ sudo ./install.sh \
   --on-calendar "*-*-* 03:00:00 Australia/Perth"
 ```
 
-The default display name is `🤹 <user>:<host> <workdir-basename>` — already
+The default display name is `<user>:<host> 🤹 <workdir-basename>` — already
 self-identifying as an agentmux session, so no suffix is added to it.
 `<user>:` is omitted on a single-user machine (detected via real,
 non-system `/etc/passwd` accounts). `" agentmux"` is still appended to any
@@ -203,7 +203,7 @@ sudo AGENTMUX_WORKDIR="$HOME/projects/pointpost" ./install.sh \
 This creates `com.agentmux.pointpost[.update]` LaunchAgents (or
 `agentmux-pointpost[.service|-update.service|-update.timer]` on Linux),
 a dedicated workdir, a tmux session named `pointpost` by default, and a
-Remote Control display name of `🤹 <user>:<host> pointpost` by default —
+Remote Control display name of `<user>:<host> 🤹 pointpost` by default —
 each distinct from the default `claude-code` instance so both can run side
 by side without colliding. Remove it with `./uninstall-macos.sh --instance
 pointpost` or `sudo ./uninstall.sh --instance pointpost`.

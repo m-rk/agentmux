@@ -116,7 +116,7 @@ When run from a terminal, the installer prompts for the tmux session name,
 Claude display name, update time, final confirmation, and whether to attach
 to the tmux session immediately. The default tmux name is
 `<machine-slug>-claude-YYYY-MM-DD`; the default display name is
-`🤹 <user>:<host> <workdir-basename>`. For unattended installs, pass flags
+`<user>:<host> 🤹 <workdir-basename>`. For unattended installs, pass flags
 instead:
 
 ```sh
@@ -166,7 +166,7 @@ sudo AGENTMUX_SESSION_NAME="my-session" \
 ```
 
 (`install.sh` also accepts flags, e.g. `--session-name`/`--on-calendar`, and
-defaults the Remote Control display name to `🤹 <user>:<host> <workdir-basename>`
+defaults the Remote Control display name to `<user>:<host> 🤹 <workdir-basename>`
 — see [`backends/claude-code`](backends/claude-code) for the full list.)
 
 This sets up two systemd units (running as whichever user invoked `sudo`,

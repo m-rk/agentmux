@@ -34,7 +34,7 @@
 # side-by-side with its own labels, workdir, and default tmux
 # session/display name derived from NAME instead.
 #
-# The display name defaults to "🤹 <user>:<host> <workdir-basename>" when
+# The display name defaults to "<user>:<host> 🤹 <workdir-basename>" when
 # unset, which already self-identifies as an agentmux session, so no suffix
 # is added to it. An explicit name (flag, env var, or typed at the prompt)
 # still gets " agentmux" appended unless --no-suffix / AGENTMUX_DISPLAY_SUFFIX=0
@@ -142,7 +142,7 @@ default_display_name() {
     if [ "$(real_user_count)" != "1" ]; then
         user_prefix="$(id -un):"
     fi
-    printf '🤹 %s%s %s' "$user_prefix" "$(machine_name)" "$(basename "$WORKDIR")"
+    printf '%s%s 🤹 %s' "$user_prefix" "$(machine_name)" "$(basename "$WORKDIR")"
 }
 
 apply_display_suffix() {
@@ -270,7 +270,7 @@ UPDATE_LABEL="com.agentmux.$INSTANCE_NAME.update"
 START_PLIST="$LAUNCH_AGENTS_DIR/$START_LABEL.plist"
 UPDATE_PLIST="$LAUNCH_AGENTS_DIR/$UPDATE_LABEL.plist"
 
-# Default display name is "🤹 <user>:<host> <workdir-basename>" — already
+# Default display name is "<user>:<host> 🤹 <workdir-basename>" — already
 # self-identifying (the 🤹 marks it as an agentmux session), so it's left
 # unsuffixed unlike an explicit --display-name, which still gets " agentmux"
 # appended (unless --no-suffix) to distinguish it from an unrelated name.
