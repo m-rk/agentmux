@@ -167,10 +167,19 @@ validate_identifier "tmux session name" "$SESSION_NAME"
 machine_name() {
     local name=""
     name="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+    name="${name%.local}"
     if [ -z "$name" ]; then
         name="linux"
     fi
     printf '%s' "$name"
+}
+
+# Real (human) user accounts only -- excludes system/service accounts,
+# which conventionally have UID < 1000 (Debian/Ubuntu/RHEL/Fedora), plus
+# the "nobody" account (UID 65534) which falls outside that range.
+real_user_count() {
+    [ -r /etc/passwd ] || { echo 0; return; }
+    awk -F: '$3 >= 1000 && $3 != 65534 {c++} END {print c+0}' /etc/passwd
 }
 
 apply_display_suffix() {
@@ -200,7 +209,11 @@ WORKDIR="${AGENTMUX_WORKDIR:-$USER_HOME/.agentmux/$INSTANCE_NAME}"
 if [ -n "$RAW_DISPLAY_NAME" ]; then
     DISPLAY_NAME="$(apply_display_suffix "$RAW_DISPLAY_NAME")"
 else
-    DISPLAY_NAME="$(printf '🤹 %s:%s %s' "${RUN_USER:-$(id -un)}" "$(machine_name)" "$(basename "$WORKDIR")")"
+    USER_PREFIX=""
+    if [ "$(real_user_count)" != "1" ]; then
+        USER_PREFIX="${RUN_USER:-$(id -un)}:"
+    fi
+    DISPLAY_NAME="$(printf '🤹 %s%s %s' "$USER_PREFIX" "$(machine_name)" "$(basename "$WORKDIR")")"
 fi
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

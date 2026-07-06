@@ -96,17 +96,29 @@ ATTACH_AFTER_INSTALL="${AGENTMUX_ATTACH_AFTER_INSTALL:-}"
 machine_name() {
     local name=""
 
+    # LocalHostName is the mDNS/Bonjour name (e.g. "harley-mini", the
+    # <name> in <name>.local) -- distinct from the free-text ComputerName
+    # (e.g. "Harley Mini") shown in System Settings, which isn't a valid
+    # hostname (can contain spaces) and needn't match it.
     if command -v scutil >/dev/null 2>&1; then
-        name="$(scutil --get ComputerName 2>/dev/null || true)"
+        name="$(scutil --get LocalHostName 2>/dev/null || true)"
     fi
     if [ -z "$name" ]; then
         name="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
     fi
+    name="${name%.local}"
     if [ -z "$name" ]; then
         name="mac"
     fi
 
     printf '%s' "$name"
+}
+
+# Real (human) user accounts only -- excludes macOS system/service accounts,
+# which all have UID < 500 by convention.
+real_user_count() {
+    command -v dscl >/dev/null 2>&1 || { echo 0; return; }
+    dscl . -list /Users UniqueID 2>/dev/null | awk '{if ($2+0 >= 500) c++} END {print c+0}'
 }
 
 slugify() {
@@ -126,7 +138,11 @@ default_tmux_session() {
 }
 
 default_display_name() {
-    printf '🤹 %s:%s %s' "$(id -un)" "$(machine_name)" "$(basename "$WORKDIR")"
+    local user_prefix=""
+    if [ "$(real_user_count)" != "1" ]; then
+        user_prefix="$(id -un):"
+    fi
+    printf '🤹 %s%s %s' "$user_prefix" "$(machine_name)" "$(basename "$WORKDIR")"
 }
 
 apply_display_suffix() {

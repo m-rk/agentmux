@@ -26,10 +26,15 @@ When run from a terminal, the installer prompts for the tmux session name,
 Claude display name, update time, final confirmation, and whether to attach
 to the tmux session immediately. The generated default tmux name is
 `<machine-slug>-claude-YYYY-MM-DD`; the generated default display name is
-`🤹 <user>:<host> <workdir-basename>` (e.g. `🤹 mark:Harley Mini claude-code`)
+`🤹 <user>:<host> <workdir-basename>` (e.g. `🤹 mark:harley-mini claude-code`)
 — already self-identifying as an agentmux session, so no suffix is added to
-it. `" agentmux"` is still appended to any custom display name (flag, env
-var, or typed at the prompt) unless you pass `--no-suffix`.
+it. `<host>` is the network/mDNS hostname (e.g. `harley-mini`, the name in
+`harley-mini.local`), not the free-text Computer Name shown in System
+Settings, since that can contain spaces/punctuation a hostname can't. The
+`<user>:` part is omitted entirely on a single-user machine (detected via
+real, non-system macOS accounts) since it adds nothing there. `" agentmux"`
+is still appended to any custom display name (flag, env var, or typed at
+the prompt) unless you pass `--no-suffix`.
 
 For unattended installs, pass flags instead:
 
@@ -111,9 +116,11 @@ sudo ./install.sh \
 
 The default display name is `🤹 <user>:<host> <workdir-basename>` — already
 self-identifying as an agentmux session, so no suffix is added to it.
-`" agentmux"` is still appended to any custom `--display-name`/
-`AGENTMUX_DISPLAY_NAME` too, unless you pass `--no-suffix`. Use
-`./install.sh --plan` (no `sudo` required) to preview the resolved values
+`<user>:` is omitted on a single-user machine (detected via real,
+non-system `/etc/passwd` accounts). `" agentmux"` is still appended to any
+custom `--display-name`/`AGENTMUX_DISPLAY_NAME` too, unless you pass
+`--no-suffix`. Use `./install.sh --plan` (no `sudo` required) to preview
+the resolved values
 without writing anything.
 
 This writes:
