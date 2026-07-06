@@ -34,11 +34,11 @@
 # side-by-side with its own labels, workdir, and default tmux
 # session/display name derived from NAME instead.
 #
-# The display name defaults to "<machine name> agentmux" when unset and the
-# instance is the default "claude-code" (or "<instance name> agentmux" for a
-# non-default instance), and gets " agentmux" appended to any explicit name
-# too (flag, env var, or typed at the prompt) unless --no-suffix /
-# AGENTMUX_DISPLAY_SUFFIX=0 is given.
+# The display name defaults to "🤹 <user>:<host> <workdir-basename>" when
+# unset, which already self-identifies as an agentmux session, so no suffix
+# is added to it. An explicit name (flag, env var, or typed at the prompt)
+# still gets " agentmux" appended unless --no-suffix / AGENTMUX_DISPLAY_SUFFIX=0
+# is given.
 set -euo pipefail
 
 usage() {
@@ -123,6 +123,10 @@ default_tmux_session() {
     fi
 
     printf '%s-claude-%s' "$base" "$(date +%Y-%m-%d)"
+}
+
+default_display_name() {
+    printf '🤹 %s:%s %s' "$(id -un)" "$(machine_name)" "$(basename "$WORKDIR")"
 }
 
 apply_display_suffix() {
@@ -236,14 +240,6 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-if [ -n "$RAW_DISPLAY_NAME" ]; then
-    DISPLAY_NAME="$(apply_display_suffix "$RAW_DISPLAY_NAME")"
-elif [ "$INSTANCE_NAME" = "$DEFAULT_INSTANCE_NAME" ]; then
-    DISPLAY_NAME="$(apply_display_suffix "$(machine_name)")"
-else
-    DISPLAY_NAME="$(apply_display_suffix "$INSTANCE_NAME")"
-fi
-
 if [ -z "$TMUX_SESSION_NAME" ]; then
     if [ "$INSTANCE_NAME" = "$DEFAULT_INSTANCE_NAME" ]; then
         TMUX_SESSION_NAME="$(default_tmux_session)"
@@ -257,6 +253,16 @@ START_LABEL="com.agentmux.$INSTANCE_NAME"
 UPDATE_LABEL="com.agentmux.$INSTANCE_NAME.update"
 START_PLIST="$LAUNCH_AGENTS_DIR/$START_LABEL.plist"
 UPDATE_PLIST="$LAUNCH_AGENTS_DIR/$UPDATE_LABEL.plist"
+
+# Default display name is "🤹 <user>:<host> <workdir-basename>" — already
+# self-identifying (the 🤹 marks it as an agentmux session), so it's left
+# unsuffixed unlike an explicit --display-name, which still gets " agentmux"
+# appended (unless --no-suffix) to distinguish it from an unrelated name.
+if [ -n "$RAW_DISPLAY_NAME" ]; then
+    DISPLAY_NAME="$(apply_display_suffix "$RAW_DISPLAY_NAME")"
+else
+    DISPLAY_NAME="$(default_display_name)"
+fi
 
 require_int_range() {
     local name="$1"
@@ -321,7 +327,10 @@ confirm_attach() {
 
 if [ "$PLAN" -eq 0 ] && [ "$YES" -eq 0 ] && [ -t 0 ]; then
     TMUX_SESSION_NAME="$(prompt_value "Tmux session name" "$TMUX_SESSION_NAME")"
-    DISPLAY_NAME="$(apply_display_suffix "$(prompt_value "Claude display name" "$DISPLAY_NAME")")"
+    PROMPTED_DISPLAY_NAME="$(prompt_value "Claude display name" "$DISPLAY_NAME")"
+    if [ "$PROMPTED_DISPLAY_NAME" != "$DISPLAY_NAME" ]; then
+        DISPLAY_NAME="$(apply_display_suffix "$PROMPTED_DISPLAY_NAME")"
+    fi
     parse_update_time "$(prompt_value "Update time" "$(printf '%02d:%02d' "$((10#$UPDATE_HOUR))" "$((10#$UPDATE_MINUTE))")")"
 
     if ! confirm_install; then

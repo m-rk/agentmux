@@ -182,7 +182,26 @@ apply_display_suffix() {
     fi
 }
 
-DISPLAY_NAME="$(apply_display_suffix "${RAW_DISPLAY_NAME:-$(machine_name)}")"
+# Resolved early (tolerating an unset RUN_USER, e.g. a --plan preview
+# without sudo) so the default display name can include the workdir
+# basename, matching install-macos.sh.
+if [ -n "$RUN_USER" ]; then
+    USER_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6 2>/dev/null || eval echo "~$RUN_USER")"
+else
+    USER_HOME="$HOME"
+fi
+CLAUDE_JSON="$USER_HOME/.claude/.claude.json"
+WORKDIR="${AGENTMUX_WORKDIR:-$USER_HOME/.agentmux/$INSTANCE_NAME}"
+
+# Default display name is "🤹 <user>:<host> <workdir-basename>" — already
+# self-identifying (the 🤹 marks it as an agentmux session), so it's left
+# unsuffixed unlike an explicit --display-name, which still gets " agentmux"
+# appended (unless --no-suffix) to distinguish it from an unrelated name.
+if [ -n "$RAW_DISPLAY_NAME" ]; then
+    DISPLAY_NAME="$(apply_display_suffix "$RAW_DISPLAY_NAME")"
+else
+    DISPLAY_NAME="$(printf '🤹 %s:%s %s' "${RUN_USER:-$(id -un)}" "$(machine_name)" "$(basename "$WORKDIR")")"
+fi
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_NAME="agentmux-$INSTANCE_NAME.service"
@@ -195,6 +214,7 @@ print_plan() {
     echo "  instance     : $INSTANCE_NAME"
     echo "  session name : $SESSION_NAME"
     echo "  display name : $DISPLAY_NAME"
+    echo "  workdir      : $WORKDIR"
     echo "  run as       : ${RUN_USER:-<unset>}"
     echo "  update timer : $ON_CALENDAR"
     echo "  service      : $SERVICE_NAME"
@@ -211,10 +231,6 @@ if [ -z "$RUN_USER" ]; then
     echo "Could not determine a user to run as; set AGENTMUX_RUN_USER or --run-user explicitly" >&2
     exit 1
 fi
-
-USER_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6 2>/dev/null || eval echo "~$RUN_USER")"
-CLAUDE_JSON="$USER_HOME/.claude/.claude.json"
-WORKDIR="${AGENTMUX_WORKDIR:-$USER_HOME/.agentmux/$INSTANCE_NAME}"
 
 claude_is_logged_in() {
     # Legacy check: older Claude Code versions recorded login state in this

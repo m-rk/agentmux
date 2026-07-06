@@ -26,9 +26,10 @@ When run from a terminal, the installer prompts for the tmux session name,
 Claude display name, update time, final confirmation, and whether to attach
 to the tmux session immediately. The generated default tmux name is
 `<machine-slug>-claude-YYYY-MM-DD`; the generated default display name is
-`<machine-name> agentmux`, and `" agentmux"` is appended to any custom
-display name too (flag, env var, or typed at the prompt) unless you pass
-`--no-suffix`.
+`🤹 <user>:<host> <workdir-basename>` (e.g. `🤹 mark:Harley Mini claude-code`)
+— already self-identifying as an agentmux session, so no suffix is added to
+it. `" agentmux"` is still appended to any custom display name (flag, env
+var, or typed at the prompt) unless you pass `--no-suffix`.
 
 For unattended installs, pass flags instead:
 
@@ -52,9 +53,10 @@ make that explicit in scripts.
 Use `./install-macos.sh --plan` to preview the LaunchAgents and settings
 without writing files.
 
-The installer requires Claude Code to already be logged in — it checks
-`~/.claude/.claude.json` for an existing session and exits early with a
-helpful message if none is found. It also pre-accepts the workspace trust
+The installer requires Claude Code to already be logged in — it checks via
+`claude auth status` (falling back to the legacy `~/.claude/.claude.json`
+file for older Claude Code versions) and exits early with a helpful message
+if neither shows a logged-in session. It also pre-accepts the workspace trust
 for the dedicated workdir (`~/.agentmux/claude-code` by default) so the
 session starts fully unattended.
 
@@ -107,10 +109,12 @@ sudo ./install.sh \
   --on-calendar "*-*-* 03:00:00 Australia/Perth"
 ```
 
-The default display name is `<machine-name> agentmux`, and `" agentmux"` is
-appended to any custom `--display-name`/`AGENTMUX_DISPLAY_NAME` too, unless
-you pass `--no-suffix`. Use `./install.sh --plan` (no `sudo` required) to
-preview the resolved values without writing anything.
+The default display name is `🤹 <user>:<host> <workdir-basename>` — already
+self-identifying as an agentmux session, so no suffix is added to it.
+`" agentmux"` is still appended to any custom `--display-name`/
+`AGENTMUX_DISPLAY_NAME` too, unless you pass `--no-suffix`. Use
+`./install.sh --plan` (no `sudo` required) to preview the resolved values
+without writing anything.
 
 This writes:
 
@@ -184,16 +188,15 @@ instance name, `--tmux-session`/`--display-name`):
   --workdir "$HOME/projects/pointpost" \
   --yes
 
-# Linux
-sudo ./install.sh \
-  --instance pointpost \
-  --workdir "$HOME/projects/pointpost"
+# Linux (no --workdir flag; use the env var instead)
+sudo AGENTMUX_WORKDIR="$HOME/projects/pointpost" ./install.sh \
+  --instance pointpost
 ```
 
 This creates `com.agentmux.pointpost[.update]` LaunchAgents (or
 `agentmux-pointpost[.service|-update.service|-update.timer]` on Linux),
 a dedicated workdir, a tmux session named `pointpost` by default, and a
-Remote Control display name of `pointpost agentmux` by default — each
-distinct from the default `claude-code` instance so both can run side by
-side without colliding. Remove it with `./uninstall-macos.sh --instance
+Remote Control display name of `🤹 <user>:<host> pointpost` by default —
+each distinct from the default `claude-code` instance so both can run side
+by side without colliding. Remove it with `./uninstall-macos.sh --instance
 pointpost` or `sudo ./uninstall.sh --instance pointpost`.
