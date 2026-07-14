@@ -1,7 +1,9 @@
 #!/bin/bash
 # Nightly maintenance for an agentmux Claude Code session: updates the
-# Claude Code CLI and, only if the version actually changed, restarts the
-# running tmux session so it picks up the new binary.
+# Claude Code CLI and restarts the tmux session if the version changed or
+# the session isn't actually running any more (e.g. it crashed, or died as
+# collateral from another instance's restart — see the -L note in
+# rc-start.sh).
 #
 # On Linux this runs as root from the systemd *-update.service unit, then
 # performs npm/claude work as AGENTMUX_RUN_USER. On macOS this runs as the
@@ -10,6 +12,7 @@ set -uo pipefail
 
 : "${AGENTMUX_INSTANCE_NAME:=claude-code}"
 TMUX_SESSION_NAME="${AGENTMUX_TMUX_SESSION_NAME:-${AGENTMUX_SESSION_NAME:-agentmux}}"
+TMUX_SOCKET="${AGENTMUX_TMUX_SOCKET:-agentmux-$AGENTMUX_INSTANCE_NAME}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CURRENT_HOME="${HOME:-}"
 
@@ -35,20 +38,24 @@ if [ "$(uname -s)" = "Darwin" ]; then
     AFTER=$(claude --version 2>&1)
     log "version after update: $AFTER"
 
-    if [ "$BEFORE" = "$AFTER" ]; then
-        log "no version change, nothing to restart"
+    if [ "$BEFORE" = "$AFTER" ] && tmux -L "$TMUX_SOCKET" has-session -t "$TMUX_SESSION_NAME" 2>/dev/null; then
+        log "no version change and $TMUX_SESSION_NAME session is already running"
         exit 0
     fi
 
-    log "restarting tmux session $TMUX_SESSION_NAME ($BEFORE -> $AFTER)"
-    tmux kill-session -t "$TMUX_SESSION_NAME" 2>/dev/null || true
+    if [ "$BEFORE" != "$AFTER" ]; then
+        log "restarting tmux session $TMUX_SESSION_NAME ($BEFORE -> $AFTER)"
+        tmux -L "$TMUX_SOCKET" kill-session -t "$TMUX_SESSION_NAME" 2>/dev/null || true
+    else
+        log "$TMUX_SESSION_NAME session is missing; starting it"
+    fi
     "$SCRIPT_DIR/rc-start.sh"
 
     sleep 5
-    if tmux has-session -t "$TMUX_SESSION_NAME" 2>/dev/null; then
-        log "$TMUX_SESSION_NAME session is back up on $AFTER"
+    if tmux -L "$TMUX_SOCKET" has-session -t "$TMUX_SESSION_NAME" 2>/dev/null; then
+        log "$TMUX_SESSION_NAME session is up on $AFTER"
     else
-        log "ERROR: $TMUX_SESSION_NAME session did not come back up after updating to $AFTER"
+        log "ERROR: $TMUX_SESSION_NAME session did not come up on $AFTER"
         exit 1
     fi
 
@@ -73,18 +80,22 @@ fi
 AFTER=$("${AS_USER[@]}" claude --version 2>&1)
 log "version after update: $AFTER"
 
-if [ "$BEFORE" = "$AFTER" ]; then
-    log "no version change, nothing to restart"
+if [ "$BEFORE" = "$AFTER" ] && "${AS_USER[@]}" tmux -L "$TMUX_SOCKET" has-session -t "$TMUX_SESSION_NAME" 2>/dev/null; then
+    log "no version change and $TMUX_SESSION_NAME session is already running"
     exit 0
 fi
 
-log "restarting $SERVICE_NAME ($BEFORE -> $AFTER)"
+if [ "$BEFORE" != "$AFTER" ]; then
+    log "restarting $SERVICE_NAME ($BEFORE -> $AFTER)"
+else
+    log "$TMUX_SESSION_NAME session is missing; restarting $SERVICE_NAME to bring it back"
+fi
 systemctl restart "$SERVICE_NAME"
 
 sleep 5
-if "${AS_USER[@]}" tmux has-session -t "$TMUX_SESSION_NAME" 2>/dev/null; then
-    log "$TMUX_SESSION_NAME session is back up on $AFTER"
+if "${AS_USER[@]}" tmux -L "$TMUX_SOCKET" has-session -t "$TMUX_SESSION_NAME" 2>/dev/null; then
+    log "$TMUX_SESSION_NAME session is up on $AFTER"
 else
-    log "ERROR: $TMUX_SESSION_NAME session did not come back up after updating to $AFTER"
+    log "ERROR: $TMUX_SESSION_NAME session did not come up on $AFTER"
     exit 1
 fi

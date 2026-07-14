@@ -8,6 +8,7 @@ set -uo pipefail
 : "${AGENTMUX_PROVIDER:=ollama}"
 : "${AGENTMUX_MODEL:=gpt-oss:20b-cloud}"
 : "${AGENTMUX_TMUX_SESSION_NAME:=${AGENTMUX_SESSION_NAME:-$AGENTMUX_INSTANCE_NAME}}"
+: "${AGENTMUX_TMUX_SOCKET:=agentmux-$AGENTMUX_INSTANCE_NAME}"
 : "${AGENTMUX_WORKDIR:=$HOME/.agentmux/$AGENTMUX_INSTANCE_NAME}"
 : "${AGENTMUX_PROVIDER_WAIT_SECONDS:=60}"
 
@@ -125,6 +126,9 @@ require_supported
 wait_for_provider
 configure_agent
 
-if ! tmux has-session -t "$AGENTMUX_TMUX_SESSION_NAME" 2>/dev/null; then
-    tmux new-session -d -s "$AGENTMUX_TMUX_SESSION_NAME" -c "$AGENTMUX_WORKDIR" "$(launch_command)"
+# Each instance gets its own tmux server (-L) rather than the user's default
+# one — see the matching note in backends/claude-code/rc-start.sh for why
+# sharing a server across instances is unsafe.
+if ! tmux -L "$AGENTMUX_TMUX_SOCKET" has-session -t "$AGENTMUX_TMUX_SESSION_NAME" 2>/dev/null; then
+    tmux -L "$AGENTMUX_TMUX_SOCKET" new-session -d -s "$AGENTMUX_TMUX_SESSION_NAME" -c "$AGENTMUX_WORKDIR" "$(launch_command)"
 fi

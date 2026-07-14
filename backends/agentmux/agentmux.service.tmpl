@@ -9,7 +9,7 @@ RemainAfterExit=yes
 User=@@RUN_USER@@
 EnvironmentFile=@@ENV_FILE@@
 ExecStart=@@REPO_DIR@@/rc-start.sh
-ExecStop=/usr/bin/tmux kill-session -t @@TMUX_SESSION_NAME@@
+ExecStop=/usr/bin/tmux -L agentmux-@@INSTANCE_NAME@@ kill-session -t @@TMUX_SESSION_NAME@@
 TimeoutStartSec=30
 
 [Install]

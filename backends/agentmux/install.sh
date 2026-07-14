@@ -169,6 +169,7 @@ print_plan() {
     echo "  provider url  : $PROVIDER_BASE_URL"
     echo "  provider wait : ${PROVIDER_WAIT_SECONDS}s"
     echo "  tmux session  : $TMUX_SESSION_NAME"
+    echo "  tmux socket   : agentmux-$INSTANCE_NAME"
     echo "  run as        : $RUN_USER"
     echo "  workdir       : $WORKDIR"
     echo "  update timer  : $ON_CALENDAR"
@@ -242,5 +243,5 @@ systemctl enable --now "$SERVICE_NAME"
 systemctl enable --now "$TIMER_NAME"
 
 echo
-echo "Done. Reattach with: sudo -u $RUN_USER tmux attach -t $TMUX_SESSION_NAME"
+echo "Done. Reattach with: sudo -u $RUN_USER tmux -L agentmux-$INSTANCE_NAME attach -t $TMUX_SESSION_NAME"
 echo "Update logs: journalctl -u $UPDATE_SERVICE_NAME"

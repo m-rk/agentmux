@@ -308,6 +308,7 @@ print_plan() {
     echo "  model         : $MODEL"
     echo "  provider url  : $PROVIDER_BASE_URL"
     echo "  tmux session  : $TMUX_SESSION_NAME"
+    echo "  tmux socket   : agentmux-$INSTANCE_NAME"
     echo "  workdir       : $WORKDIR"
     echo "  update time   : $(printf '%02d:%02d' "$UPDATE_HOUR" "$UPDATE_MINUTE") local"
     echo "  start check   : every ${START_INTERVAL}s"
@@ -401,6 +402,6 @@ launchctl bootstrap "$DOMAIN" "$UPDATE_PLIST"
 launchctl kickstart -k "$DOMAIN/$START_LABEL" 2>/dev/null || true
 
 echo
-echo "Done. Reattach with: tmux attach -t $TMUX_SESSION_NAME"
+echo "Done. Reattach with: tmux -L agentmux-$INSTANCE_NAME attach -t $TMUX_SESSION_NAME"
 echo "Logs: tail -f '$LOG_DIR/$INSTANCE_NAME.log' '$LOG_DIR/$INSTANCE_NAME.err.log'"
 echo "Status: launchctl print '$DOMAIN/$START_LABEL'"

@@ -65,10 +65,15 @@ and shouldn't have to. Instead the daemon hashes `capture-pane` output on
 every poll and tracks when that hash last changed itself
 (`internal/discovery`'s `activityCache`).
 
-tmux servers are also per-user (socket under `/tmp/tmux-<uid>/default`), and
-`agentmuxd` runs as root — so discovery globs every per-user socket on the
-host rather than assuming a single default one. Root can connect to any
-user's tmux socket regardless of file ownership.
+tmux servers are also per-user, and — since a shared server means one
+instance's systemd restart can cgroup-kill every other instance's session
+along with it (hit in practice: an unattended-upgrades-triggered restart of
+one instance silently took down two unrelated ones) — each instance now
+runs its own tmux server, named `agentmux-<instance>` rather than the user's
+default `default` socket. `agentmuxd` runs as root, so discovery globs every
+per-user, per-instance socket (`/tmp/tmux-<uid>/agentmux-*`) directly rather
+than talking to a single default server. Root can connect to any user's
+tmux socket regardless of file ownership.
 
 ## Transport & auth
 
