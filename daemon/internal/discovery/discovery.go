@@ -42,6 +42,7 @@ type Instance struct {
 	Status       Status
 	PID          int64
 	LastActivity time.Time
+	StartedAt    time.Time // tmux session creation time; zero if no live session
 }
 
 // List reads every *.env file in /etc/agentmux and merges in tmux liveness.
@@ -117,6 +118,7 @@ func instanceFromEnv(filename string, fields map[string]string, panes map[string
 		inst.PID = pane.pid
 		inst.LastActivity = pane.lastChanged
 		inst.TmuxSocket = pane.socket
+		inst.StartedAt = pane.startedAt
 		if time.Since(pane.lastChanged) < idleThreshold {
 			inst.Status = StatusRunning
 		} else {
@@ -154,6 +156,7 @@ type tmuxPane struct {
 	pid         int64
 	lastChanged time.Time
 	socket      string
+	startedAt   time.Time
 }
 
 // activityCache tracks, per session, a hash of the pane's last-seen content
@@ -210,7 +213,7 @@ func tmuxPanes() (map[string]tmuxPane, error) {
 	var lastErr error
 	for _, socket := range sockets {
 		out, err := exec.Command("tmux", "-S", socket, "list-panes", "-a", "-F",
-			"#{session_name}\t#{pane_pid}").Output()
+			"#{session_name}\t#{pane_pid}\t#{session_created}").Output()
 		if err != nil {
 			lastErr = err
 			continue
@@ -218,7 +221,7 @@ func tmuxPanes() (map[string]tmuxPane, error) {
 		scanner := bufio.NewScanner(strings.NewReader(string(out)))
 		for scanner.Scan() {
 			parts := strings.Split(scanner.Text(), "\t")
-			if len(parts) != 2 {
+			if len(parts) != 3 {
 				continue
 			}
 			session := parts[0]
@@ -226,6 +229,10 @@ func tmuxPanes() (map[string]tmuxPane, error) {
 				continue // already recorded the lead pane for this session
 			}
 			pid, _ := strconv.ParseInt(parts[1], 10, 64)
+			var startedAt time.Time
+			if created, err := strconv.ParseInt(parts[2], 10, 64); err == nil {
+				startedAt = time.Unix(created, 0)
+			}
 
 			content, capErr := exec.Command("tmux", "-S", socket, "capture-pane", "-p", "-t", session).Output()
 			var lastChanged time.Time
@@ -233,7 +240,7 @@ func tmuxPanes() (map[string]tmuxPane, error) {
 				lastChanged = observeActivity(session, content)
 			}
 
-			panes[session] = tmuxPane{pid: pid, lastChanged: lastChanged, socket: socket}
+			panes[session] = tmuxPane{pid: pid, lastChanged: lastChanged, socket: socket, startedAt: startedAt}
 		}
 	}
 	if len(panes) == 0 {

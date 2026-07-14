@@ -239,8 +239,19 @@ func toProto(inst discovery.Instance) *pb.Instance {
 		TmuxSession:      inst.TmuxSession,
 		Status:           status,
 		Pid:              inst.PID,
-		LastActivityUnix: inst.LastActivity.Unix(),
+		LastActivityUnix: unixOrZero(inst.LastActivity),
+		StartedAtUnix:    unixOrZero(inst.StartedAt),
 	}
+}
+
+// unixOrZero avoids reporting the zero time.Time's Unix() value (a large
+// negative number, year 1) as a real timestamp for instances with no live
+// tmux session.
+func unixOrZero(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Unix()
 }
 
 func sameState(a, b discovery.Instance) bool {

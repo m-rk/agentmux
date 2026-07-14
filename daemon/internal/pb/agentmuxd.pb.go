@@ -185,6 +185,7 @@ type Instance struct {
 	Status           Status                 `protobuf:"varint,7,opt,name=status,proto3,enum=agentmuxd.v1.Status" json:"status,omitempty"`
 	Pid              int64                  `protobuf:"varint,8,opt,name=pid,proto3" json:"pid,omitempty"`
 	LastActivityUnix int64                  `protobuf:"varint,9,opt,name=last_activity_unix,json=lastActivityUnix,proto3" json:"last_activity_unix,omitempty"`
+	StartedAtUnix    int64                  `protobuf:"varint,10,opt,name=started_at_unix,json=startedAtUnix,proto3" json:"started_at_unix,omitempty"` // 0 if the instance has no live tmux session
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -278,6 +279,13 @@ func (x *Instance) GetPid() int64 {
 func (x *Instance) GetLastActivityUnix() int64 {
 	if x != nil {
 		return x.LastActivityUnix
+	}
+	return 0
+}
+
+func (x *Instance) GetStartedAtUnix() int64 {
+	if x != nil {
+		return x.StartedAtUnix
 	}
 	return 0
 }
@@ -834,7 +842,7 @@ var File_agentmuxd_proto protoreflect.FileDescriptor
 
 const file_agentmuxd_proto_rawDesc = "" +
 	"\n" +
-	"\x0fagentmuxd.proto\x12\fagentmuxd.v1\"\x91\x02\n" +
+	"\x0fagentmuxd.proto\x12\fagentmuxd.v1\"\xb9\x02\n" +
 	"\bInstance\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05agent\x18\x02 \x01(\tR\x05agent\x12\x1a\n" +
@@ -844,7 +852,9 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\ftmux_session\x18\x06 \x01(\tR\vtmuxSession\x12,\n" +
 	"\x06status\x18\a \x01(\x0e2\x14.agentmuxd.v1.StatusR\x06status\x12\x10\n" +
 	"\x03pid\x18\b \x01(\x03R\x03pid\x12,\n" +
-	"\x12last_activity_unix\x18\t \x01(\x03R\x10lastActivityUnix\"\x16\n" +
+	"\x12last_activity_unix\x18\t \x01(\x03R\x10lastActivityUnix\x12&\n" +
+	"\x0fstarted_at_unix\x18\n" +
+	" \x01(\x03R\rstartedAtUnix\"\x16\n" +
 	"\x14ListInstancesRequest\"M\n" +
 	"\x15ListInstancesResponse\x124\n" +
 	"\tinstances\x18\x01 \x03(\v2\x16.agentmuxd.v1.InstanceR\tinstances\"\x15\n" +
