@@ -132,12 +132,18 @@ type model struct {
 	status    string
 	err       string
 	quitting  bool
+	width     int
+	height    int
 }
 
 func (m *model) Init() tea.Cmd { return nil }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		return m, nil
+
 	case eventMsg:
 		m.applyEvent(msg.host, msg.ev)
 		return m, nil
@@ -304,21 +310,53 @@ func statusLabel(s pb.Status) string {
 	}
 }
 
+// Fixed column widths for the table. WORKDIR gets whatever's left of the
+// terminal width, since it's the last column and tends to be the longest.
+const (
+	colHost   = 10
+	colName   = 16
+	colAgent  = 12
+	colModel  = 20
+	colStatus = 8
+	// 5 columns + "> "/"  " prefix + one space separator after each fixed column.
+	fixedColsWidth  = 2 + colHost + 1 + colName + 1 + colAgent + 1 + colModel + 1 + colStatus + 1
+	minWorkdirWidth = 12
+	defaultWidth    = 120 // used before the first WindowSizeMsg arrives
+)
+
+func (m *model) workdirWidth() int {
+	w := m.width
+	if w == 0 {
+		w = defaultWidth
+	}
+	if avail := w - fixedColsWidth; avail > minWorkdirWidth {
+		return avail
+	}
+	return minWorkdirWidth
+}
+
 func (m *model) View() string {
 	if m.quitting {
 		return ""
 	}
 
+	workdirWidth := m.workdirWidth()
 	var lines []string
-	lines = append(lines, headerStyle.Render(fmt.Sprintf("%-10s %-16s %-12s %-24s %-8s %s", "HOST", "NAME", "AGENT", "MODEL", "STATUS", "WORKDIR")))
+	lines = append(lines, "  "+headerStyle.Render(fmt.Sprintf("%-*s %-*s %-*s %-*s %-*s %-*s",
+		colHost, "HOST", colName, "NAME", colAgent, "AGENT", colModel, "MODEL", colStatus, "STATUS", workdirWidth, "WORKDIR")))
 
 	if len(m.instances) == 0 {
 		lines = append(lines, dimStyle.Render("no instances found"))
 	}
 	for i, r := range m.instances {
 		inst := r.inst
-		line := fmt.Sprintf("%-10s %-16s %-12s %-24s %-8s %s",
-			r.host, inst.Name, inst.Agent, truncate(inst.Model, 24), statusLabel(inst.Status), inst.Workdir)
+		line := fmt.Sprintf("%-*s %-*s %-*s %-*s %-*s %-*s",
+			colHost, truncate(r.host, colHost),
+			colName, truncate(inst.Name, colName),
+			colAgent, truncate(inst.Agent, colAgent),
+			colModel, truncate(inst.Model, colModel),
+			colStatus, statusLabel(inst.Status),
+			workdirWidth, truncate(inst.Workdir, workdirWidth))
 		line = statusStyle[inst.Status].Render(line)
 		if i == m.cursor {
 			line = selectedStyle.Render("> ") + line
@@ -340,6 +378,9 @@ func (m *model) View() string {
 	}
 
 	lines = append(lines, "")
+	lines = append(lines, m.detailPanel()...)
+
+	lines = append(lines, "")
 	switch {
 	case m.confirm != pb.ControlAction_CONTROL_UNKNOWN:
 		lines = append(lines, errStyle.Render(fmt.Sprintf("confirm %s on %q? (y/n)", confirmLabel(m.confirm), m.selected().inst.Name)))
@@ -351,6 +392,75 @@ func (m *model) View() string {
 
 	lines = append(lines, dimStyle.Render("a attach  r restart  s stop  x start  q quit"))
 	return strings.Join(lines, "\n")
+}
+
+// detailPanel renders full, untruncated details for the selected instance,
+// plus fields that don't fit in the table at all (tmux session, pid,
+// relative start/last-activity times).
+func (m *model) detailPanel() []string {
+	r := m.selected()
+	if r == nil {
+		return []string{dimStyle.Render(strings.Repeat("─", 40)), dimStyle.Render("no instance selected")}
+	}
+	inst := r.inst
+
+	sep := dimStyle.Render(strings.Repeat("─", 40))
+	field := func(label, value string) string {
+		if value == "" {
+			value = "-"
+		}
+		return dimStyle.Render(label+": ") + value
+	}
+
+	lines := []string{sep}
+	lines = append(lines, field("host/name", fmt.Sprintf("%s / %s", r.host, inst.Name)))
+	lines = append(lines, field("agent", fmt.Sprintf("%s (provider: %s)", orDash(inst.Agent), orDash(inst.Provider))))
+	lines = append(lines, field("model", orDash(inst.Model)))
+	lines = append(lines, field("workdir", orDash(inst.Workdir)))
+	lines = append(lines, field("tmux session", orDash(inst.TmuxSession)))
+	pid := "-"
+	if inst.Pid != 0 {
+		pid = fmt.Sprintf("%d", inst.Pid)
+	}
+	lines = append(lines, field("pid", pid))
+	lines = append(lines, field("started", relativeTime(inst.StartedAtUnix)))
+	lines = append(lines, field("last activity", relativeTime(inst.LastActivityUnix)))
+	return lines
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// relativeTime renders a "3h12m ago (2026-07-14 12:00:00)" style string, or
+// "n/a" for a zero/unset timestamp (e.g. an instance with no live session).
+func relativeTime(unixSec int64) string {
+	if unixSec == 0 {
+		return "n/a"
+	}
+	t := time.Unix(unixSec, 0)
+	d := time.Since(t)
+	if d < 0 {
+		d = 0
+	}
+	return fmt.Sprintf("%s ago (%s)", humanizeDuration(d), t.Local().Format("2006-01-02 15:04:05"))
+}
+
+func humanizeDuration(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+	default:
+		days := int(d.Hours()) / 24
+		return fmt.Sprintf("%dd%dh", days, int(d.Hours())%24)
+	}
 }
 
 func confirmLabel(a pb.ControlAction) string {

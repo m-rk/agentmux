@@ -39,6 +39,7 @@ message Instance {
   Status status = 7;
   int64 pid = 8;
   int64 last_activity_unix = 9;
+  int64 started_at_unix = 10;  // 0 if the instance has no live tmux session
 }
 
 message ListInstancesRequest {}
