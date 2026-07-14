@@ -207,3 +207,27 @@ Remote Control display name of `<user>:<host> 🤹 pointpost` by default —
 each distinct from the default `claude-code` instance so both can run side
 by side without colliding. Remove it with `./uninstall-macos.sh --instance
 pointpost` or `sudo ./uninstall.sh --instance pointpost`.
+
+Every instance runs its own tmux server (`tmux -L agentmux-<instance>`),
+not the user's default one — reattach with `tmux -L agentmux-<instance>
+attach -t <session>`, not a bare `tmux attach`.
+
+### Upgrading an existing multi-instance host
+
+Before this, every instance on a host shared the user's default tmux
+server, so any one instance's systemd/LaunchAgent unit restarting could
+kill every other instance's session as collateral damage (see the linked
+PR for how this was found). If you have instances installed from before
+this change, migrating them to their own dedicated sockets isn't fully
+automatic — restarting instance A's unit does *not* clean up instance A's
+old session if it's still sitting on the shared default socket, since
+`ExecStop` now only ever looks at instance A's *new* dedicated socket.
+
+To migrate a live host: restart each instance's service/LaunchAgent one at
+a time, then check `tmux list-sessions` (bare, i.e. the old default socket)
+for leftovers and `tmux kill-session -t <name>` any that are still there.
+Also do one more restart of each instance after this cleanup: a stale
+connection briefly overlapping with a fresh one (both registered under the
+same Remote Control identity during the transition) has been observed to
+leave Remote Control looking connected while its actual data channel never
+came up — a second clean restart resolves it.
