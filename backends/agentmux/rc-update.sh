@@ -6,6 +6,7 @@ set -uo pipefail
 : "${AGENTMUX_AGENT:=zero}"
 : "${AGENTMUX_PROVIDER:=ollama}"
 : "${AGENTMUX_TMUX_SESSION_NAME:=${AGENTMUX_SESSION_NAME:-$AGENTMUX_INSTANCE_NAME}}"
+: "${AGENTMUX_TMUX_SOCKET:=agentmux-$AGENTMUX_INSTANCE_NAME}"
 : "${AGENTMUX_WORKDIR:=$HOME/.agentmux/$AGENTMUX_INSTANCE_NAME}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,14 +57,14 @@ fi
 AFTER="$(current_version)"
 log "version after maintenance: $AFTER"
 
-if [ "$BEFORE" = "$AFTER" ] && tmux has-session -t "$AGENTMUX_TMUX_SESSION_NAME" 2>/dev/null; then
+if [ "$BEFORE" = "$AFTER" ] && tmux -L "$AGENTMUX_TMUX_SOCKET" has-session -t "$AGENTMUX_TMUX_SESSION_NAME" 2>/dev/null; then
     log "no version change and $AGENTMUX_TMUX_SESSION_NAME session is already running"
     exit 0
 fi
 
 if [ "$BEFORE" != "$AFTER" ]; then
     log "restarting tmux session $AGENTMUX_TMUX_SESSION_NAME ($BEFORE -> $AFTER)"
-    tmux kill-session -t "$AGENTMUX_TMUX_SESSION_NAME" 2>/dev/null || true
+    tmux -L "$AGENTMUX_TMUX_SOCKET" kill-session -t "$AGENTMUX_TMUX_SESSION_NAME" 2>/dev/null || true
 else
     log "$AGENTMUX_TMUX_SESSION_NAME session is missing; starting it"
 fi
@@ -71,7 +72,7 @@ fi
 "$SCRIPT_DIR/rc-start.sh"
 
 sleep 5
-if tmux has-session -t "$AGENTMUX_TMUX_SESSION_NAME" 2>/dev/null; then
+if tmux -L "$AGENTMUX_TMUX_SOCKET" has-session -t "$AGENTMUX_TMUX_SESSION_NAME" 2>/dev/null; then
     log "$AGENTMUX_TMUX_SESSION_NAME session is up"
 else
     log "ERROR: $AGENTMUX_TMUX_SESSION_NAME session did not come up"

@@ -251,6 +251,7 @@ ENV_FILE="$ENV_DIR/$INSTANCE_NAME.env"
 print_plan() {
     echo "  instance     : $INSTANCE_NAME"
     echo "  session name : $SESSION_NAME"
+    echo "  tmux socket  : agentmux-$INSTANCE_NAME"
     echo "  display name : $DISPLAY_NAME"
     echo "  workdir      : $WORKDIR"
     echo "  resume       : ${RESUME_ID:-<none, fresh session>}"
@@ -374,5 +375,5 @@ systemctl enable --now "$SERVICE_NAME"
 systemctl enable --now "$TIMER_NAME"
 
 echo
-echo "Done. Reattach with: sudo -u $RUN_USER tmux attach -t $SESSION_NAME"
+echo "Done. Reattach with: sudo -u $RUN_USER tmux -L agentmux-$INSTANCE_NAME attach -t $SESSION_NAME"
 echo "Update logs: journalctl -u $UPDATE_SERVICE_NAME"

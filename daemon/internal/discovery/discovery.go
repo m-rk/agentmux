@@ -191,14 +191,17 @@ func observeActivity(session string, content []byte) time.Time {
 // tmuxPanes returns the lead pane per session, keyed by session name, across
 // every tmux server on the host.
 //
-// tmux servers are per-user, listening on a socket under
-// /tmp/tmux-<uid>/default. agentmuxd typically runs as root (it needs to
-// call systemctl), which has no tmux server of its own and can't see other
-// users' sessions through a bare "tmux list-panes" — so instead this globs
-// every per-user socket directly. tmux lets root connect to any user's
-// socket regardless of file ownership.
+// tmux servers are per-user, and each agentmux instance now runs its own
+// (named "agentmux-<instance>", not the user's default server — sharing one
+// server across instances meant killing any single instance's systemd unit
+// could SIGKILL the whole shared server via cgroup cleanup, taking every
+// other instance down with it). agentmuxd typically runs as root (it needs
+// to call systemctl), which has no tmux server of its own and can't see
+// other users' sessions through a bare "tmux list-panes" — so instead this
+// globs every per-user, per-instance socket directly. tmux lets root
+// connect to any user's socket regardless of file ownership.
 func tmuxPanes() (map[string]tmuxPane, error) {
-	sockets, err := filepath.Glob("/tmp/tmux-*/default")
+	sockets, err := filepath.Glob("/tmp/tmux-*/agentmux-*")
 	if err != nil {
 		return nil, err
 	}

@@ -401,6 +401,7 @@ print_plan() {
     echo "agentmux claude-code macOS install plan:"
     echo "  instance     : $INSTANCE_NAME"
     echo "  tmux session : $TMUX_SESSION_NAME"
+    echo "  tmux socket  : agentmux-$INSTANCE_NAME"
     echo "  display name : $DISPLAY_NAME"
     echo "  workdir      : $WORKDIR"
     echo "  update time  : $(printf '%02d:%02d' "$UPDATE_HOUR" "$UPDATE_MINUTE") local"
@@ -431,7 +432,7 @@ wait_for_tmux_session() {
     local attempts=40
 
     while [ "$attempts" -gt 0 ]; do
-        if tmux has-session -t "$TMUX_SESSION_NAME" 2>/dev/null; then
+        if tmux -L "agentmux-$INSTANCE_NAME" has-session -t "$TMUX_SESSION_NAME" 2>/dev/null; then
             return 0
         fi
         attempts=$((attempts - 1))
@@ -453,10 +454,10 @@ attach_tmux_session() {
     fi
 
     if [ -n "${TMUX:-}" ]; then
-        exec tmux switch-client -t "$TMUX_SESSION_NAME"
+        exec tmux -L "agentmux-$INSTANCE_NAME" switch-client -t "$TMUX_SESSION_NAME"
     fi
 
-    exec tmux attach -t "$TMUX_SESSION_NAME"
+    exec tmux -L "agentmux-$INSTANCE_NAME" attach -t "$TMUX_SESSION_NAME"
 }
 
 find_claude_json() {
@@ -602,7 +603,7 @@ launchctl bootstrap "$DOMAIN" "$UPDATE_PLIST"
 launchctl kickstart -k "$DOMAIN/$START_LABEL" 2>/dev/null || true
 
 echo
-echo "Done. Reattach with: tmux attach -t $TMUX_SESSION_NAME"
+echo "Done. Reattach with: tmux -L agentmux-$INSTANCE_NAME attach -t $TMUX_SESSION_NAME"
 echo "Logs: tail -f '$LOG_DIR/$INSTANCE_NAME.log' '$LOG_DIR/$INSTANCE_NAME.err.log'"
 echo "Status: launchctl print '$DOMAIN/$START_LABEL'"
 
