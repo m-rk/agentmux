@@ -92,4 +92,9 @@ optionally `--workdir` / `--tmux-session`:
 ```
 
 Each instance gets its own workdir, tmux session, LaunchAgent/systemd names,
-logs, and generated agent config.
+logs, and generated agent config — and, like the Claude Code backend, its
+own tmux server (`tmux -L agentmux-<instance>`) so no instance's restart
+can collaterally kill another's session. Reattach with `tmux -L
+agentmux-<instance> attach -t <session>`. See
+[the Claude Code backend's upgrade note](../claude-code/README.md#upgrading-an-existing-multi-instance-host)
+if migrating a host with instances installed before this change.
