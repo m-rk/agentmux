@@ -8,6 +8,7 @@ set -uo pipefail
 : "${AGENTMUX_TMUX_SESSION_NAME:=${AGENTMUX_SESSION_NAME:-agentmux}}"
 : "${AGENTMUX_DISPLAY_NAME:=${AGENTMUX_REMOTE_NAME:-$AGENTMUX_TMUX_SESSION_NAME}}"
 : "${AGENTMUX_WORKDIR:=$HOME/.agentmux/$AGENTMUX_INSTANCE_NAME}"
+: "${AGENTMUX_RESUME:=}"
 
 export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 mkdir -p "$AGENTMUX_WORKDIR"
@@ -23,6 +24,10 @@ shell_quote() {
 # collides with whatever interactive conversation is most recent there.
 if ! tmux has-session -t "$AGENTMUX_TMUX_SESSION_NAME" 2>/dev/null; then
     DISPLAY_ARG="$(shell_quote "$AGENTMUX_DISPLAY_NAME")"
+    RESUME_ARG=""
+    if [ -n "$AGENTMUX_RESUME" ]; then
+        RESUME_ARG="--resume $(shell_quote "$AGENTMUX_RESUME")"
+    fi
     tmux new-session -d -s "$AGENTMUX_TMUX_SESSION_NAME" -c "$AGENTMUX_WORKDIR" \
-        "exec claude --remote-control $DISPLAY_ARG"
+        "exec claude --remote-control $DISPLAY_ARG $RESUME_ARG"
 fi

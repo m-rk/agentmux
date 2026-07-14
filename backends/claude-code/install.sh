@@ -13,6 +13,10 @@
 #   --display-name NAME    Remote Control display name (also: --remote-name)
 #   --no-suffix            don't append " agentmux" to the display name
 #   --run-user USER        user the session runs as
+#   --resume SESSION_ID    resume an existing Claude Code session on first
+#                          start (also: env AGENTMUX_RESUME). The session's
+#                          original cwd must match this instance's workdir
+#                          (set --workdir / AGENTMUX_WORKDIR accordingly).
 #   --on-calendar EXPR     systemd OnCalendar expression for the update timer
 #   --plan                 print the install plan without writing files
 #   --help                 show usage
@@ -23,6 +27,7 @@
 #   AGENTMUX_DISPLAY_NAME, AGENTMUX_REMOTE_NAME
 #   AGENTMUX_DISPLAY_SUFFIX (default: 1; set 0/false/no/off to disable)
 #   AGENTMUX_RUN_USER (default: $SUDO_USER)
+#   AGENTMUX_RESUME (session ID to resume on first start)
 #   AGENTMUX_ON_CALENDAR (default: "*-*-* 03:00:00 UTC")
 #   AGENTMUX_WORKDIR (default: $USER_HOME/.agentmux/$AGENTMUX_INSTANCE_NAME)
 #
@@ -59,6 +64,7 @@ Flags:
   --display-name NAME    Remote Control display name (also: --remote-name)
   --no-suffix            don't append " agentmux" to the display name
   --run-user USER        user the session runs as
+  --resume SESSION_ID    resume an existing Claude Code session on first start
   --on-calendar EXPR     systemd OnCalendar expression for the update timer
   --plan                 print the install plan without writing files
   --help                 show usage
@@ -69,6 +75,7 @@ Env aliases:
   AGENTMUX_DISPLAY_NAME, AGENTMUX_REMOTE_NAME
   AGENTMUX_DISPLAY_SUFFIX (default: 1; set 0/false/no/off to disable)
   AGENTMUX_RUN_USER (default: $SUDO_USER)
+  AGENTMUX_RESUME (session ID to resume on first start)
   AGENTMUX_ON_CALENDAR (default: "*-*-* 03:00:00 UTC")
   AGENTMUX_WORKDIR (default: $USER_HOME/.agentmux/$AGENTMUX_INSTANCE_NAME)
 
@@ -87,6 +94,7 @@ case "${AGENTMUX_DISPLAY_SUFFIX:-1}" in
     0 | false | no | off) DISPLAY_SUFFIX_ENABLED=0 ;;
 esac
 RUN_USER="${AGENTMUX_RUN_USER:-${SUDO_USER:-}}"
+RESUME_ID="${AGENTMUX_RESUME:-}"
 ON_CALENDAR="${AGENTMUX_ON_CALENDAR:-*-*-* 03:00:00 UTC}"
 PLAN=0
 
@@ -114,6 +122,11 @@ while [ "$#" -gt 0 ]; do
         --run-user)
             [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
             RUN_USER="$2"
+            shift 2
+            ;;
+        --resume)
+            [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
+            RESUME_ID="$2"
             shift 2
             ;;
         --on-calendar)
@@ -153,6 +166,9 @@ validate_identifier() {
 }
 
 validate_identifier "instance name" "$INSTANCE_NAME"
+if [ -n "$RESUME_ID" ]; then
+    validate_identifier "resume session ID" "$RESUME_ID"
+fi
 
 if [ -n "$RAW_SESSION_NAME" ]; then
     SESSION_NAME="$RAW_SESSION_NAME"
@@ -237,6 +253,7 @@ print_plan() {
     echo "  session name : $SESSION_NAME"
     echo "  display name : $DISPLAY_NAME"
     echo "  workdir      : $WORKDIR"
+    echo "  resume       : ${RESUME_ID:-<none, fresh session>}"
     echo "  run as       : ${RUN_USER:-<unset>}"
     echo "  update timer : $ON_CALENDAR"
     echo "  service      : $SERVICE_NAME"
@@ -334,6 +351,7 @@ AGENTMUX_RUN_USER=$RUN_USER
 AGENTMUX_SERVICE_NAME=$SERVICE_NAME
 AGENTMUX_INSTANCE_NAME=$INSTANCE_NAME
 AGENTMUX_WORKDIR=$WORKDIR
+AGENTMUX_RESUME=$RESUME_ID
 EOF
 
 render() {
