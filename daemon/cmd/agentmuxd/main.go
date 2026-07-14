@@ -1,6 +1,8 @@
 // Command agentmuxd is the per-host daemon: it reports agentmux instance
 // status, streams PTY attach sessions, and drives lifecycle control, all
-// over a gRPC service bound to a Unix socket (phase 1: localhost only).
+// over a gRPC service. It always binds a Unix socket for local use, and
+// optionally a TCP address (phase 2: a host's Tailscale IP) for remote
+// TUI clients.
 package main
 
 import (
@@ -8,6 +10,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"sync"
 
 	"google.golang.org/grpc"
 
@@ -17,13 +20,14 @@ import (
 
 func main() {
 	socketPath := flag.String("socket", "/run/agentmux/agentmuxd.sock", "Unix socket to listen on")
+	listenAddr := flag.String("listen", "", "TCP address to also listen on, e.g. the host's Tailscale IP:port (disabled if empty). No TLS/auth is applied here; restrict access via tailnet ACLs.")
 	flag.Parse()
 
 	if err := os.Remove(*socketPath); err != nil && !os.IsNotExist(err) {
 		log.Fatalf("removing stale socket %s: %v", *socketPath, err)
 	}
 
-	lis, err := net.Listen("unix", *socketPath)
+	unixLis, err := net.Listen("unix", *socketPath)
 	if err != nil {
 		log.Fatalf("listening on %s: %v", *socketPath, err)
 	}
@@ -34,8 +38,30 @@ func main() {
 	grpcServer := grpc.NewServer()
 	pb.RegisterAgentmuxDaemonServer(grpcServer, daemonserver.New())
 
-	log.Printf("agentmuxd listening on %s", *socketPath)
-	if err := grpcServer.Serve(lis); err != nil {
-		log.Fatalf("serve: %v", err)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		log.Printf("agentmuxd listening on %s", *socketPath)
+		if err := grpcServer.Serve(unixLis); err != nil {
+			log.Fatalf("serve %s: %v", *socketPath, err)
+		}
+	}()
+
+	if *listenAddr != "" {
+		tcpLis, err := net.Listen("tcp", *listenAddr)
+		if err != nil {
+			log.Fatalf("listening on %s: %v", *listenAddr, err)
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			log.Printf("agentmuxd listening on %s (tcp)", *listenAddr)
+			if err := grpcServer.Serve(tcpLis); err != nil {
+				log.Fatalf("serve %s: %v", *listenAddr, err)
+			}
+		}()
 	}
+
+	wg.Wait()
 }

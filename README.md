@@ -190,10 +190,10 @@ LaunchAgent templates, and systemd unit templates.
 
 ## Daemon + TUI
 
-[`daemon/`](daemon) has an in-progress `agentmuxd` (per-host daemon) +
-`agentmux` (TUI client) pair for visualizing and controlling instances —
-today on one host over a Unix socket, with cross-device visualization over
-Tailscale planned next. See
+[`daemon/`](daemon) has `agentmuxd` (per-host daemon) + `agentmux` (TUI
+client) for visualizing and controlling instances, either on one host over
+a Unix socket or across multiple hosts over Tailscale via
+`~/.config/agentmux/hosts.yaml`. See
 [`docs/design/daemon-tui.md`](docs/design/daemon-tui.md) for the design and
 [`daemon/README.md`](daemon/README.md) to build and run it.
 
