@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"golang.org/x/term"
@@ -18,18 +19,42 @@ import (
 )
 
 type Client struct {
-	Host string // label shown in the TUI; "local" for the unix-socket daemon
+	Host string // label shown in the TUI, e.g. "local" or a hosts.yaml name
 	conn *grpc.ClientConn
 	api  pb.AgentmuxDaemonClient
 }
 
-func Dial(host, socketPath string) (*Client, error) {
-	conn, err := grpc.NewClient("unix:"+socketPath,
+// Dial connects to an agentmuxd. address is a dial target of the form
+// "unix:///path/to.sock" (phase 1, local daemon) or "tcp://host:port"
+// (phase 2, a daemon reachable over Tailscale). There is no TLS/auth layer
+// here for tcp:// targets — access control is delegated to the tailnet's
+// ACLs, per docs/design/daemon-tui.md.
+func Dial(host, address string) (*Client, error) {
+	target, err := grpcTarget(address)
+	if err != nil {
+		return nil, fmt.Errorf("dialing %s: %w", address, err)
+	}
+	conn, err := grpc.NewClient(target,
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		return nil, fmt.Errorf("dialing %s: %w", socketPath, err)
+		return nil, fmt.Errorf("dialing %s: %w", address, err)
 	}
 	return &Client{Host: host, conn: conn, api: pb.NewAgentmuxDaemonClient(conn)}, nil
+}
+
+func grpcTarget(address string) (string, error) {
+	switch {
+	case strings.HasPrefix(address, "unix://"):
+		return "unix:" + strings.TrimPrefix(address, "unix://"), nil
+	case strings.HasPrefix(address, "tcp://"):
+		return strings.TrimPrefix(address, "tcp://"), nil
+	case strings.Contains(address, "://"):
+		return "", fmt.Errorf("unsupported address scheme in %q (want unix:// or tcp://)", address)
+	default:
+		// Bare path (no scheme): treat as a Unix socket path, matching
+		// phase 1's -socket flag.
+		return "unix:" + address, nil
+	}
 }
 
 func (c *Client) Close() error {

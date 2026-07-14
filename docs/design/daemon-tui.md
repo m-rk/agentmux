@@ -1,6 +1,6 @@
 # Cross-device daemon + TUI
 
-Status: phase 1 (localhost) implemented in `../../daemon`
+Status: phase 1 (localhost) and phase 2 (multi-host over TCP/Tailscale) implemented in `../../daemon`
 Related: [`backends/agentmux`](../../backends/agentmux), [`backends/claude-code`](../../backends/claude-code)
 
 ## Problem
@@ -77,7 +77,9 @@ tmux socket regardless of file ownership.
 
 ## Transport & auth
 
-`agentmuxd` binds a TCP port on the host's Tailscale interface. No embedded
+`agentmuxd` always binds a Unix socket (local use, phase 1) and can
+optionally also bind a TCP address via `-listen` — point it at the host's
+Tailscale IP:port to make it reachable from other devices. No embedded
 `tsnet` node, no custom TLS/auth layer for v1 — access control is delegated
 to the tailnet's ACLs (document restricting the agentmux port to the user's
 own devices). This can be revisited if agentmux is ever shared across
@@ -103,15 +105,23 @@ gRPC service, four RPCs:
 
 ## TUI
 
-Bubble Tea. Config at `~/.config/agentmux/hosts.yaml` listing known hosts
-(Tailscale hostname + port); the TUI connects to all of them concurrently
-and merges their `StreamEvents` feeds.
+Bubble Tea. Config at `~/.config/agentmux/hosts.yaml` lists known hosts —
+each a `name` plus a dial `address` (`unix:///path/to.sock` for a local
+daemon, `tcp://100.x.y.z:4287` for one over Tailscale). The TUI dials every
+host concurrently and merges their `StreamEvents` feeds into one table,
+tagged by host; if no `hosts.yaml` exists it falls back to a single local
+host over `-socket`, matching phase 1 exactly. If one host's stream errors
+(e.g. temporarily unreachable over Tailscale), that host's rows just sit
+still and an inline `host: error (retrying)` line appears — the rest of the
+table keeps updating; it retries on a fixed delay rather than tearing down
+the whole TUI.
 
-Layout: host/instance tree on the left, grouped by device; detail pane on
-the right (status, model, uptime, tail of recent output). Keys: `a` attach
-in place, `r`/`s`/`x` restart/stop/start, `l` scrollback/log view. Actions
-that change state (restart/stop) should require a confirmation keypress
-before firing.
+Current layout: a single flat table (HOST/NAME/AGENT/MODEL/STATUS/WORKDIR),
+sorted by host then name. A host/instance tree with a separate detail pane
+is a reasonable follow-up once there's more than a couple of hosts and
+columns get cramped — not needed yet. Keys: `a` attach in place, `r`/`s`/`x`
+restart/stop/start (each requires a `y` confirmation keypress before
+firing), `q` quit. `l` scrollback/log view is not implemented yet.
 
 ## Repo layout
 
@@ -123,9 +133,10 @@ daemon/
   cmd/agentmuxd/
   cmd/agentmux/
   internal/
-    discovery/   # reads env files / plists, cross-references tmux
+    discovery/    # reads env files / plists, cross-references tmux
     daemonserver/
     tuiclient/
+    hostsconfig/  # parses ~/.config/agentmux/hosts.yaml
 ```
 
 The existing bash installers in `backends/` are unchanged in what they
@@ -148,4 +159,17 @@ listing, live status via `StreamEvents`, and a read-only PTY attach have all
 been smoke-tested against live sessions. `Control` (start/stop/restart) is
 implemented but has only been exercised against an unknown-instance error
 path so far, not a real restart, to avoid disrupting live sessions during
-development. Phase 2 (Tailscale, multi-host) is not started.
+development.
+
+Phase 2 is implemented: `agentmuxd -listen <addr>` binds an additional TCP
+listener (alongside the always-on Unix socket) with no TLS/auth of its own,
+relying on tailnet ACLs; `agentmux -hosts hosts.yaml` dials every configured
+host concurrently and merges their instance lists into one table. Verified
+locally by running one daemon with both `-socket` and `-listen
+127.0.0.1:<port>`, then pointing the TUI at a `hosts.yaml` with one entry
+per transport (`unix://` and `tcp://`) — both listed the same five real
+instances correctly, and the merged, sorted, host-tagged table rendered and
+navigated correctly in the TUI itself. Not yet verified against a second
+physical device over an actual Tailscale link — everything above proves the
+protocol and merge logic, not real network conditions (latency, a host
+actually going offline mid-session, etc.).
