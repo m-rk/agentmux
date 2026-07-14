@@ -188,9 +188,19 @@ To remove: `sudo ./uninstall.sh` (leaves any running tmux session alone).
 See [`backends/claude-code`](backends/claude-code) for the scripts,
 LaunchAgent templates, and systemd unit templates.
 
+## Daemon + TUI
+
+[`daemon/`](daemon) has an in-progress `agentmuxd` (per-host daemon) +
+`agentmux` (TUI client) pair for visualizing and controlling instances —
+today on one host over a Unix socket, with cross-device visualization over
+Tailscale planned next. See
+[`docs/design/daemon-tui.md`](docs/design/daemon-tui.md) for the design and
+[`daemon/README.md`](daemon/README.md) to build and run it.
+
 ## Roadmap
 
 - More backends (Codex CLI, Gemini CLI, whatever comes next) — each one
   running side by side adds to the redundancy/variety this repo is going
   for
 - Health-check / notification on failed updates instead of just journal logs
+- Cross-device visualization/control via the `daemon/` TUI (see above)

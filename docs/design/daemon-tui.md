@@ -1,6 +1,6 @@
 # Cross-device daemon + TUI
 
-Status: draft, phase 1 in progress
+Status: phase 1 (localhost) implemented in `../../daemon`
 Related: [`backends/agentmux`](../../backends/agentmux), [`backends/claude-code`](../../backends/claude-code)
 
 ## Problem
@@ -59,6 +59,17 @@ specific (each of zero/opencode/claude-code prompts differently) and is
 deferred; the idle heuristic is a reasonable proxy and can be special-cased
 per agent later without changing the wire protocol.
 
+Note from implementation: tmux's own `#{pane_activity}` is only populated
+when a window has `monitor-activity on`, which agentmux instances don't set
+and shouldn't have to. Instead the daemon hashes `capture-pane` output on
+every poll and tracks when that hash last changed itself
+(`internal/discovery`'s `activityCache`).
+
+tmux servers are also per-user (socket under `/tmp/tmux-<uid>/default`), and
+`agentmuxd` runs as root — so discovery globs every per-user socket on the
+host rather than assuming a single default one. Root can connect to any
+user's tmux socket regardless of file ownership.
+
 ## Transport & auth
 
 `agentmuxd` binds a TCP port on the host's Tailscale interface. No embedded
@@ -79,6 +90,8 @@ gRPC service, four RPCs:
   plus resize events. Backed by `tmux attach-session -t <name>` spawned in a
   pty on the daemon side. This is what makes remote control feel native:
   the TUI becomes the terminal, no separate `ssh` + `tmux attach` hop.
+  Note: the spawned `tmux` needs `TERM` set explicitly — under systemd (no
+  controlling terminal) it's unset, and tmux refuses to attach without it.
 - `Control(instance, action: start|stop|restart) -> ControlResult` — unary;
   shells to `systemctl <action> agentmux-<instance>` (Linux) or
   `launchctl kickstart` (macOS).
@@ -124,4 +137,10 @@ once phase 2 lands.
 3. **Polish.** Live event streaming refinements, per-agent status
    heuristics, confirmation UX, log/scrollback view.
 
-We are currently starting phase 1.
+Phase 1 is implemented: `agentmuxd` and `agentmux` build and run against
+this box's real `/etc/agentmux` instances over a Unix socket — instance
+listing, live status via `StreamEvents`, and a read-only PTY attach have all
+been smoke-tested against live sessions. `Control` (start/stop/restart) is
+implemented but has only been exercised against an unknown-instance error
+path so far, not a real restart, to avoid disrupting live sessions during
+development. Phase 2 (Tailscale, multi-host) is not started.

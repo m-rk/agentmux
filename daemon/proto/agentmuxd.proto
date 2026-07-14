@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+package agentmuxd.v1;
+
+option go_package = "github.com/m-rk/agentmux/daemon/internal/pb";
+
+service AgentmuxDaemon {
+  // Snapshot of every instance the daemon currently knows about.
+  rpc ListInstances(ListInstancesRequest) returns (ListInstancesResponse);
+
+  // Pushes an event whenever an instance's status changes, so clients don't
+  // need to poll ListInstances.
+  rpc StreamEvents(StreamEventsRequest) returns (stream InstanceEvent);
+
+  // Bidirectional PTY stream. The first client message must be an
+  // AttachRequest naming the instance; every message after that is stdin
+  // bytes or a resize. Server messages are stdout bytes or an error.
+  rpc Attach(stream ClientMessage) returns (stream ServerMessage);
+
+  // Start/stop/restart an instance's systemd unit (Linux) or LaunchAgent
+  // (macOS).
+  rpc Control(ControlRequest) returns (ControlResponse);
+}
+
+enum Status {
+  STATUS_UNKNOWN = 0;
+  STATUS_RUNNING = 1;  // tmux session active, pane output changed recently
+  STATUS_IDLE = 2;     // tmux session active, no pane output for a while
+  STATUS_DEAD = 3;     // instance is configured but no tmux session found
+}
+
+message Instance {
+  string name = 1;
+  string agent = 2;
+  string provider = 3;
+  string model = 4;
+  string workdir = 5;
+  string tmux_session = 6;
+  Status status = 7;
+  int64 pid = 8;
+  int64 last_activity_unix = 9;
+}
+
+message ListInstancesRequest {}
+
+message ListInstancesResponse {
+  repeated Instance instances = 1;
+}
+
+message StreamEventsRequest {}
+
+enum EventType {
+  EVENT_UNKNOWN = 0;
+  EVENT_UPDATED = 1;
+  EVENT_REMOVED = 2;
+}
+
+message InstanceEvent {
+  EventType type = 1;
+  Instance instance = 2;
+}
+
+message AttachRequest {
+  string instance = 1;
+}
+
+message Resize {
+  uint32 cols = 1;
+  uint32 rows = 2;
+}
+
+message ClientMessage {
+  oneof payload {
+    AttachRequest attach = 1;  // must be the first message on the stream
+    bytes stdin = 2;
+    Resize resize = 3;
+  }
+}
+
+message ServerMessage {
+  oneof payload {
+    bytes stdout = 1;
+    string error = 2;
+  }
+}
+
+enum ControlAction {
+  CONTROL_UNKNOWN = 0;
+  CONTROL_START = 1;
+  CONTROL_STOP = 2;
+  CONTROL_RESTART = 3;
+}
+
+message ControlRequest {
+  string instance = 1;
+  ControlAction action = 2;
+}
+
+message ControlResponse {
+  bool ok = 1;
+  string message = 2;
+}
