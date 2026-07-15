@@ -19,10 +19,12 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AgentmuxDaemon_ListInstances_FullMethodName = "/agentmuxd.v1.AgentmuxDaemon/ListInstances"
-	AgentmuxDaemon_StreamEvents_FullMethodName  = "/agentmuxd.v1.AgentmuxDaemon/StreamEvents"
-	AgentmuxDaemon_Attach_FullMethodName        = "/agentmuxd.v1.AgentmuxDaemon/Attach"
-	AgentmuxDaemon_Control_FullMethodName       = "/agentmuxd.v1.AgentmuxDaemon/Control"
+	AgentmuxDaemon_ListInstances_FullMethodName         = "/agentmuxd.v1.AgentmuxDaemon/ListInstances"
+	AgentmuxDaemon_StreamEvents_FullMethodName          = "/agentmuxd.v1.AgentmuxDaemon/StreamEvents"
+	AgentmuxDaemon_Attach_FullMethodName                = "/agentmuxd.v1.AgentmuxDaemon/Attach"
+	AgentmuxDaemon_Control_FullMethodName               = "/agentmuxd.v1.AgentmuxDaemon/Control"
+	AgentmuxDaemon_CreateInstance_FullMethodName        = "/agentmuxd.v1.AgentmuxDaemon/CreateInstance"
+	AgentmuxDaemon_ListResumableSessions_FullMethodName = "/agentmuxd.v1.AgentmuxDaemon/ListResumableSessions"
 )
 
 // AgentmuxDaemonClient is the client API for AgentmuxDaemon service.
@@ -41,6 +43,12 @@ type AgentmuxDaemonClient interface {
 	// Start/stop/restart an instance's systemd unit (Linux) or LaunchAgent
 	// (macOS).
 	Control(ctx context.Context, in *ControlRequest, opts ...grpc.CallOption) (*ControlResponse, error)
+	// Provisions a brand new instance on this host: writes its registry
+	// entry, installs its unit/LaunchAgent, and starts it.
+	CreateInstance(ctx context.Context, in *CreateInstanceRequest, opts ...grpc.CallOption) (*CreateInstanceResponse, error)
+	// Lists Claude Code session IDs resumable for a given workdir, for the
+	// wizard's resume picker.
+	ListResumableSessions(ctx context.Context, in *ListResumableSessionsRequest, opts ...grpc.CallOption) (*ListResumableSessionsResponse, error)
 }
 
 type agentmuxDaemonClient struct {
@@ -103,6 +111,26 @@ func (c *agentmuxDaemonClient) Control(ctx context.Context, in *ControlRequest, 
 	return out, nil
 }
 
+func (c *agentmuxDaemonClient) CreateInstance(ctx context.Context, in *CreateInstanceRequest, opts ...grpc.CallOption) (*CreateInstanceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateInstanceResponse)
+	err := c.cc.Invoke(ctx, AgentmuxDaemon_CreateInstance_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentmuxDaemonClient) ListResumableSessions(ctx context.Context, in *ListResumableSessionsRequest, opts ...grpc.CallOption) (*ListResumableSessionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListResumableSessionsResponse)
+	err := c.cc.Invoke(ctx, AgentmuxDaemon_ListResumableSessions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AgentmuxDaemonServer is the server API for AgentmuxDaemon service.
 // All implementations must embed UnimplementedAgentmuxDaemonServer
 // for forward compatibility.
@@ -119,6 +147,12 @@ type AgentmuxDaemonServer interface {
 	// Start/stop/restart an instance's systemd unit (Linux) or LaunchAgent
 	// (macOS).
 	Control(context.Context, *ControlRequest) (*ControlResponse, error)
+	// Provisions a brand new instance on this host: writes its registry
+	// entry, installs its unit/LaunchAgent, and starts it.
+	CreateInstance(context.Context, *CreateInstanceRequest) (*CreateInstanceResponse, error)
+	// Lists Claude Code session IDs resumable for a given workdir, for the
+	// wizard's resume picker.
+	ListResumableSessions(context.Context, *ListResumableSessionsRequest) (*ListResumableSessionsResponse, error)
 	mustEmbedUnimplementedAgentmuxDaemonServer()
 }
 
@@ -140,6 +174,12 @@ func (UnimplementedAgentmuxDaemonServer) Attach(grpc.BidiStreamingServer[ClientM
 }
 func (UnimplementedAgentmuxDaemonServer) Control(context.Context, *ControlRequest) (*ControlResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Control not implemented")
+}
+func (UnimplementedAgentmuxDaemonServer) CreateInstance(context.Context, *CreateInstanceRequest) (*CreateInstanceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateInstance not implemented")
+}
+func (UnimplementedAgentmuxDaemonServer) ListResumableSessions(context.Context, *ListResumableSessionsRequest) (*ListResumableSessionsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListResumableSessions not implemented")
 }
 func (UnimplementedAgentmuxDaemonServer) mustEmbedUnimplementedAgentmuxDaemonServer() {}
 func (UnimplementedAgentmuxDaemonServer) testEmbeddedByValue()                        {}
@@ -216,6 +256,42 @@ func _AgentmuxDaemon_Control_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AgentmuxDaemon_CreateInstance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateInstanceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentmuxDaemonServer).CreateInstance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentmuxDaemon_CreateInstance_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentmuxDaemonServer).CreateInstance(ctx, req.(*CreateInstanceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentmuxDaemon_ListResumableSessions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListResumableSessionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentmuxDaemonServer).ListResumableSessions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentmuxDaemon_ListResumableSessions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentmuxDaemonServer).ListResumableSessions(ctx, req.(*ListResumableSessionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AgentmuxDaemon_ServiceDesc is the grpc.ServiceDesc for AgentmuxDaemon service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -230,6 +306,14 @@ var AgentmuxDaemon_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Control",
 			Handler:    _AgentmuxDaemon_Control_Handler,
+		},
+		{
+			MethodName: "CreateInstance",
+			Handler:    _AgentmuxDaemon_CreateInstance_Handler,
+		},
+		{
+			MethodName: "ListResumableSessions",
+			Handler:    _AgentmuxDaemon_ListResumableSessions_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

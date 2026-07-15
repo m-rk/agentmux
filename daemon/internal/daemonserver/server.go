@@ -18,6 +18,7 @@ import (
 
 	"github.com/m-rk/agentmux/daemon/internal/discovery"
 	"github.com/m-rk/agentmux/daemon/internal/pb"
+	"github.com/m-rk/agentmux/daemon/internal/provision"
 )
 
 const pollInterval = 2 * time.Second
@@ -122,6 +123,22 @@ func (s *Server) Control(ctx context.Context, req *pb.ControlRequest) (*pb.Contr
 		return &pb.ControlResponse{Ok: false, Message: fmt.Sprintf("%s %s: %v: %s", action, inst.ServiceName, err, out)}, nil
 	}
 	return &pb.ControlResponse{Ok: true, Message: fmt.Sprintf("%s %s ok", action, inst.ServiceName)}, nil
+}
+
+func (s *Server) CreateInstance(ctx context.Context, req *pb.CreateInstanceRequest) (*pb.CreateInstanceResponse, error) {
+	message, err := provision.Create(provision.Options{
+		InstanceName:    req.InstanceName,
+		Agent:           req.Agent,
+		Provider:        req.Provider,
+		Model:           req.Model,
+		Workdir:         req.Workdir,
+		ResumeSessionID: req.ResumeSessionId,
+		RunUser:         req.RunUser,
+	})
+	if err != nil {
+		return &pb.CreateInstanceResponse{Ok: false, Message: err.Error()}, nil
+	}
+	return &pb.CreateInstanceResponse{Ok: true, Message: message}, nil
 }
 
 func (s *Server) Attach(stream pb.AgentmuxDaemon_AttachServer) error {

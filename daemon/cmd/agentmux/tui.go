@@ -170,6 +170,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case wizardDoneMsg:
+		if msg.err != nil {
+			m.err = msg.err.Error()
+		} else {
+			m.status = "instance created"
+		}
+		return m, nil
+
 	case controlDoneMsg:
 		if msg.err != nil {
 			m.err = fmt.Sprintf("%s/%s: %v", msg.host, msg.instance, msg.err)

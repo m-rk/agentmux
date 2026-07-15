@@ -20,6 +20,14 @@ service AgentmuxDaemon {
   // Start/stop/restart an instance's systemd unit (Linux) or LaunchAgent
   // (macOS).
   rpc Control(ControlRequest) returns (ControlResponse);
+
+  // Provisions a brand new instance on this host: writes its registry
+  // entry, installs its unit/LaunchAgent, and starts it.
+  rpc CreateInstance(CreateInstanceRequest) returns (CreateInstanceResponse);
+
+  // Lists Claude Code session IDs resumable for a given workdir, for the
+  // wizard's resume picker.
+  rpc ListResumableSessions(ListResumableSessionsRequest) returns (ListResumableSessionsResponse);
 }
 
 enum Status {
@@ -100,4 +108,33 @@ message ControlRequest {
 message ControlResponse {
   bool ok = 1;
   string message = 2;
+}
+
+message CreateInstanceRequest {
+  string instance_name = 1;
+  string agent = 2;              // "claude-code" | "zero" | "opencode"
+  string provider = 3;           // zero/opencode only
+  string model = 4;               // zero/opencode only
+  string workdir = 5;             // empty = provisioner default
+  string resume_session_id = 6;   // claude-code only; empty = fresh session
+  string run_user = 7;            // Linux only; empty = provisioner default
+}
+
+message CreateInstanceResponse {
+  bool ok = 1;
+  string message = 2;  // combined log/summary, mirrors ControlResponse
+}
+
+message ListResumableSessionsRequest {
+  string workdir = 1;
+  string run_user = 2;  // Linux only
+}
+
+message ResumableSession {
+  string session_id = 1;
+  int64 last_modified_unix = 2;
+}
+
+message ListResumableSessionsResponse {
+  repeated ResumableSession sessions = 1;
 }

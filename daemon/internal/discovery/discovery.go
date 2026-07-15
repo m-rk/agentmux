@@ -1,6 +1,6 @@
-// Package discovery finds agentmux instances by reading the env files that
-// backends/agentmux/install.sh and backends/claude-code/install.sh write to
-// /etc/agentmux, then cross-references them with tmux for liveness.
+// Package discovery finds agentmux instances by reading each instance's
+// registry file (see EnvDir), then cross-references them with tmux for
+// liveness.
 package discovery
 
 import (
@@ -16,11 +16,11 @@ import (
 	"time"
 )
 
-// EnvDir is where List reads *.env files from. Defaults to the path
-// backends/agentmux/install.sh and backends/claude-code/install.sh write
-// to; overridable (e.g. by cmd/agentmuxd's -env-dir flag) for testing
+// EnvDir is where List reads *.env files from: /etc/agentmux on Linux,
+// ~/.agentmux/registry on macOS (see envdir_linux.go/envdir_darwin.go).
+// Overridable (e.g. by `agentmux daemon run`'s -env-dir flag) for testing
 // without root, such as on a host with no systemd-managed instances.
-var EnvDir = "/etc/agentmux"
+var EnvDir = defaultEnvDir()
 
 const idleThreshold = 30 * time.Second
 

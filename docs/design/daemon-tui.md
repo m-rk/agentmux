@@ -173,3 +173,37 @@ navigated correctly in the TUI itself. Not yet verified against a second
 physical device over an actual Tailscale link — everything above proves the
 protocol and merge logic, not real network conditions (latency, a host
 actually going offline mid-session, etc.).
+
+`agentmuxd` and `agentmux` have since merged into one binary: `agentmux
+daemon run` is what `agentmuxd` used to be, and `agentmux daemon
+install/uninstall/status` natively installs it as a systemd unit (Linux,
+root) or a per-user LaunchAgent (macOS, no root) — no more manual unit
+files. `agentmux new` is a wizard (built with `charmbracelet/huh`) that
+creates a real instance — registry file, systemd unit, live tmux session —
+on any device from the same host list the TUI already uses, calling a new
+`CreateInstance` RPC. The whole instance lifecycle (what used to be
+`install.sh`/`rc-start.sh`/`rc-update.sh`) is now native Go with no bash in
+the loop, for the `claude-code` agent on Linux (`daemon/internal/provision`,
+`daemon/internal/session`) — other agent/platform combinations aren't
+ported yet and return a clear error rather than silently doing the wrong
+thing. A proper design doc write-up covering this area (device model,
+registry-file format, the full phased rollout for the remaining
+agent/platform combinations and the resume picker) is still TODO — the
+implementation is ahead of the docs here.
+
+Verified end to end on this box: created a real throwaway instance via the
+`CreateInstance` RPC (bypassing the interactive form, calling it directly)
+— registry file, three systemd units, and a live `claude --remote-control`
+tmux session all came up correctly, `discovery`/`ListInstances` reported it
+as `RUNNING`, workspace-trust pre-acceptance patched `~/.claude.json`
+correctly, and killing the session + setting a resume ID in the registry
+then re-running `agentmux session run` correctly passed `--resume
+<session-id>` through to the `claude` process. Found and fixed two real
+bugs in the process: `HOME` isn't reliably set for a bare `Type=oneshot` +
+`User=` systemd unit (breaking `PATH` resolution for the spawned `claude`
+binary), and `tmux -S <bare-name>` treats the name as a literal
+CWD-relative path rather than placing it in the standard `/tmp/tmux-<uid>/`
+socket directory like `-L <bare-name>` does — both fixed in
+`internal/session`. Not yet tested: the interactive wizard form itself
+(only the RPC it calls has been exercised directly), `zero`/`opencode` on
+Linux, and anything on macOS.
