@@ -16,10 +16,13 @@ import (
 	"time"
 )
 
-const (
-	envDir        = "/etc/agentmux"
-	idleThreshold = 30 * time.Second
-)
+// EnvDir is where List reads *.env files from. Defaults to the path
+// backends/agentmux/install.sh and backends/claude-code/install.sh write
+// to; overridable (e.g. by cmd/agentmuxd's -env-dir flag) for testing
+// without root, such as on a host with no systemd-managed instances.
+var EnvDir = "/etc/agentmux"
+
+const idleThreshold = 30 * time.Second
 
 type Status int
 
@@ -45,9 +48,9 @@ type Instance struct {
 	StartedAt    time.Time // tmux session creation time; zero if no live session
 }
 
-// List reads every *.env file in /etc/agentmux and merges in tmux liveness.
+// List reads every *.env file in EnvDir and merges in tmux liveness.
 func List() ([]Instance, error) {
-	entries, err := os.ReadDir(envDir)
+	entries, err := os.ReadDir(EnvDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -66,7 +69,7 @@ func List() ([]Instance, error) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".env") {
 			continue
 		}
-		fields, err := parseEnvFile(filepath.Join(envDir, e.Name()))
+		fields, err := parseEnvFile(filepath.Join(EnvDir, e.Name()))
 		if err != nil {
 			continue
 		}
