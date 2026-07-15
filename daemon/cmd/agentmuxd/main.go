@@ -15,13 +15,16 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/m-rk/agentmux/daemon/internal/daemonserver"
+	"github.com/m-rk/agentmux/daemon/internal/discovery"
 	"github.com/m-rk/agentmux/daemon/internal/pb"
 )
 
 func main() {
 	socketPath := flag.String("socket", "/run/agentmux/agentmuxd.sock", "Unix socket to listen on")
 	listenAddr := flag.String("listen", "", "TCP address to also listen on, e.g. the host's Tailscale IP:port (disabled if empty). No TLS/auth is applied here; restrict access via tailnet ACLs.")
+	envDir := flag.String("env-dir", discovery.EnvDir, "directory to read instance *.env files from (override for testing without root)")
 	flag.Parse()
+	discovery.EnvDir = *envDir
 
 	if err := os.Remove(*socketPath); err != nil && !os.IsNotExist(err) {
 		log.Fatalf("removing stale socket %s: %v", *socketPath, err)
