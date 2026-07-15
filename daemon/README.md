@@ -1,21 +1,27 @@
 # agentmux daemon + TUI
 
-`agentmuxd` (per-host daemon) and `agentmux` (TUI client) for visualizing
-and controlling agentmux instances. See
+`agentmux` is a single binary: the TUI by default, plus subcommands to
+install its own background daemon and to create new instances. See
 [`docs/design/daemon-tui.md`](../docs/design/daemon-tui.md) for the full
 design and phased rollout plan.
 
-Phase 1: both binaries talk over a Unix socket on one host — no networking
-needed. Phase 2 (current): `agentmuxd` can also listen on a TCP address
-(e.g. a Tailscale IP), and `agentmux` can connect to several hosts at once
-via `~/.config/agentmux/hosts.yaml`.
+Phase 1: TUI + daemon talk over a Unix socket on one host — no networking
+needed. Phase 2: the daemon can also listen on a TCP address (e.g. a
+Tailscale IP), and the TUI can connect to several hosts at once via
+`~/.config/agentmux/hosts.yaml`. Phase B (current): `agentmux new` — a
+wizard that creates a real instance (registry file + systemd unit + tmux
+session) on any configured device, native Go end to end (no bash) for the
+`claude-code` agent on Linux; other agent/platform combinations are a
+follow-up.
 
 ## Build
 
 ```sh
-go build -o agentmuxd ./cmd/agentmuxd
 go build -o agentmux ./cmd/agentmux
 ```
+
+There's only one binary now — `agentmuxd` was folded into `agentmux daemon
+run`.
 
 Regenerate the protobuf/gRPC stubs after editing `proto/agentmuxd.proto`:
 
@@ -25,34 +31,58 @@ protoc --go_out=internal/pb --go_opt=paths=source_relative \
   -I proto proto/agentmuxd.proto
 ```
 
-## Run: single host (phase 1)
-
-`agentmuxd` reads instance state from `/etc/agentmux/*.env` (written by
-`backends/agentmux/install.sh` and `backends/claude-code/install.sh`) and
-needs root to call `systemctl` for lifecycle control:
+## Install the daemon
 
 ```sh
-sudo mkdir -p /run/agentmux
-sudo ./agentmuxd -socket /run/agentmux/agentmuxd.sock
+sudo ./agentmux daemon install     # Linux: root required, installs a systemd unit
+./agentmux daemon install          # macOS: do NOT use sudo, installs a per-user LaunchAgent
 ```
+
+This copies the running binary to a stable path (`/usr/local/bin/agentmux`
+on Linux, `~/.agentmux/bin/agentmux` on macOS), installs the unit/plist
+pointing at `agentmux daemon run`, and starts it. `agentmux daemon status`
+/ `agentmux daemon uninstall` check/remove it. Re-running `install` after
+rebuilding the binary does *not* restart an already-running daemon (systemd
+`enable --now` is a no-op if it's already active) — `sudo systemctl restart
+agentmuxd` (Linux) or `launchctl kickstart -k gui/$(id -u)/com.agentmux.daemon`
+(macOS) to pick up a new build.
 
 Then, from the same host:
 
 ```sh
-./agentmux -socket /run/agentmux/agentmuxd.sock
+./agentmux
 ```
 
-Keys: `↑`/`↓` navigate, `a` attach (detach with `ctrl-\`), `r`/`s`/`x`
-restart/stop/start (asks for `y` confirmation), `q` quit.
+Keys: `↑`/`↓` navigate, `a` attach (detach with `ctrl-\`), `n` create a new
+instance, `r`/`s`/`x` restart/stop/start (asks for `y` confirmation), `q`
+quit.
 
-## Run: multiple hosts over Tailscale (phase 2)
+## Create a new instance
+
+```sh
+./agentmux new
+```
+
+Prompts for device (any host from `hosts.yaml`, or `local`), agent, instance
+name, run-as user, workdir, and an optional Claude Code session ID to
+resume. Calls the target device's daemon over the same connection the TUI
+uses — creating on a remote device just means picking it from the same list.
+Only the `claude-code` agent on Linux is implemented so far; other
+combinations return a clear "not implemented yet" error rather than doing
+something wrong silently.
+
+## Multiple hosts over Tailscale
 
 On each host you want to control remotely, also bind a TCP listener on its
 Tailscale IP (find it with `tailscale ip -4`):
 
 ```sh
-sudo ./agentmuxd -socket /run/agentmux/agentmuxd.sock -listen 100.x.y.z:4287
+sudo ./agentmux daemon run -listen 100.x.y.z:4287
 ```
+
+(or pass `-listen` via the systemd unit's `ExecStart` if installed with
+`daemon install` — there's no flag for it yet, so edit
+`/etc/systemd/system/agentmuxd.service` and `daemon-reload` for now.)
 
 There's no TLS or auth on that TCP listener — it relies entirely on the
 tailnet's ACLs to keep it reachable only by your own devices. Restrict the

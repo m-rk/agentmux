@@ -98,6 +98,10 @@ func (c *Client) Control(ctx context.Context, instance string, action pb.Control
 	return c.api.Control(ctx, &pb.ControlRequest{Instance: instance, Action: action})
 }
 
+func (c *Client) CreateInstance(ctx context.Context, req *pb.CreateInstanceRequest) (*pb.CreateInstanceResponse, error) {
+	return c.api.CreateInstance(ctx, req)
+}
+
 // PeekAttach attaches to an instance and reports PTY output for dur without
 // ever writing to stdin, so it's safe to use against a live session purely
 // to verify the pipe works (used by smoke tests, not the TUI itself).
