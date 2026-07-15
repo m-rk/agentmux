@@ -8,6 +8,10 @@
 #   --tmux-session NAME     tmux session name
 #   --display-name NAME     Claude display name
 #   --workdir PATH          working directory for the session
+#   --resume SESSION_ID     resume an existing Claude Code session on first
+#                           start (also: env AGENTMUX_RESUME). The session's
+#                           original cwd must match this instance's workdir
+#                           (set --workdir / AGENTMUX_WORKDIR accordingly).
 #   --update-time HH:MM     local-time update schedule
 #   --start-interval SEC    seconds between idempotent start checks
 #   --path PATH             launchd PATH seed; detected tool dirs are prepended
@@ -24,6 +28,7 @@
 #   AGENTMUX_DISPLAY_NAME, AGENTMUX_REMOTE_NAME
 #   AGENTMUX_DISPLAY_SUFFIX (default: 1; set 0/false/no/off to disable)
 #   AGENTMUX_WORKDIR, AGENTMUX_UPDATE_TIME
+#   AGENTMUX_RESUME (session ID to resume on first start)
 #   AGENTMUX_UPDATE_HOUR, AGENTMUX_UPDATE_MINUTE
 #   AGENTMUX_START_INTERVAL, AGENTMUX_PATH
 #   AGENTMUX_ATTACH_AFTER_INSTALL
@@ -52,6 +57,7 @@ Flags:
   --tmux-session NAME     tmux session name
   --display-name NAME     Claude display name
   --workdir PATH          working directory for the session
+  --resume SESSION_ID     resume an existing Claude Code session on first start
   --update-time HH:MM     local-time update schedule
   --start-interval SEC    seconds between idempotent start checks
   --path PATH             launchd PATH seed; detected tool dirs are prepended
@@ -68,6 +74,7 @@ Env aliases:
   AGENTMUX_DISPLAY_NAME, AGENTMUX_REMOTE_NAME
   AGENTMUX_DISPLAY_SUFFIX (default: 1; set 0/false/no/off to disable)
   AGENTMUX_WORKDIR, AGENTMUX_UPDATE_TIME
+  AGENTMUX_RESUME (session ID to resume on first start)
   AGENTMUX_UPDATE_HOUR, AGENTMUX_UPDATE_MINUTE
   AGENTMUX_START_INTERVAL, AGENTMUX_PATH
   AGENTMUX_ATTACH_AFTER_INSTALL
@@ -163,6 +170,7 @@ case "${AGENTMUX_DISPLAY_SUFFIX:-1}" in
     0 | false | no | off) DISPLAY_SUFFIX_ENABLED=0 ;;
 esac
 WORKDIR="${AGENTMUX_WORKDIR:-}"
+RESUME_ID="${AGENTMUX_RESUME:-}"
 UPDATE_HOUR="${AGENTMUX_UPDATE_HOUR:-3}"
 UPDATE_MINUTE="${AGENTMUX_UPDATE_MINUTE:-0}"
 START_INTERVAL="${AGENTMUX_START_INTERVAL:-300}"
@@ -211,6 +219,11 @@ while [ "$#" -gt 0 ]; do
         --workdir)
             [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
             WORKDIR="$2"
+            shift 2
+            ;;
+        --resume)
+            [ "$#" -ge 2 ] || { echo "$1 requires a value" >&2; exit 1; }
+            RESUME_ID="$2"
             shift 2
             ;;
         --update-time)
@@ -375,6 +388,9 @@ UPDATE_MINUTE=$((10#$UPDATE_MINUTE))
 START_INTERVAL=$((10#$START_INTERVAL))
 validate_identifier "instance name" "$INSTANCE_NAME"
 validate_identifier "tmux session name" "$TMUX_SESSION_NAME"
+if [ -n "$RESUME_ID" ]; then
+    validate_identifier "resume session ID" "$RESUME_ID"
+fi
 validate_attach_after_install
 
 prepend_path_dir() {
@@ -404,6 +420,7 @@ print_plan() {
     echo "  tmux socket  : agentmux-$INSTANCE_NAME"
     echo "  display name : $DISPLAY_NAME"
     echo "  workdir      : $WORKDIR"
+    echo "  resume       : ${RESUME_ID:-<none, fresh session>}"
     echo "  update time  : $(printf '%02d:%02d' "$UPDATE_HOUR" "$UPDATE_MINUTE") local"
     echo "  start check  : every ${START_INTERVAL}s"
     echo "  start label  : $START_LABEL"
@@ -561,6 +578,7 @@ render() {
         -e "s|@@TMUX_SESSION_NAME@@|$(template_value "$TMUX_SESSION_NAME")|g" \
         -e "s|@@DISPLAY_NAME@@|$(template_value "$DISPLAY_NAME")|g" \
         -e "s|@@WORKDIR@@|$(template_value "$WORKDIR")|g" \
+        -e "s|@@RESUME@@|$(template_value "$RESUME_ID")|g" \
         -e "s|@@START_LABEL@@|$(template_value "$START_LABEL")|g" \
         -e "s|@@UPDATE_LABEL@@|$(template_value "$UPDATE_LABEL")|g" \
         -e "s|@@HOME@@|$(template_value "$HOME")|g" \
@@ -583,6 +601,7 @@ echo "Installing agentmux claude-code backend for macOS:"
 echo "  instance     : $INSTANCE_NAME"
 echo "  tmux session : $TMUX_SESSION_NAME"
 echo "  display name : $DISPLAY_NAME"
+echo "  resume       : ${RESUME_ID:-<none, fresh session>}"
 echo "  update time  : $(printf '%02d:%02d' "$UPDATE_HOUR" "$UPDATE_MINUTE") local"
 echo "  start check  : every ${START_INTERVAL}s"
 echo "  attach after : $ATTACH_AFTER_INSTALL"
