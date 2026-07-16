@@ -5,6 +5,7 @@
 package runas
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
@@ -28,9 +29,7 @@ func Command(runUser, name string, args ...string) *exec.Cmd {
 	if err != nil {
 		return exec.Command(name, args...)
 	}
-	uid, _ := strconv.Atoi(u.Uid)
-	gid, _ := strconv.Atoi(u.Gid)
-	path := u.HomeDir + "/.local/bin:" + u.HomeDir + "/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+	path := pathFor(u)
 
 	resolved := name
 	if !filepath.IsAbs(name) {
@@ -39,15 +38,44 @@ func Command(runUser, name string, args ...string) *exec.Cmd {
 		}
 	}
 
+	uid, _ := strconv.Atoi(u.Uid)
+	gid, _ := strconv.Atoi(u.Gid)
 	cmd := exec.Command(resolved, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}}
 	cmd.Env = append(os.Environ(), "HOME="+u.HomeDir, "PATH="+path)
 	return cmd
 }
 
-// lookPathIn searches an arbitrary PATH string for an executable named
+// LookPath searches runUser's PATH (the same construction Command uses)
+// for an executable named name, without running anything — for preflight
+// "is this even installed" checks where actually executing the binary
+// (e.g. via --version) isn't a fair thing to demand (it may need network/
+// provider connectivity just to start up).
+func LookPath(runUser, name string) (string, error) {
+	u, err := user.Lookup(runUser)
+	if err != nil {
+		return "", fmt.Errorf("looking up user %q: %w", runUser, err)
+	}
+	if found := lookPathIn(name, pathFor(u)); found != "" {
+		return found, nil
+	}
+	return "", fmt.Errorf("%q not found in %s's PATH", name, runUser)
+}
+
+func pathFor(u *user.User) string {
+	return u.HomeDir + "/.local/bin:" + u.HomeDir + "/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+}
+
+// SearchPath searches an arbitrary PATH string for an executable named
 // name, since exec.LookPath only ever searches the calling process's own
-// $PATH. Returns "" if not found.
+// $PATH — this is the same resolution Command/LookPath use internally,
+// exported for callers (like internal/session) that already know their
+// own correct HOME/PATH and just need the lookup, not a user switch.
+// Returns "" if not found.
+func SearchPath(name, pathEnv string) string {
+	return lookPathIn(name, pathEnv)
+}
+
 func lookPathIn(name, pathEnv string) string {
 	for _, dir := range strings.Split(pathEnv, ":") {
 		if dir == "" {
