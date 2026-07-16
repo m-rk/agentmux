@@ -1,7 +1,6 @@
 package provision
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -97,13 +96,7 @@ func createClaudeCode(opts Options) (string, error) {
 		workdir = filepath.Join(u.HomeDir, ".agentmux", name)
 	}
 
-	claudeJSON := filepath.Join(u.HomeDir, ".claude.json")
-	if !fileExists(claudeJSON) {
-		if alt := filepath.Join(u.HomeDir, ".claude", ".claude.json"); fileExists(alt) {
-			claudeJSON = alt
-		}
-	}
-
+	claudeJSON := claudeJSONPath(u.HomeDir)
 	displayName := displayNameFor(runUser, workdir)
 
 	if !claudeLoggedIn(runUser) {
@@ -117,7 +110,8 @@ func createClaudeCode(opts Options) (string, error) {
 		return "", fmt.Errorf("chown workdir: %w", err)
 	}
 
-	if err := preacceptWorkspaceTrust(claudeJSON, workdir, uid, gid); err != nil {
+	chown := func(path string) error { return os.Chown(path, uid, gid) }
+	if err := preacceptWorkspaceTrust(claudeJSON, workdir, chown); err != nil {
 		fmt.Printf("warning: could not pre-accept workspace trust: %v\n", err)
 	}
 
@@ -155,64 +149,11 @@ func createClaudeCode(opts Options) (string, error) {
 		name, regPath, runUser, name, sessionName), nil
 }
 
+// claudeLoggedIn checks login by dropping privileges to runUser, since this
+// provisioner runs as root; see claudeLoggedInVia for the shared response
+// parsing.
 func claudeLoggedIn(runUser string) bool {
-	out, err := runas.Command(runUser, "claude", "auth", "status", "--json").Output()
-	if err != nil {
-		return false
-	}
-	var status struct {
-		LoggedIn bool `json:"loggedIn"`
-	}
-	if err := json.Unmarshal(out, &status); err != nil {
-		return false
-	}
-	return status.LoggedIn
-}
-
-// preacceptWorkspaceTrust patches claudeJSON's
-// projects[workdir].hasTrustDialogAccepted = true, natively via
-// encoding/json instead of install.sh's inline Python, then restores
-// ownership to uid/gid since this process writes it as root.
-func preacceptWorkspaceTrust(claudeJSON, workdir string, uid, gid int) error {
-	if !fileExists(claudeJSON) {
-		return nil
-	}
-	data, err := os.ReadFile(claudeJSON)
-	if err != nil {
-		return err
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(data, &doc); err != nil {
-		return err
-	}
-	projects, _ := doc["projects"].(map[string]any)
-	if projects == nil {
-		projects = map[string]any{}
-		doc["projects"] = projects
-	}
-	proj, _ := projects[workdir].(map[string]any)
-	if proj == nil {
-		proj = map[string]any{}
-		projects[workdir] = proj
-	}
-	if accepted, _ := proj["hasTrustDialogAccepted"].(bool); accepted {
-		return nil
-	}
-	proj["hasTrustDialogAccepted"] = true
-
-	out, err := json.Marshal(doc)
-	if err != nil {
-		return err
-	}
-	tmp := claudeJSON + ".tmp"
-	if err := os.WriteFile(tmp, out, 0o600); err != nil {
-		return err
-	}
-	if err := os.Chown(tmp, uid, gid); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, claudeJSON)
+	return claudeLoggedInVia(runas.Command(runUser, "claude", "auth", "status", "--json"))
 }
 
 func installClaudeCodeUnits(name, sessionName, runUser, binPath, serviceName, updateServiceName, timerName string) error {

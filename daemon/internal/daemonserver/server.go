@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os/exec"
 	"reflect"
 	"time"
 
@@ -118,11 +117,8 @@ func (s *Server) Control(ctx context.Context, req *pb.ControlRequest) (*pb.Contr
 		return &pb.ControlResponse{Ok: false, Message: "unknown action"}, nil
 	}
 
-	out, err := exec.CommandContext(ctx, "systemctl", action, inst.ServiceName).CombinedOutput()
-	if err != nil {
-		return &pb.ControlResponse{Ok: false, Message: fmt.Sprintf("%s %s: %v: %s", action, inst.ServiceName, err, out)}, nil
-	}
-	return &pb.ControlResponse{Ok: true, Message: fmt.Sprintf("%s %s ok", action, inst.ServiceName)}, nil
+	ok, message := applyControl(ctx, *inst, action)
+	return &pb.ControlResponse{Ok: ok, Message: message}, nil
 }
 
 func (s *Server) CreateInstance(ctx context.Context, req *pb.CreateInstanceRequest) (*pb.CreateInstanceResponse, error) {
