@@ -49,7 +49,7 @@ func runDaemonCmd(args []string) {
 // installed by `agentmux daemon install` execs.
 func runDaemon(args []string) {
 	fs := flag.NewFlagSet("daemon run", flag.ExitOnError)
-	socketPath := fs.String("socket", "/run/agentmux/agentmuxd.sock", "Unix socket to listen on")
+	socketPath := fs.String("socket", daemoninstall.SocketPath(), "Unix socket to listen on")
 	listenAddr := fs.String("listen", "", "TCP address to also listen on, e.g. the host's Tailscale IP:port (disabled if empty). No TLS/auth is applied here; restrict access via tailnet ACLs.")
 	envDir := fs.String("env-dir", discovery.EnvDir, "directory to read instance *.env files from (override for testing without root)")
 	fs.Parse(args)

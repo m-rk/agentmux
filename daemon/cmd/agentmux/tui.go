@@ -14,6 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/m-rk/agentmux/daemon/internal/daemoninstall"
 	"github.com/m-rk/agentmux/daemon/internal/hostsconfig"
 	"github.com/m-rk/agentmux/daemon/internal/pb"
 	"github.com/m-rk/agentmux/daemon/internal/tuiclient"
@@ -28,7 +29,7 @@ const retryDelay = 5 * time.Second
 // -socket if no hosts.yaml is found (phase 1 behavior).
 func runTUI(args []string) {
 	fs := flag.NewFlagSet("agentmux", flag.ExitOnError)
-	socketPath := fs.String("socket", "/run/agentmux/agentmuxd.sock", "Unix socket agentmuxd is listening on (used when no hosts.yaml is found)")
+	socketPath := fs.String("socket", daemoninstall.SocketPath(), "Unix socket agentmuxd is listening on (used when no hosts.yaml is found)")
 	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml listing agentmuxd hosts to connect to")
 	fs.Parse(args)
 

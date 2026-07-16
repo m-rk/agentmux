@@ -6,14 +6,16 @@ package discovery
 import (
 	"bufio"
 	"hash/fnv"
+	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/m-rk/agentmux/daemon/internal/runas"
 )
 
 // EnvDir is where List reads *.env files from: /etc/agentmux on Linux,
@@ -60,7 +62,11 @@ func List() ([]Instance, error) {
 
 	panes, err := tmuxPanes()
 	if err != nil {
-		// tmux not installed or no server running yet: every instance is dead.
+		// tmux not installed, no server running yet, or genuinely
+		// misconfigured (e.g. tmux not resolvable in PATH) — log so a
+		// systemic failure like the latter doesn't look identical to the
+		// benign "no instances yet" case, then treat every instance as dead.
+		log.Printf("discovery: tmux liveness check failed, treating all instances as dead: %v", err)
 		panes = nil
 	}
 
@@ -215,29 +221,38 @@ func tmuxPanes() (map[string]tmuxPane, error) {
 	panes := map[string]tmuxPane{}
 	var lastErr error
 	for _, socket := range sockets {
-		out, err := exec.Command("tmux", "-S", socket, "list-panes", "-a", "-F",
-			"#{session_name}\t#{pane_pid}\t#{session_created}").Output()
+		// "|" rather than a tab: without a locale set (LANG/LC_CTYPE unset,
+		// as under launchd/systemd), tmux's format engine treats tab as a
+		// non-printable byte and silently replaces it with "_", which is
+		// indistinguishable from "_" appearing for other reasons and quietly
+		// corrupts the split below. "|" is printable in the C locale too.
+		// session_name is free-form (tmux allows "|" in it) and goes last,
+		// split with SplitN, so a "|" in a session name ends up in that
+		// final field instead of shifting pane_pid/session_created and
+		// getting the whole line dropped by the len != 3 check below.
+		out, err := runas.CurrentUserCommand("tmux", "-S", socket, "list-panes", "-a", "-F",
+			"#{pane_pid}|#{session_created}|#{session_name}").Output()
 		if err != nil {
 			lastErr = err
 			continue
 		}
 		scanner := bufio.NewScanner(strings.NewReader(string(out)))
 		for scanner.Scan() {
-			parts := strings.Split(scanner.Text(), "\t")
+			parts := strings.SplitN(scanner.Text(), "|", 3)
 			if len(parts) != 3 {
 				continue
 			}
-			session := parts[0]
+			session := parts[2]
 			if _, exists := panes[session]; exists {
 				continue // already recorded the lead pane for this session
 			}
-			pid, _ := strconv.ParseInt(parts[1], 10, 64)
+			pid, _ := strconv.ParseInt(parts[0], 10, 64)
 			var startedAt time.Time
-			if created, err := strconv.ParseInt(parts[2], 10, 64); err == nil {
+			if created, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
 				startedAt = time.Unix(created, 0)
 			}
 
-			content, capErr := exec.Command("tmux", "-S", socket, "capture-pane", "-p", "-t", session).Output()
+			content, capErr := runas.CurrentUserCommand("tmux", "-S", socket, "capture-pane", "-p", "-t", session).Output()
 			var lastChanged time.Time
 			if capErr == nil {
 				lastChanged = observeActivity(session, content)

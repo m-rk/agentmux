@@ -46,6 +46,19 @@ func agentmuxDir() (string, error) {
 	return filepath.Join(home, ".agentmux"), nil
 }
 
+// SocketPath returns the Unix socket the installed daemon listens on, so
+// the TUI/wizard client can default to the right path without a
+// hosts.yaml (see install_linux.go's SocketPath for the Linux default).
+// Falls back to a relative path if the home directory can't be resolved,
+// matching defaultEnvDir's documented failure behavior.
+func SocketPath() string {
+	dir, err := agentmuxDir()
+	if err != nil {
+		return ".agentmux/run/agentmuxd.sock"
+	}
+	return filepath.Join(dir, "run", "agentmuxd.sock")
+}
+
 func plistPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

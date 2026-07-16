@@ -27,6 +27,13 @@ WantedBy=multi-user.target
 `
 )
 
+// SocketPath returns the Unix socket the installed daemon listens on,
+// so the TUI/wizard client can default to the right path without a
+// hosts.yaml (see install_darwin.go's SocketPath for the macOS default).
+func SocketPath() string {
+	return daemonSocket
+}
+
 // Install renders and enables agentmuxd.service, pointing it at a stable
 // copy of the current binary under /usr/local/bin. Requires root, since the
 // unit (and the agentmux-<instance>.service units it will manage) are
