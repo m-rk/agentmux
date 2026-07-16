@@ -61,8 +61,10 @@ func newInstanceCmd(p *tea.Program, clients map[string]*tuiclient.Client) tea.Cm
 }
 
 // runWizardForm prompts for device/agent/instance details, then calls
-// CreateInstance on the chosen host's client. Only "claude-code" is
-// selectable so far (Phase B); "zero"/"opencode" land in a follow-up.
+// CreateInstance on the chosen host's client. claude-code (Linux only so
+// far) and zero/opencode (also Linux only so far) are selectable; macOS
+// provisioning isn't implemented yet and CreateInstance will report that
+// clearly rather than doing something wrong.
 func runWizardForm(clients map[string]*tuiclient.Client) error {
 	hostNames := make([]string, 0, len(clients))
 	for name := range clients {
@@ -85,6 +87,8 @@ func runWizardForm(clients map[string]*tuiclient.Client) error {
 		runUser  string
 		workdir  string
 		resume   string
+		provider string
+		model    string
 	)
 	if u, err := user.Current(); err == nil {
 		runUser = u.Username
@@ -94,14 +98,20 @@ func runWizardForm(clients map[string]*tuiclient.Client) error {
 		huh.NewGroup(
 			huh.NewSelect[string]().Title("Device").Options(hostOptions...).Value(&host),
 			huh.NewSelect[string]().Title("Agent").
-				Options(huh.NewOption("claude-code", "claude-code")).
+				Options(
+					huh.NewOption("claude-code", "claude-code"),
+					huh.NewOption("zero", "zero"),
+					huh.NewOption("opencode", "opencode"),
+				).
 				Value(&agent),
 		),
 		huh.NewGroup(
 			huh.NewInput().Title("Instance name").Value(&instance),
 			huh.NewInput().Title("Run as user").Description("required; the device's OS username to run the session as").Value(&runUser),
 			huh.NewInput().Title("Workdir").Description("blank = provisioner default").Value(&workdir),
-			huh.NewInput().Title("Resume session ID").Description("blank = fresh session").Value(&resume),
+			huh.NewInput().Title("Resume session ID").Description("claude-code only; blank = fresh session").Value(&resume),
+			huh.NewInput().Title("Provider").Description("zero/opencode only; blank = ollama").Value(&provider),
+			huh.NewInput().Title("Model").Description("zero/opencode only; blank = provisioner default").Value(&model),
 		),
 	)
 	if err := form.Run(); err != nil {
@@ -118,6 +128,8 @@ func runWizardForm(clients map[string]*tuiclient.Client) error {
 	resp, err := client.CreateInstance(ctx, &pb.CreateInstanceRequest{
 		InstanceName:    instance,
 		Agent:           agent,
+		Provider:        provider,
+		Model:           model,
 		Workdir:         workdir,
 		ResumeSessionId: resume,
 		RunUser:         runUser,

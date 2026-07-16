@@ -41,7 +41,7 @@ func RunClaudeCode(name string) error {
 	// exec.Command takes args as a slice, not a shell string, so unlike
 	// rc-start.sh there's no manual shell-quoting to get right here.
 	tmuxArgs := append([]string{"-L", socket, "new-session", "-d", "-s", session, "-c", workdir, "claude"}, claudeArgs...)
-	cmd := withPath(exec.Command("tmux", tmuxArgs...))
+	cmd := withPath("tmux", tmuxArgs...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("starting tmux session %s: %w: %s", session, err, out)
 	}
@@ -56,7 +56,7 @@ func StopClaudeCode(name string) error {
 	}
 	session := sessionNameOf(fields, "agentmux")
 	socket := tmuxSocket(name)
-	_ = withPath(exec.Command("tmux", "-L", socket, "kill-session", "-t", session)).Run()
+	_ = withPath("tmux", "-L", socket, "kill-session", "-t", session).Run()
 	return nil
 }
 

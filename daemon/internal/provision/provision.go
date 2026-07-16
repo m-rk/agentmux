@@ -34,15 +34,15 @@ func validateIdentifier(label, value string) error {
 	return nil
 }
 
-// Create dispatches to the right agent-specific provisioner. Only
-// "claude-code" is implemented so far (Phase B); "zero"/"opencode" land in
-// a follow-up phase.
+// Create dispatches to the right agent-specific provisioner.
 func Create(opts Options) (string, error) {
 	switch opts.Agent {
 	case "claude-code":
 		return createClaudeCode(opts)
+	case "zero", "opencode":
+		return createAgentmux(opts)
 	default:
-		return "", fmt.Errorf("unsupported agent %q (only claude-code is implemented so far)", opts.Agent)
+		return "", fmt.Errorf("unsupported agent %q (want claude-code, zero, or opencode)", opts.Agent)
 	}
 }
 

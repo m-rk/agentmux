@@ -11,8 +11,9 @@ import (
 
 // runSessionCmd is `agentmux session run|update|stop --instance NAME`: the
 // per-instance unit's ExecStart/ExecStop, replacing rc-start.sh/
-// rc-update.sh. Not meant to be run by hand; only claude-code is wired up
-// so far (Phase B) — zero/opencode land in a follow-up.
+// rc-update.sh. Not meant to be run by hand. session.Run/Update/Stop
+// dispatch to the right agent-specific implementation by reading the
+// instance's own registry file.
 func runSessionCmd(args []string) {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: agentmux session <run|update|stop> --instance NAME")
@@ -30,11 +31,11 @@ func runSessionCmd(args []string) {
 	var err error
 	switch sub {
 	case "run":
-		err = session.RunClaudeCode(*instance)
+		err = session.Run(*instance)
 	case "update":
-		err = session.UpdateClaudeCode(*instance)
+		err = session.Update(*instance)
 	case "stop":
-		err = session.StopClaudeCode(*instance)
+		err = session.Stop(*instance)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown session subcommand %q\n", sub)
 		os.Exit(1)
