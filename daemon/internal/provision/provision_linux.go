@@ -29,3 +29,14 @@ func realUserCount() int {
 	}
 	return count
 }
+
+// unitFileExists reports whether name's systemd unit is already on disk —
+// used by guardAgentMismatch to catch a collision with an instance that
+// predates the registry-based provisioner (e.g. one installed by
+// backends/claude-code/install.sh or backends/agentmux/install.sh, which
+// has no *.env registry file for guardAgentMismatch's own agent check to
+// find, so that check alone would silently approve overwriting it).
+func unitFileExists(name string) bool {
+	_, err := os.Stat("/etc/systemd/system/agentmux-" + name + ".service")
+	return err == nil
+}

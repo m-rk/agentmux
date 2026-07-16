@@ -34,8 +34,27 @@ func validateIdentifier(label, value string) error {
 	return nil
 }
 
-// Create dispatches to the right agent-specific provisioner.
+// Create dispatches to the right agent-specific provisioner, after
+// refusing to silently clobber an existing instance registered under a
+// different agent. The wizard form's instance-name field doesn't update
+// when the agent selection changes — it always starts at "claude-code"
+// regardless of which agent is picked — so choosing zero/opencode and
+// submitting without noticing/changing that default would otherwise
+// overwrite a same-named claude-code instance's registry file and
+// systemd unit/LaunchAgent outright.
 func Create(opts Options) (string, error) {
+	name := opts.InstanceName
+	if name == "" {
+		if opts.Agent == "claude-code" {
+			name = defaultClaudeCodeInstance
+		} else {
+			name = defaultAgentmuxInstance
+		}
+	}
+	if err := guardAgentMismatch(name, opts.Agent); err != nil {
+		return "", err
+	}
+
 	switch opts.Agent {
 	case "claude-code":
 		return createClaudeCode(opts)
@@ -44,6 +63,50 @@ func Create(opts Options) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported agent %q (want claude-code, zero, or opencode)", opts.Agent)
 	}
+}
+
+// guardAgentMismatch refuses to proceed if name is already in use by a
+// different agent — either a registry-tracked instance (see
+// existingAgentFor) or, since the registry only exists for instances this
+// Go provisioner itself created, an older instance installed by
+// backends/*/install.sh or install-macos.sh, which predates the registry
+// entirely and so wouldn't show up in it at all (see unitFileExists).
+// Re-running the provisioner for the *same* agent under the same name is
+// the supported "update settings, keep everything else" workflow the bash
+// installers already relied on, but a different (or unrecorded) agent
+// under the same name is never a legitimate update — it's almost
+// certainly a stale instance-name default that should have been changed.
+func guardAgentMismatch(name, agent string) error {
+	if existing, exists := existingAgentFor(name); exists {
+		if existing == agent {
+			return nil
+		}
+		return fmt.Errorf("instance %q already exists as agent %q; refusing to overwrite it as %q — pick a different instance name, or remove the existing instance first", name, existing, agent)
+	}
+	if unitFileExists(name) {
+		return fmt.Errorf("instance %q already has a LaunchAgent/systemd unit installed (likely from an earlier install.sh/install-macos.sh run, predating this provisioner's own registry) — refusing to overwrite it as %q; pick a different instance name, or remove the existing one first", name, agent)
+	}
+	return nil
+}
+
+// existingAgentFor reads just the AGENTMUX_AGENT field from name's
+// registry file, in the same KEY=VALUE format writeRegistry writes and
+// discovery.go parses. Defaults to "claude-code" if the file exists but
+// the field is absent, matching discovery.go's own default (the
+// claude-code provisioners never set AGENTMUX_AGENT, since it was the only
+// backend before zero/opencode).
+func existingAgentFor(name string) (agent string, exists bool) {
+	data, err := os.ReadFile(filepath.Join(discovery.EnvDir, name+".env"))
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		key, val, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok && key == "AGENTMUX_AGENT" && val != "" {
+			return val, true
+		}
+	}
+	return "claude-code", true
 }
 
 type kv struct{ key, value string }
