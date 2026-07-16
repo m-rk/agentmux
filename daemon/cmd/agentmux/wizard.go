@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 
+	"github.com/m-rk/agentmux/daemon/internal/daemoninstall"
 	"github.com/m-rk/agentmux/daemon/internal/hostsconfig"
 	"github.com/m-rk/agentmux/daemon/internal/pb"
 	"github.com/m-rk/agentmux/daemon/internal/tuiclient"
@@ -22,7 +23,7 @@ import (
 // the interactive form.
 func runWizard(args []string) {
 	fs := flag.NewFlagSet("new", flag.ExitOnError)
-	socketPath := fs.String("socket", "/run/agentmux/agentmuxd.sock", "Unix socket agentmuxd is listening on (used when no hosts.yaml is found)")
+	socketPath := fs.String("socket", daemoninstall.SocketPath(), "Unix socket agentmuxd is listening on (used when no hosts.yaml is found)")
 	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml listing agentmuxd hosts to connect to")
 	fs.Parse(args)
 

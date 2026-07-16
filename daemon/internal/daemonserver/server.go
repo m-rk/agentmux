@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 	"os/exec"
 	"reflect"
 	"time"
@@ -19,6 +18,7 @@ import (
 	"github.com/m-rk/agentmux/daemon/internal/discovery"
 	"github.com/m-rk/agentmux/daemon/internal/pb"
 	"github.com/m-rk/agentmux/daemon/internal/provision"
+	"github.com/m-rk/agentmux/daemon/internal/runas"
 )
 
 const pollInterval = 2 * time.Second
@@ -171,10 +171,10 @@ func (s *Server) Attach(stream pb.AgentmuxDaemon_AttachServer) error {
 		return fmt.Errorf("instance %q has no live tmux session to attach to", attach.Instance)
 	}
 
-	cmd := exec.Command("tmux", "-S", socket, "attach-session", "-t", session)
-	// agentmuxd usually runs under systemd with no controlling terminal, so
-	// TERM is unset; tmux refuses to attach without one.
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd := runas.CurrentUserCommand("tmux", "-S", socket, "attach-session", "-t", session)
+	// agentmuxd usually runs under systemd/launchd with no controlling
+	// terminal, so TERM is unset; tmux refuses to attach without one.
+	cmd.Env = append(cmd.Env, "TERM=xterm-256color")
 	f, err := pty.Start(cmd)
 	if err != nil {
 		return fmt.Errorf("attaching to tmux session %q: %w", session, err)

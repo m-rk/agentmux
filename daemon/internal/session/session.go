@@ -8,8 +8,6 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"os/exec"
-	"os/user"
 	"path/filepath"
 	"strings"
 
@@ -119,42 +117,14 @@ func sessionNameOf(fields map[string]string, fallback string) string {
 	return fallback
 }
 
-// withPath builds an *exec.Cmd for name/args, with PATH (and HOME) fixed
-// up to include common per-user tool install locations, matching the PATH
-// rc-start.sh/rc-update.sh export themselves — systemd/launchd don't
-// inherit a login shell's PATH, and a bare Type=oneshot unit with only
-// User= (no PAMName=) doesn't reliably set HOME either, so this resolves
-// HOME via os/user rather than trusting $HOME.
-//
-// Unlike a naive "set cmd.Env after exec.Command(name, ...)", name is
-// resolved against the fixed-up PATH explicitly before building the
-// command: exec.Command's own lookup uses the *calling* process's ambient
-// $PATH (os.Getenv, not cmd.Env), so a plain exec.Command("zero", ...) run
-// from a unit with a minimal PATH would silently fail to find a
-// user-installed binary even with cmd.Env correctly set — this is what
-// actually broke both the claude tmux session (HOME missing) and a direct
-// `zero providers check` call (PATH lookup happening too early) during
-// testing; both are the same underlying Go gotcha.
-func withPath(name string, args ...string) *exec.Cmd {
-	home := os.Getenv("HOME")
-	if home == "" {
-		if u, err := user.Current(); err == nil {
-			home = u.HomeDir
-		}
-	}
-	path := home + "/.local/bin:" + home + "/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + os.Getenv("PATH")
-
-	resolved := name
-	if !filepath.IsAbs(name) {
-		if found := runas.SearchPath(name, path); found != "" {
-			resolved = found
-		}
-	}
-
-	cmd := exec.Command(resolved, args...)
-	cmd.Env = append(os.Environ(), "HOME="+home, "PATH="+path)
-	return cmd
-}
+// withPath is runas.CurrentUserCommand, kept as a local alias since every
+// call site in this file predates that shared helper. See its doc comment
+// for why a plain exec.Command(name, ...) isn't enough under systemd/
+// launchd — this is what actually broke both the claude tmux session (HOME
+// missing) and a direct `zero providers check` call (PATH lookup happening
+// too early) during testing, and later broke discovery/Attach's own
+// tmux calls the same way before they were pointed at this helper too.
+var withPath = runas.CurrentUserCommand
 
 // runAs is runas.Command, used by session update (which runs from a
 // root-context unit, since it needs root to call systemctl). session

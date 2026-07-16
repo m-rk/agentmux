@@ -46,6 +46,39 @@ func Command(runUser, name string, args ...string) *exec.Cmd {
 	return cmd
 }
 
+// CurrentUserCommand returns an *exec.Cmd for name/args, running as the
+// calling process's own user with PATH (and HOME) fixed up to include
+// common per-user tool install locations (notably Homebrew's /opt/homebrew/
+// bin, where tmux lives on Apple Silicon). Every exec.Command("tmux", ...)
+// call site needs this, not just the ones that already had it: systemd/
+// launchd give a daemon a minimal ambient PATH, and exec.Command's lookup
+// uses that ambient $PATH (os.Getenv, not cmd.Env) rather than whatever
+// PATH ends up in cmd.Env — so a bare exec.Command("tmux", ...) silently
+// fails to find a Homebrew-installed tmux even though the tmux server socket
+// it's trying to reach is right there. Callers that need extra env vars
+// (e.g. TERM for an interactive attach) should append to cmd.Env after
+// calling this, not replace it.
+func CurrentUserCommand(name string, args ...string) *exec.Cmd {
+	home := os.Getenv("HOME")
+	if home == "" {
+		if u, err := user.Current(); err == nil {
+			home = u.HomeDir
+		}
+	}
+	path := home + "/.local/bin:" + home + "/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + os.Getenv("PATH")
+
+	resolved := name
+	if !filepath.IsAbs(name) {
+		if found := lookPathIn(name, path); found != "" {
+			resolved = found
+		}
+	}
+
+	cmd := exec.Command(resolved, args...)
+	cmd.Env = append(os.Environ(), "HOME="+home, "PATH="+path)
+	return cmd
+}
+
 // LookPath searches runUser's PATH (the same construction Command uses)
 // for an executable named name, without running anything — for preflight
 // "is this even installed" checks where actually executing the binary
@@ -64,16 +97,6 @@ func LookPath(runUser, name string) (string, error) {
 
 func pathFor(u *user.User) string {
 	return u.HomeDir + "/.local/bin:" + u.HomeDir + "/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-}
-
-// SearchPath searches an arbitrary PATH string for an executable named
-// name, since exec.LookPath only ever searches the calling process's own
-// $PATH — this is the same resolution Command/LookPath use internally,
-// exported for callers (like internal/session) that already know their
-// own correct HOME/PATH and just need the lookup, not a user switch.
-// Returns "" if not found.
-func SearchPath(name, pathEnv string) string {
-	return lookPathIn(name, pathEnv)
 }
 
 func lookPathIn(name, pathEnv string) string {
