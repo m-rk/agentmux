@@ -59,13 +59,7 @@ func Command(runUser, name string, args ...string) *exec.Cmd {
 // (e.g. TERM for an interactive attach) should append to cmd.Env after
 // calling this, not replace it.
 func CurrentUserCommand(name string, args ...string) *exec.Cmd {
-	home := os.Getenv("HOME")
-	if home == "" {
-		if u, err := user.Current(); err == nil {
-			home = u.HomeDir
-		}
-	}
-	path := home + "/.local/bin:" + home + "/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + os.Getenv("PATH")
+	home, path := currentUserPath()
 
 	resolved := name
 	if !filepath.IsAbs(name) {
@@ -77,6 +71,30 @@ func CurrentUserCommand(name string, args ...string) *exec.Cmd {
 	cmd := exec.Command(resolved, args...)
 	cmd.Env = append(os.Environ(), "HOME="+home, "PATH="+path)
 	return cmd
+}
+
+// CurrentUserLookPath searches the calling process's own fixed-up PATH (the
+// same construction CurrentUserCommand uses) for an executable named name,
+// without running anything — for preflight "is this even installed" checks
+// where actually executing the binary isn't a fair thing to demand (it may
+// need network/provider connectivity just to start up).
+func CurrentUserLookPath(name string) (string, error) {
+	_, path := currentUserPath()
+	if found := lookPathIn(name, path); found != "" {
+		return found, nil
+	}
+	return "", fmt.Errorf("%q not found in PATH", name)
+}
+
+func currentUserPath() (home, path string) {
+	home = os.Getenv("HOME")
+	if home == "" {
+		if u, err := user.Current(); err == nil {
+			home = u.HomeDir
+		}
+	}
+	path = home + "/.local/bin:" + home + "/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + os.Getenv("PATH")
+	return home, path
 }
 
 // LookPath searches runUser's PATH (the same construction Command uses)

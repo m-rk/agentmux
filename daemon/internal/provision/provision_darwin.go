@@ -1,10 +1,27 @@
 package provision
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
+
+// unitFileExists reports whether name's LaunchAgent plist is already on
+// disk — used by guardAgentMismatch to catch a collision with an instance
+// that predates the registry-based provisioner (e.g. one installed by
+// backends/claude-code/install-macos.sh, which has no *.env registry file
+// for guardAgentMismatch's own agent check to find, so that check alone
+// would silently approve overwriting it).
+func unitFileExists(name string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(filepath.Join(home, "Library", "LaunchAgents", "com.agentmux."+name+".plist"))
+	return err == nil
+}
 
 // realUserCount mirrors install-macos.sh's real_user_count(): counts real
 // (human) macOS user accounts via dscl, excluding system/service accounts

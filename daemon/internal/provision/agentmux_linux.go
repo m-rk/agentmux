@@ -11,12 +11,6 @@ import (
 	"github.com/m-rk/agentmux/daemon/internal/runas"
 )
 
-const (
-	defaultAgentmuxInstance = "agentmux"
-	defaultOllamaModel      = "gpt-oss:20b-cloud"
-	defaultProviderWaitSecs = "60"
-)
-
 const agentmuxUnitTemplate = `[Unit]
 Description=Persistent agentmux instance %[1]s (%[2]s + %[3]s)
 After=network-online.target ollama.service
@@ -155,22 +149,6 @@ func createAgentmux(opts Options) (string, error) {
 
 	return fmt.Sprintf("Created instance %q (registry: %s). Reattach with: sudo -u %s tmux -L agentmux-%s attach -t %s",
 		name, regPath, runUser, name, sessionName), nil
-}
-
-func validateSupportedAgentProvider(agent, provider string) error {
-	switch agent + ":" + provider {
-	case "zero:ollama", "opencode:ollama":
-		return nil
-	default:
-		return fmt.Errorf("unsupported agent/provider combination: %s/%s", agent, provider)
-	}
-}
-
-func providerBaseURL(provider string) string {
-	if provider == "ollama" {
-		return "http://localhost:11434/v1"
-	}
-	return ""
 }
 
 // checkAgentInstalled mirrors install.sh's `command -v "$AGENT"` check
