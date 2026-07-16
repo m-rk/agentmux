@@ -3,7 +3,6 @@ package session
 import (
 	"fmt"
 	"os"
-	"os/exec"
 )
 
 // RunClaudeCode is `agentmux session run --instance NAME` for the
@@ -60,41 +59,19 @@ func StopClaudeCode(name string) error {
 	return nil
 }
 
-// UpdateClaudeCode is `agentmux session update --instance NAME`: checks
-// for a new Claude Code version and restarts the session only if it
-// changed or the session isn't running, matching rc-update.sh. Runs as
-// root (it needs to call systemctl), dropping to the instance's run user
-// only for the claude/tmux calls themselves.
+// UpdateClaudeCode is `agentmux session update --instance NAME`: checks for
+// a new Claude Code version and restarts the session only if it changed or
+// the session isn't running. Platform-specific (claudecode_linux.go /
+// claudecode_darwin.go): Linux runs as root and needs runas to drop to the
+// instance's run user plus systemctl to restart; macOS runs as the
+// instance's own user already and restarts by calling StopClaudeCode/
+// RunClaudeCode directly, with no service manager involved.
 func UpdateClaudeCode(name string) error {
-	fields, err := registry(name)
-	if err != nil {
-		return err
-	}
-	runUser := fields["AGENTMUX_RUN_USER"]
-	serviceName := fields["AGENTMUX_SERVICE_NAME"]
-	if runUser == "" || serviceName == "" {
-		return fmt.Errorf("registry for %s is missing AGENTMUX_RUN_USER/AGENTMUX_SERVICE_NAME", name)
-	}
-	session := sessionNameOf(fields, "agentmux")
-	socket := tmuxSocket(name)
-
-	before, _ := runAs(runUser, "claude", "--version").CombinedOutput()
-	if err := runAs(runUser, "claude", "update").Run(); err != nil {
-		return fmt.Errorf("claude update failed, leaving existing session running untouched: %w", err)
-	}
-	after, _ := runAs(runUser, "claude", "--version").CombinedOutput()
-
-	if string(before) == string(after) && hasSessionAs(runUser, socket, session) {
-		return nil // no version change, session already running
-	}
-	if err := exec.Command("systemctl", "restart", serviceName).Run(); err != nil {
-		return fmt.Errorf("restarting %s: %w", serviceName, err)
-	}
-	return nil
+	return updateClaudeCode(name)
 }
 
 func hasSession(socket, session string) bool {
-	return exec.Command("tmux", "-L", socket, "has-session", "-t", session).Run() == nil
+	return withPath("tmux", "-L", socket, "has-session", "-t", session).Run() == nil
 }
 
 func hasSessionAs(runUser, socket, session string) bool {
