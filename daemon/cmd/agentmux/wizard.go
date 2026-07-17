@@ -87,7 +87,6 @@ func runWizardForm(clients map[string]*tuiclient.Client) error {
 		instance = "claude-code"
 		runUser  string
 		workdir  string
-		resume   string
 		provider string
 		model    string
 	)
@@ -110,7 +109,6 @@ func runWizardForm(clients map[string]*tuiclient.Client) error {
 			huh.NewInput().Title("Instance name").Value(&instance),
 			huh.NewInput().Title("Run as user").Description("required; the device's OS username to run the session as").Value(&runUser),
 			huh.NewInput().Title("Workdir").Description("blank = provisioner default").Value(&workdir),
-			huh.NewInput().Title("Resume session ID").Description("claude-code only; blank = fresh session").Value(&resume),
 			huh.NewInput().Title("Provider").Description("zero/opencode only; blank = ollama").Value(&provider),
 			huh.NewInput().Title("Model").Description("zero/opencode only; blank = provisioner default").Value(&model),
 		),
@@ -122,6 +120,15 @@ func runWizardForm(clients map[string]*tuiclient.Client) error {
 	client, ok := clients[host]
 	if !ok {
 		return fmt.Errorf("no connection to host %q", host)
+	}
+
+	// Only claude-code supports --resume, and the picker needs an explicit
+	// workdir to look sessions up under — a blank workdir here means "use
+	// the provisioner's own default," which this client can't predict for
+	// an arbitrary remote device, so it's a fresh session in that case.
+	resume := ""
+	if agent == "claude-code" && workdir != "" {
+		resume = pickResumeSession(client, workdir, runUser)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -143,4 +150,41 @@ func runWizardForm(clients map[string]*tuiclient.Client) error {
 	}
 	fmt.Println(resp.Message)
 	return nil
+}
+
+// pickResumeSession looks up resumable Claude Code sessions for workdir on
+// client's host and, if any exist, prompts for one via a picker (newest
+// first). Returns "" (fresh session) if none are found, the lookup fails
+// (treated as non-fatal — resume is an enhancement, not core to creating
+// an instance), or the user picks "fresh session" explicitly.
+func pickResumeSession(client *tuiclient.Client, workdir, runUser string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	resp, err := client.ListResumableSessions(ctx, &pb.ListResumableSessionsRequest{Workdir: workdir, RunUser: runUser})
+	if err != nil {
+		fmt.Printf("warning: could not list resumable sessions: %v\n", err)
+		return ""
+	}
+	if len(resp.Sessions) == 0 {
+		return ""
+	}
+
+	options := []huh.Option[string]{huh.NewOption("fresh session (no resume)", "")}
+	for _, s := range resp.Sessions {
+		options = append(options, huh.NewOption(
+			fmt.Sprintf("%s (%s)", s.SessionId, relativeTime(s.LastModifiedUnix)), s.SessionId))
+	}
+
+	resume := ""
+	picker := huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().Title("Resume session?").
+			Description(fmt.Sprintf("found %d existing session(s) for %s", len(resp.Sessions), workdir)).
+			Options(options...).
+			Value(&resume),
+	))
+	if err := picker.Run(); err != nil {
+		fmt.Printf("warning: resume picker failed, starting fresh: %v\n", err)
+		return ""
+	}
+	return resume
 }

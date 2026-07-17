@@ -9,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/m-rk/agentmux/daemon/internal/discovery"
 )
@@ -159,4 +161,64 @@ func displayNameFor(runUser, workdir string) string {
 		prefix = runUser + ":"
 	}
 	return fmt.Sprintf("%s%s 🤹 %s", prefix, machineName("host"), filepath.Base(workdir))
+}
+
+// ResumableSession is one candidate Claude Code session a new instance
+// could resume, mirroring ListResumableSessionsResponse's ResumableSession
+// message.
+type ResumableSession struct {
+	SessionID    string
+	LastModified time.Time
+}
+
+// ListResumable scans ~/.claude/projects/<slug>/*.jsonl for workdir — the
+// same directory Claude Code itself writes session transcripts to, keyed
+// by a slugified form of the working directory — and returns every
+// session ID found there, newest first. Not part of any bash installer:
+// there was no discovery mechanism for this before, only the
+// --resume/AGENTMUX_RESUME flag accepting an opaque ID the caller already
+// had to know. resumeHomeDir resolves whose home directory to look in
+// (Linux: an arbitrary runUser, since the daemon runs as root; macOS:
+// always the current user, runUser is ignored — see provision_linux.go/
+// provision_darwin.go).
+//
+// A missing directory (no resumable sessions for this workdir yet) is not
+// an error — it's the common case for a workdir that's never been used
+// with Claude Code before.
+func ListResumable(workdir, runUser string) ([]ResumableSession, error) {
+	home, err := resumeHomeDir(runUser)
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(home, ".claude", "projects", slugifyWorkdir(workdir))
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading %s: %w", dir, err)
+	}
+
+	var sessions []ResumableSession
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		sessions = append(sessions, ResumableSession{
+			SessionID:    strings.TrimSuffix(e.Name(), ".jsonl"),
+			LastModified: info.ModTime(),
+		})
+	}
+	sort.Slice(sessions, func(i, j int) bool { return sessions[i].LastModified.After(sessions[j].LastModified) })
+	return sessions, nil
+}
+
+// slugifyWorkdir mirrors Claude Code's own (undocumented, empirically
+// confirmed) project-directory naming: every "/" and "." becomes "-".
+func slugifyWorkdir(workdir string) string {
+	return strings.NewReplacer("/", "-", ".", "-").Replace(workdir)
 }

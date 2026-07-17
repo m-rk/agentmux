@@ -3,8 +3,23 @@ package provision
 import (
 	"fmt"
 	"os"
+	"os/user"
 	"strings"
 )
+
+// resumeHomeDir resolves runUser's home directory — required on Linux,
+// since the daemon runs as root and any instance's session could belong to
+// a different user than whoever's asking.
+func resumeHomeDir(runUser string) (string, error) {
+	if runUser == "" {
+		return "", fmt.Errorf("run_user is required")
+	}
+	u, err := user.Lookup(runUser)
+	if err != nil {
+		return "", fmt.Errorf("looking up user %q: %w", runUser, err)
+	}
+	return u.HomeDir, nil
+}
 
 // realUserCount mirrors install.sh's real_user_count(): counts /etc/passwd
 // entries with UID >= 1000, excluding the UID 65534 "nobody" account.
