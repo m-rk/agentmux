@@ -8,11 +8,11 @@ design and phased rollout plan.
 Phase 1: TUI + daemon talk over a Unix socket on one host — no networking
 needed. Phase 2: the daemon can also listen on a TCP address (e.g. a
 Tailscale IP), and the TUI can connect to several hosts at once via
-`~/.config/agentmux/hosts.yaml`. Phase B (current): `agentmux new` — a
-wizard that creates a real instance (registry file + systemd unit + tmux
-session) on any configured device, native Go end to end (no bash) for the
-`claude-code` agent on Linux; other agent/platform combinations are a
-follow-up.
+`~/.config/agentmux/hosts.yaml`. `agentmux new` — a wizard that creates a
+real instance (registry file + systemd unit/LaunchAgent + tmux session) on
+any configured device — is native Go end to end (no bash) for every
+agent/platform combination this repo supports: `claude-code`, `zero`, and
+`opencode`, on both Linux and macOS.
 
 ## Build
 
@@ -63,13 +63,20 @@ quit.
 ./agentmux new
 ```
 
-Prompts for device (any host from `hosts.yaml`, or `local`), agent, instance
-name, run-as user, workdir, and an optional Claude Code session ID to
-resume. Calls the target device's daemon over the same connection the TUI
-uses — creating on a remote device just means picking it from the same list.
-Only the `claude-code` agent on Linux is implemented so far; other
-combinations return a clear "not implemented yet" error rather than doing
-something wrong silently.
+Prompts for device (any host from `hosts.yaml`, or `local`), agent
+(`claude-code`, `zero`, or `opencode`), instance name, run-as user (Linux
+only — a macOS instance always runs as whoever ran the wizard), workdir,
+and provider/model (zero/opencode only). Calls the target device's daemon
+over the same connection the TUI uses — creating on a remote device just
+means picking it from the same list. If `claude-code` is selected and an
+explicit workdir was given, it looks up resumable sessions for that workdir
+(via `~/.claude/projects`) and offers a picker instead of asking for a
+session ID by hand.
+
+Picking an instance name that's already in use by a *different* agent is
+refused rather than silently overwritten — this also catches the case of
+an instance installed by the older `backends/*/install.sh` scripts, which
+predate the registry file this wizard reads/writes.
 
 ## Multiple hosts over Tailscale
 
