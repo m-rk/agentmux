@@ -8,6 +8,13 @@ import (
 	"strings"
 )
 
+// resumeHomeDir always resolves to the current user on macOS — an
+// instance always runs as whoever invoked `agentmux new`, so runUser
+// (meaningful only on Linux, where the daemon runs as root) is ignored.
+func resumeHomeDir(_ string) (string, error) {
+	return os.UserHomeDir()
+}
+
 // unitFileExists reports whether name's LaunchAgent plist is already on
 // disk — used by guardAgentMismatch to catch a collision with an instance
 // that predates the registry-based provisioner (e.g. one installed by

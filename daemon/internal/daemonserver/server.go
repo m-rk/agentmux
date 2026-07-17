@@ -137,6 +137,21 @@ func (s *Server) CreateInstance(ctx context.Context, req *pb.CreateInstanceReque
 	return &pb.CreateInstanceResponse{Ok: true, Message: message}, nil
 }
 
+func (s *Server) ListResumableSessions(ctx context.Context, req *pb.ListResumableSessionsRequest) (*pb.ListResumableSessionsResponse, error) {
+	sessions, err := provision.ListResumable(req.Workdir, req.RunUser)
+	if err != nil {
+		return nil, err
+	}
+	resp := &pb.ListResumableSessionsResponse{}
+	for _, s := range sessions {
+		resp.Sessions = append(resp.Sessions, &pb.ResumableSession{
+			SessionId:        s.SessionID,
+			LastModifiedUnix: s.LastModified.Unix(),
+		})
+	}
+	return resp, nil
+}
+
 func (s *Server) Attach(stream pb.AgentmuxDaemon_AttachServer) error {
 	first, err := stream.Recv()
 	if err != nil {
