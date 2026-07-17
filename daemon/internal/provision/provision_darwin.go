@@ -20,8 +20,9 @@ func resumeHomeDir(_ string) (string, error) {
 // that predates the registry-based provisioner (e.g. one installed by
 // backends/claude-code/install-macos.sh, which has no *.env registry file
 // for guardAgentMismatch's own agent check to find, so that check alone
-// would silently approve overwriting it).
-func unitFileExists(name string) bool {
+// would silently approve overwriting it). A var, not a plain func, so
+// tests can stub it out instead of touching the real ~/Library/LaunchAgents.
+var unitFileExists = func(name string) bool {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return false
@@ -34,8 +35,10 @@ func unitFileExists(name string) bool {
 // (human) macOS user accounts via dscl, excluding system/service accounts
 // (UID < 500 by convention) that "getent passwd"'s /etc/passwd-based Linux
 // check would never see on macOS anyway (Directory Services, not a flat
-// file, is the actual source of truth here).
-func realUserCount() int {
+// file, is the actual source of truth here). A var, not a plain func, so
+// tests can stub it out instead of depending on the real machine's actual
+// account count.
+var realUserCount = func() int {
 	out, err := exec.Command("dscl", ".", "-list", "/Users", "UniqueID").Output()
 	if err != nil {
 		return 1

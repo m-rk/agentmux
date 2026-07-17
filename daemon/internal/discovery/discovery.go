@@ -225,11 +225,8 @@ func tmuxPanes() (map[string]tmuxPane, error) {
 		// as under launchd/systemd), tmux's format engine treats tab as a
 		// non-printable byte and silently replaces it with "_", which is
 		// indistinguishable from "_" appearing for other reasons and quietly
-		// corrupts the split below. "|" is printable in the C locale too.
-		// session_name is free-form (tmux allows "|" in it) and goes last,
-		// split with SplitN, so a "|" in a session name ends up in that
-		// final field instead of shifting pane_pid/session_created and
-		// getting the whole line dropped by the len != 3 check below.
+		// corrupts parsePaneLine's split below. "|" is printable in the C
+		// locale too.
 		out, err := runas.CurrentUserCommand("tmux", "-S", socket, "list-panes", "-a", "-F",
 			"#{pane_pid}|#{session_created}|#{session_name}").Output()
 		if err != nil {
@@ -238,18 +235,12 @@ func tmuxPanes() (map[string]tmuxPane, error) {
 		}
 		scanner := bufio.NewScanner(strings.NewReader(string(out)))
 		for scanner.Scan() {
-			parts := strings.SplitN(scanner.Text(), "|", 3)
-			if len(parts) != 3 {
+			session, pid, startedAt, ok := parsePaneLine(scanner.Text())
+			if !ok {
 				continue
 			}
-			session := parts[2]
 			if _, exists := panes[session]; exists {
 				continue // already recorded the lead pane for this session
-			}
-			pid, _ := strconv.ParseInt(parts[0], 10, 64)
-			var startedAt time.Time
-			if created, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
-				startedAt = time.Unix(created, 0)
 			}
 
 			content, capErr := runas.CurrentUserCommand("tmux", "-S", socket, "capture-pane", "-p", "-t", session).Output()
@@ -265,4 +256,22 @@ func tmuxPanes() (map[string]tmuxPane, error) {
 		return panes, lastErr
 	}
 	return panes, nil
+}
+
+// parsePaneLine parses one line of `tmux list-panes -F
+// "#{pane_pid}|#{session_created}|#{session_name}"` output. session_name is
+// free-form (tmux allows "|" in it) and comes last, split with SplitN, so a
+// literal "|" in a session name ends up entirely inside that final field
+// instead of shifting pane_pid/session_created and getting the whole line
+// dropped by the parts-count check below.
+func parsePaneLine(line string) (session string, pid int64, startedAt time.Time, ok bool) {
+	parts := strings.SplitN(line, "|", 3)
+	if len(parts) != 3 {
+		return "", 0, time.Time{}, false
+	}
+	pid, _ = strconv.ParseInt(parts[0], 10, 64)
+	if created, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+		startedAt = time.Unix(created, 0)
+	}
+	return parts[2], pid, startedAt, true
 }
