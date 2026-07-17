@@ -123,25 +123,126 @@ columns get cramped — not needed yet. Keys: `a` attach in place, `r`/`s`/`x`
 restart/stop/start (each requires a `y` confirmation keypress before
 firing), `q` quit. `l` scrollback/log view is not implemented yet.
 
+## CLI: daemon self-install + instance wizard
+
+`agentmuxd` and `agentmux` have since merged into one binary. Subcommands:
+
+- `agentmux` (no args) — the TUI, unchanged.
+- `agentmux daemon install|uninstall|status` — installs/removes/checks the
+  background daemon on this host: a systemd unit (Linux, requires root) or
+  a per-user LaunchAgent (macOS, no root — matches the instance-level
+  provisioning's own no-root stance below). Pins a stable copy of the
+  running binary (`/usr/local/bin/agentmux` on Linux,
+  `~/.agentmux/bin/agentmux` on macOS) so the installed unit doesn't depend
+  on wherever the binary was originally built/downloaded.
+- `agentmux daemon run` — the daemon's foreground process (what `agentmuxd`
+  used to be). What the installed unit execs.
+- `agentmux new` — a `charmbracelet/huh` wizard that creates a real
+  instance on any device from the same host list the TUI already dials,
+  via a new `CreateInstance` RPC.
+- `agentmux session run|update|stop --instance NAME` — hidden; the
+  per-instance unit's ExecStart/ExecStop, replacing `rc-start.sh`/
+  `rc-update.sh`.
+
+### Registry file
+
+Every instance — either OS — gets a `KEY=VALUE` file in the format
+`discovery.go` already parses:
+
+- Linux: `/etc/agentmux/<name>.env` (root-owned, as before).
+- macOS: `~/.agentmux/registry/<name>.env` (new — macOS instances had no
+  registry at all before this work, and so were invisible to
+  `discovery`/the TUI entirely; a real gap this incidentally fixed).
+
+`agentmux session run/update/stop` reads its own registry file by instance
+name instead of relying on systemd's `EnvironmentFile=` or launchd's
+`EnvironmentVariables` dict — both unit templates just pass `--instance
+NAME` now, and the Go binary looks up its own config.
+
+### Provisioning architecture
+
+`internal/provision` (native Go port of `backends/*/install.sh` and
+`install-macos.sh`) and `internal/session` (native Go port of
+`rc-start.sh`/`rc-update.sh`) implement the full instance lifecycle with no
+bash in the loop, for every agent/platform combination this repo supports
+(`claude-code`, `zero`, `opencode` × Linux, macOS). Both packages split
+three ways per agent:
+
+- A shared file (`claudecode.go`, `agentmux.go`) for logic that's genuinely
+  identical cross-platform: input validation, the login-check JSON-response
+  shape, workspace-trust patching, provider/model defaults.
+- `*_linux.go`: root-context specifics — drops privileges to the instance's
+  `run_user` via `internal/runas` (a `Credential`-based `exec.Cmd`, not
+  `su`/`sudo`), renders systemd units.
+- `*_darwin.go`: current-user-context specifics — no privilege drop needed
+  (a macOS instance always runs as whoever invoked `agentmux new`, matching
+  `install-macos.sh`'s own "must not run as root" check), renders
+  LaunchAgent plists.
+
+This split exists because the alternative — copying the per-OS glue instead
+of sharing it — is exactly what caused two of the real bugs found while
+building this (see Status below): a PATH-resolution helper existed once,
+correctly, for one exec call site, but a second, separately-written copy
+for a different call site didn't get the same fix when the first one did.
+
+`internal/runas` centralizes the PATH-resolution gotcha that caused those
+bugs: `exec.Command`'s own binary lookup uses the *calling* process's
+ambient `$PATH` (`os.Getenv`, not `cmd.Env`), not whatever's about to be
+set on the child — so both `Command` (drops to another user via a
+Credential) and `CurrentUserCommand` (same PATH fixup, no privilege drop)
+resolve the binary explicitly before building the `exec.Cmd`, rather than
+setting `cmd.Env` on an already-built one and hoping.
+
+### Safety: cross-agent overwrite guard
+
+The wizard's instance-name field doesn't react to the agent dropdown — it
+always starts at the claude-code default regardless of which agent is
+selected. `provision.Create` refuses to proceed if the requested name
+already belongs to a different agent, checked two ways: `existingAgentFor`
+(the registry, for instances this provisioner itself created) and
+`unitFileExists` (the plist/unit file directly, for older instances
+installed by the bash scripts, which predate the registry and so have no
+`*.env` file for the first check to find). Re-provisioning the *same*
+agent under the same name is still allowed — that's the bash installers'
+own "safe to re-run, rewrites config" behavior.
+
+### Resume picker
+
+`ListResumableSessions` scans `~/.claude/projects/<slug>/*.jsonl` — Claude
+Code's own undocumented project-directory naming, where every `/` and `.`
+in the working directory path becomes `-` — for a given workdir, returning
+session IDs newest-first. The wizard shows a picker instead of a free-text
+session-ID field when claude-code is selected and an explicit workdir was
+typed (a blank workdir means "use the provisioner's own default," which
+the wizard can't predict for an arbitrary remote device, so resume falls
+back to "fresh session" in that case). A lookup failure or empty result is
+treated as "fresh session," not an error — resume is an enhancement, not
+core to creating an instance.
+
 ## Repo layout
 
-New `daemon/` directory, one Go module:
+`daemon/`, one Go module, one binary (`cmd/agentmux`):
 
 ```
 daemon/
   proto/agentmuxd.proto
-  cmd/agentmuxd/
-  cmd/agentmux/
+  cmd/agentmux/       # dispatcher: tui (default) / daemon / new / session
   internal/
-    discovery/    # reads env files / plists, cross-references tmux
-    daemonserver/
+    discovery/        # reads registry files, cross-references tmux
+    daemonserver/      # gRPC service: ListInstances/StreamEvents/Attach/
+                        # Control/CreateInstance/ListResumableSessions
+    daemoninstall/     # installs the daemon as a systemd unit/LaunchAgent
+    provision/         # native Go port of install.sh / install-macos.sh
+    session/           # native Go port of rc-start.sh / rc-update.sh
+    runas/             # exec-as-another-user / PATH-fixup helper
     tuiclient/
-    hostsconfig/  # parses ~/.config/agentmux/hosts.yaml
+    hostsconfig/       # parses ~/.config/agentmux/hosts.yaml
 ```
 
-The existing bash installers in `backends/` are unchanged in what they
-provision; they gain one more step — install/enable `agentmuxd.service` —
-once phase 2 lands.
+The bash installers in `backends/` are unchanged and still fully
+functional standalone — kept as a documented, working fallback during the
+transition, not removed. `agentmux new`'s native Go provisioning is a
+parallel implementation, not a wrapper around them.
 
 ## Phased rollout
 
@@ -152,58 +253,53 @@ once phase 2 lands.
    `hosts.yaml` config, verify against a second device.
 3. **Polish.** Live event streaming refinements, per-agent status
    heuristics, confirmation UX, log/scrollback view.
+4. **CLI + daemon self-install.** Merge `agentmuxd`/`agentmux` into one
+   binary; `agentmux daemon install/uninstall/status` replaces manual unit
+   files.
+5. **Instance wizard.** `CreateInstance` RPC + `agentmux new`; native Go
+   port of every backend this repo supports (`claude-code`, `zero`,
+   `opencode`) on both Linux and macOS — no bash in the instance lifecycle.
+6. **Resume picker.** `ListResumableSessions`, wired into the wizard.
+7. **Docs, migration.** This write-up; a migration story for hosts with
+   pre-existing bash-installed instances is still open (see Known gaps).
 
-Phase 1 is implemented: `agentmuxd` and `agentmux` build and run against
-this box's real `/etc/agentmux` instances over a Unix socket — instance
-listing, live status via `StreamEvents`, and a read-only PTY attach have all
-been smoke-tested against live sessions. `Control` (start/stop/restart) is
-implemented but has only been exercised against an unknown-instance error
-path so far, not a real restart, to avoid disrupting live sessions during
-development.
+## Status
 
-Phase 2 is implemented: `agentmuxd -listen <addr>` binds an additional TCP
-listener (alongside the always-on Unix socket) with no TLS/auth of its own,
-relying on tailnet ACLs; `agentmux -hosts hosts.yaml` dials every configured
-host concurrently and merges their instance lists into one table. Verified
-locally by running one daemon with both `-socket` and `-listen
-127.0.0.1:<port>`, then pointing the TUI at a `hosts.yaml` with one entry
-per transport (`unix://` and `tcp://`) — both listed the same five real
-instances correctly, and the merged, sorted, host-tagged table rendered and
-navigated correctly in the TUI itself. Not yet verified against a second
-physical device over an actual Tailscale link — everything above proves the
-protocol and merge logic, not real network conditions (latency, a host
-actually going offline mid-session, etc.).
+**Phases 1–3** (transport/TUI): implemented and locally verified —
+instance listing, live status, a read-only PTY attach, and multi-host merge
+over both a Unix socket and a TCP loopback all work correctly against this
+box's real instances. Not yet verified: `Control` (restart/stop/start)
+against a real instance on Linux specifically (only the unknown-instance
+error path — see phase 5's note below for why), and an actual cross-device
+link over Tailscale (every "multi-host" test so far has been one daemon
+dialed twice on the same machine, not two separate devices).
 
-`agentmuxd` and `agentmux` have since merged into one binary: `agentmux
-daemon run` is what `agentmuxd` used to be, and `agentmux daemon
-install/uninstall/status` natively installs it as a systemd unit (Linux,
-root) or a per-user LaunchAgent (macOS, no root) — no more manual unit
-files. `agentmux new` is a wizard (built with `charmbracelet/huh`) that
-creates a real instance — registry file, systemd unit, live tmux session —
-on any device from the same host list the TUI already uses, calling a new
-`CreateInstance` RPC. The whole instance lifecycle (what used to be
-`install.sh`/`rc-start.sh`/`rc-update.sh`) is now native Go with no bash in
-the loop, for the `claude-code` agent on Linux (`daemon/internal/provision`,
-`daemon/internal/session`) — other agent/platform combinations aren't
-ported yet and return a clear error rather than silently doing the wrong
-thing. A proper design doc write-up covering this area (device model,
-registry-file format, the full phased rollout for the remaining
-agent/platform combinations and the resume picker) is still TODO — the
-implementation is ahead of the docs here.
+**Phases 4–6** (CLI, wizard, provisioning, resume): implemented and
+live-tested on **both Linux and macOS**. Every agent × platform combination
+this repo supports produces a real registry file, systemd unit/LaunchAgent,
+and live tmux session via `CreateInstance`, correctly reported by
+`discovery`; the cross-agent-overwrite guard was verified against real
+production instances on both platforms (refused as designed, instance
+files confirmed byte-identical afterward); `ListResumableSessions` was
+verified against this repo's own real Claude Code session history. The
+interactive wizard *form* itself (not just the RPCs it calls) has been
+driven end-to-end through a real pty on both platforms. `Control`
+restart/stop/start has been verified for real on macOS (via
+`control_darwin.go`) but only against the unknown-instance error path on
+Linux — deliberately, to avoid disrupting real live sessions on the box
+this was developed on.
 
-Verified end to end on this box: created a real throwaway instance via the
-`CreateInstance` RPC (bypassing the interactive form, calling it directly)
-— registry file, three systemd units, and a live `claude --remote-control`
-tmux session all came up correctly, `discovery`/`ListInstances` reported it
-as `RUNNING`, workspace-trust pre-acceptance patched `~/.claude.json`
-correctly, and killing the session + setting a resume ID in the registry
-then re-running `agentmux session run` correctly passed `--resume
-<session-id>` through to the `claude` process. Found and fixed two real
-bugs in the process: `HOME` isn't reliably set for a bare `Type=oneshot` +
-`User=` systemd unit (breaking `PATH` resolution for the spawned `claude`
-binary), and `tmux -S <bare-name>` treats the name as a literal
-CWD-relative path rather than placing it in the standard `/tmp/tmux-<uid>/`
-socket directory like `-L <bare-name>` does — both fixed in
-`internal/session`. Not yet tested: the interactive wizard form itself
-(only the RPC it calls has been exercised directly), `zero`/`opencode` on
-Linux, and anything on macOS.
+Two real bugs surfaced by live testing, both in `internal/session`'s
+PATH-resolution helper (see "Provisioning architecture" above for why this
+keeps happening and how `internal/runas` now centralizes the fix):
+`$HOME` isn't reliably set for a bare `Type=oneshot` + `User=` systemd unit
+(breaking `PATH` resolution for the spawned agent binary), and `tmux -S
+<bare-name>` is a literal CWD-relative path, not the named socket in
+`/tmp/tmux-<uid>/` that `-L <bare-name>` resolves to.
+
+**Known gaps:**
+- No real cross-device test (see phase 1–3 status above).
+- `Control` not live-tested against a real instance on Linux.
+- No migration story yet for a host with pre-existing bash-installed
+  instances, or the very first ad hoc `systemd-run` transient daemon setup
+  used before `agentmux daemon install` existed.
