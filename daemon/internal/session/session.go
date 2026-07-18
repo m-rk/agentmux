@@ -40,6 +40,37 @@ func registry(name string) (map[string]string, error) {
 	return fields, scanner.Err()
 }
 
+// setRegistryField updates a single KEY=VALUE line in name's registry file
+// in place (appending it if absent), leaving every other line untouched —
+// symmetric with registry() above. Used to self-correct AGENTMUX_RESUME
+// after discovering an instance's actual current session ID, since that
+// field is otherwise only ever set once, at creation time (and usually
+// isn't set at all, unless the wizard's resume picker was used).
+func setRegistryField(name, key, value string) error {
+	path := filepath.Join(discovery.EnvDir, name+".env")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading registry %s: %w", path, err)
+	}
+	lines := strings.Split(string(data), "\n")
+	found := false
+	for i, line := range lines {
+		k, _, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok && k == key {
+			lines[i] = key + "=" + value
+			found = true
+			break
+		}
+	}
+	if !found {
+		lines = append(lines, key+"="+value)
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		return fmt.Errorf("writing registry %s: %w", path, err)
+	}
+	return nil
+}
+
 func tmuxSocket(name string) string { return "agentmux-" + name }
 
 // agentOf mirrors discovery's own fallback: backends/claude-code doesn't

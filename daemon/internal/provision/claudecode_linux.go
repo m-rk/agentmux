@@ -38,6 +38,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecStart=%[3]s session update --instance %[1]s
+TimeoutStartSec=1200
 `
 
 const claudeCodeTimerTemplate = `[Unit]
