@@ -219,6 +219,29 @@ back to "fresh session" in that case). A lookup failure or empty result is
 treated as "fresh session," not an error — resume is an enhancement, not
 core to creating an instance.
 
+### Compact-before-resume on every nightly update
+
+Claude Code has no documented flag/setting to suppress its own "this
+session is huge, resume from a summary?" interactive prompt — a session
+left running long enough eventually needs a human sitting at it just to
+answer that before it's usable again, which defeats the point for an
+unattended instance. Since the nightly update cycle already exists, it now
+prevents this instead of needing to work around it: every run — not just
+one that finds a new Claude Code version — sends `/compact` to the live
+session (waiting for the pane to go idle first, via the same content-hash
+approach `discovery` uses for status, so it doesn't land mid-response) and
+restarts, keeping the session small enough that a later `--resume`
+shouldn't hit that threshold.
+
+The restart needed one more fix to be safe: most instances never got an
+explicit resume ID recorded in their registry (that field is only set once,
+at creation time, only if the wizard's resume picker was used), so a naive
+restart would silently launch fresh and lose history for almost every real
+instance. The restart now resolves the actual current session ID via the
+same `~/.claude/projects` scan `ListResumableSessions` uses, preferring
+that over the registry's (usually empty) field, and persists it back —
+self-correcting the gap going forward.
+
 ## Repo layout
 
 `daemon/`, one Go module, one binary (`cmd/agentmux`):
@@ -287,7 +310,13 @@ driven end-to-end through a real pty on both platforms. `Control`
 restart/stop/start has been verified for real on macOS (via
 `control_darwin.go`) but only against the unknown-instance error path on
 Linux — deliberately, to avoid disrupting real live sessions on the box
-this was developed on.
+this was developed on. Compact-before-resume was verified end-to-end
+(manually invoked, confirmed the idle-wait, `/compact`, restart, and
+discovered/persisted `--resume` ID all worked) against a throwaway
+instance too small to have ever hit the actual "resume from summary"
+prompt — the prevention mechanism is proven, not the specific failure
+mode it's meant to prevent, since manufacturing a genuinely huge session
+isn't practical for a test.
 
 Two real bugs surfaced by live testing, both in `internal/session`'s
 PATH-resolution helper (see "Provisioning architecture" above for why this
