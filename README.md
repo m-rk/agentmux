@@ -198,6 +198,11 @@ locally or on any other host in `~/.config/agentmux/hosts.yaml` —
 [`docs/design/daemon-tui.md`](docs/design/daemon-tui.md) for the design and
 [`daemon/README.md`](daemon/README.md) to build and run it.
 
+<p align="center">
+  <img src="docs/design/img/tui-list.png" alt="agentmux TUI: list of instances across hosts" width="49%">
+  <img src="docs/design/img/tui-wizard.png" alt="agentmux new: instance creation wizard" width="49%">
+</p>
+
 ## Roadmap
 
 - More backends (Codex CLI, Gemini CLI, whatever comes next) — each one

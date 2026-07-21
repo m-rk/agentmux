@@ -5,6 +5,11 @@ install its own background daemon and to create new instances. See
 [`docs/design/daemon-tui.md`](../docs/design/daemon-tui.md) for the full
 design and phased rollout plan.
 
+<p align="center">
+  <img src="../docs/design/img/tui-list.png" alt="agentmux TUI: list of instances across hosts" width="49%">
+  <img src="../docs/design/img/tui-wizard.png" alt="agentmux new: instance creation wizard" width="49%">
+</p>
+
 Phase 1: TUI + daemon talk over a Unix socket on one host — no networking
 needed. Phase 2: the daemon can also listen on a TCP address (e.g. a
 Tailscale IP), and the TUI can connect to several hosts at once via
