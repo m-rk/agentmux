@@ -14,9 +14,10 @@ import (
 // wrong right after an update — the whole point here is to kill the stale
 // session so the next one picks up the newly installed claude binary.
 //
-// Every run now compacts and restarts the session regardless of whether
-// the Claude Code version changed (see compactAndResolveResume's doc
-// comment for why).
+// By default (AGENTMUX_COMPACT_ON_UPDATE unset or "on") every run compacts
+// and restarts the session regardless of whether the Claude Code version
+// changed (see compactAndResolveResume's doc comment for why); set to
+// "off" to fall back to the old version-change-only restart behavior.
 func updateClaudeCode(name string) error {
 	fields, err := registry(name)
 	if err != nil {
@@ -31,8 +32,19 @@ func updateClaudeCode(name string) error {
 		return fmt.Errorf("claude update failed, leaving existing session running untouched: %w", err)
 	}
 	after, _ := withPath("claude", "--version").CombinedOutput()
-	if string(before) != string(after) {
+	changed := string(before) != string(after)
+	if changed {
 		fmt.Printf("%s: claude updated %s -> %s\n", name, before, after)
+	}
+
+	if !compactOnUpdateEnabled(fields) {
+		if !changed && hasSession(socket, session) {
+			return nil // no version change, session already running
+		}
+		if err := StopClaudeCode(name); err != nil {
+			return fmt.Errorf("stopping %s before restart: %w", name, err)
+		}
+		return RunClaudeCode(name)
 	}
 
 	tmux := func(args ...string) *exec.Cmd { return withPath("tmux", args...) }

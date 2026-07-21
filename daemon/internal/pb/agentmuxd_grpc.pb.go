@@ -25,6 +25,7 @@ const (
 	AgentmuxDaemon_Control_FullMethodName               = "/agentmuxd.v1.AgentmuxDaemon/Control"
 	AgentmuxDaemon_CreateInstance_FullMethodName        = "/agentmuxd.v1.AgentmuxDaemon/CreateInstance"
 	AgentmuxDaemon_ListResumableSessions_FullMethodName = "/agentmuxd.v1.AgentmuxDaemon/ListResumableSessions"
+	AgentmuxDaemon_RenameInstance_FullMethodName        = "/agentmuxd.v1.AgentmuxDaemon/RenameInstance"
 )
 
 // AgentmuxDaemonClient is the client API for AgentmuxDaemon service.
@@ -49,6 +50,14 @@ type AgentmuxDaemonClient interface {
 	// Lists Claude Code session IDs resumable for a given workdir, for the
 	// wizard's resume picker.
 	ListResumableSessions(ctx context.Context, in *ListResumableSessionsRequest, opts ...grpc.CallOption) (*ListResumableSessionsResponse, error)
+	// Renames an existing instance's tmux session and/or (claude-code only)
+	// its Remote Control display name. A tmux session name change is applied
+	// live via "tmux rename-session" if the session is currently running — no
+	// restart needed. A display name change requires a restart (it's baked
+	// into the claude --remote-control argv at launch), issued by the daemon
+	// itself, not the caller — see daemonserver's implementation for why that
+	// distinction matters for an instance renaming its own hosting session.
+	RenameInstance(ctx context.Context, in *RenameInstanceRequest, opts ...grpc.CallOption) (*RenameInstanceResponse, error)
 }
 
 type agentmuxDaemonClient struct {
@@ -131,6 +140,16 @@ func (c *agentmuxDaemonClient) ListResumableSessions(ctx context.Context, in *Li
 	return out, nil
 }
 
+func (c *agentmuxDaemonClient) RenameInstance(ctx context.Context, in *RenameInstanceRequest, opts ...grpc.CallOption) (*RenameInstanceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RenameInstanceResponse)
+	err := c.cc.Invoke(ctx, AgentmuxDaemon_RenameInstance_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AgentmuxDaemonServer is the server API for AgentmuxDaemon service.
 // All implementations must embed UnimplementedAgentmuxDaemonServer
 // for forward compatibility.
@@ -153,6 +172,14 @@ type AgentmuxDaemonServer interface {
 	// Lists Claude Code session IDs resumable for a given workdir, for the
 	// wizard's resume picker.
 	ListResumableSessions(context.Context, *ListResumableSessionsRequest) (*ListResumableSessionsResponse, error)
+	// Renames an existing instance's tmux session and/or (claude-code only)
+	// its Remote Control display name. A tmux session name change is applied
+	// live via "tmux rename-session" if the session is currently running — no
+	// restart needed. A display name change requires a restart (it's baked
+	// into the claude --remote-control argv at launch), issued by the daemon
+	// itself, not the caller — see daemonserver's implementation for why that
+	// distinction matters for an instance renaming its own hosting session.
+	RenameInstance(context.Context, *RenameInstanceRequest) (*RenameInstanceResponse, error)
 	mustEmbedUnimplementedAgentmuxDaemonServer()
 }
 
@@ -180,6 +207,9 @@ func (UnimplementedAgentmuxDaemonServer) CreateInstance(context.Context, *Create
 }
 func (UnimplementedAgentmuxDaemonServer) ListResumableSessions(context.Context, *ListResumableSessionsRequest) (*ListResumableSessionsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListResumableSessions not implemented")
+}
+func (UnimplementedAgentmuxDaemonServer) RenameInstance(context.Context, *RenameInstanceRequest) (*RenameInstanceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RenameInstance not implemented")
 }
 func (UnimplementedAgentmuxDaemonServer) mustEmbedUnimplementedAgentmuxDaemonServer() {}
 func (UnimplementedAgentmuxDaemonServer) testEmbeddedByValue()                        {}
@@ -292,6 +322,24 @@ func _AgentmuxDaemon_ListResumableSessions_Handler(srv interface{}, ctx context.
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AgentmuxDaemon_RenameInstance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenameInstanceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentmuxDaemonServer).RenameInstance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentmuxDaemon_RenameInstance_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentmuxDaemonServer).RenameInstance(ctx, req.(*RenameInstanceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AgentmuxDaemon_ServiceDesc is the grpc.ServiceDesc for AgentmuxDaemon service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -314,6 +362,10 @@ var AgentmuxDaemon_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListResumableSessions",
 			Handler:    _AgentmuxDaemon_ListResumableSessions_Handler,
+		},
+		{
+			MethodName: "RenameInstance",
+			Handler:    _AgentmuxDaemon_RenameInstance_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

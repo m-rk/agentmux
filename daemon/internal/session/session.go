@@ -40,13 +40,13 @@ func registry(name string) (map[string]string, error) {
 	return fields, scanner.Err()
 }
 
-// setRegistryField updates a single KEY=VALUE line in name's registry file
+// SetRegistryField updates a single KEY=VALUE line in name's registry file
 // in place (appending it if absent), leaving every other line untouched —
 // symmetric with registry() above. Used to self-correct AGENTMUX_RESUME
 // after discovering an instance's actual current session ID, since that
 // field is otherwise only ever set once, at creation time (and usually
 // isn't set at all, unless the wizard's resume picker was used).
-func setRegistryField(name, key, value string) error {
+func SetRegistryField(name, key, value string) error {
 	path := filepath.Join(discovery.EnvDir, name+".env")
 	data, err := os.ReadFile(path)
 	if err != nil {

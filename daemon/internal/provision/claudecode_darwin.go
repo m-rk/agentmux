@@ -155,6 +155,7 @@ func createClaudeCode(opts Options) (string, error) {
 		{"AGENTMUX_SERVICE_NAME", label},
 		{"AGENTMUX_WORKDIR", workdir},
 		{"AGENTMUX_RESUME", opts.ResumeSessionID},
+		{"AGENTMUX_COMPACT_ON_UPDATE", opts.CompactOnUpdate},
 	})
 	if err != nil {
 		return "", err

@@ -23,6 +23,22 @@ const (
 	compactTimeout = 10 * time.Minute
 )
 
+// compactOnUpdateEnabled reports whether the nightly update should compact
+// and always restart (true, the default — preserves behavior for any
+// instance that doesn't set this field, including everything provisioned
+// before this setting existed) or fall back to the old
+// version-change-only restart behavior (false). See
+// CreateInstanceRequest.compact_on_update's doc comment in the proto for
+// this field's values.
+func compactOnUpdateEnabled(fields map[string]string) bool {
+	switch fields["AGENTMUX_COMPACT_ON_UPDATE"] {
+	case "off", "0", "false", "no":
+		return false
+	default:
+		return true
+	}
+}
+
 // RunClaudeCode is `agentmux session run --instance NAME` for the
 // claude-code agent: idempotently ensures the instance's tmux session is
 // running the claude CLI with Remote Control (and --resume, if the
@@ -142,7 +158,7 @@ func compactAndResolveResume(tmux func(args ...string) *exec.Cmd, name, workdir,
 		resumeID = fields["AGENTMUX_RESUME"]
 	}
 	if resumeID != "" {
-		if err := setRegistryField(name, "AGENTMUX_RESUME", resumeID); err != nil {
+		if err := SetRegistryField(name, "AGENTMUX_RESUME", resumeID); err != nil {
 			return "", fmt.Errorf("persisting resume id for %s: %w", name, err)
 		}
 	}

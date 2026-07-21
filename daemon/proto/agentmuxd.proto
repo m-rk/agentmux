@@ -28,6 +28,15 @@ service AgentmuxDaemon {
   // Lists Claude Code session IDs resumable for a given workdir, for the
   // wizard's resume picker.
   rpc ListResumableSessions(ListResumableSessionsRequest) returns (ListResumableSessionsResponse);
+
+  // Renames an existing instance's tmux session and/or (claude-code only)
+  // its Remote Control display name. A tmux session name change is applied
+  // live via "tmux rename-session" if the session is currently running — no
+  // restart needed. A display name change requires a restart (it's baked
+  // into the claude --remote-control argv at launch), issued by the daemon
+  // itself, not the caller — see daemonserver's implementation for why that
+  // distinction matters for an instance renaming its own hosting session.
+  rpc RenameInstance(RenameInstanceRequest) returns (RenameInstanceResponse);
 }
 
 enum Status {
@@ -118,6 +127,10 @@ message CreateInstanceRequest {
   string workdir = 5;             // empty = provisioner default
   string resume_session_id = 6;   // claude-code only; empty = fresh session
   string run_user = 7;            // Linux only; empty = provisioner default
+  // claude-code only. "", "on", or "off" — empty means "use the default"
+  // (on). Off skips the nightly compact-then-restart cycle entirely,
+  // falling back to the old version-change-only restart behavior.
+  string compact_on_update = 8;
 }
 
 message CreateInstanceResponse {
@@ -137,4 +150,15 @@ message ResumableSession {
 
 message ListResumableSessionsResponse {
   repeated ResumableSession sessions = 1;
+}
+
+message RenameInstanceRequest {
+  string instance = 1;
+  string tmux_session_name = 2; // empty = unchanged
+  string display_name = 3;      // empty = unchanged; claude-code only
+}
+
+message RenameInstanceResponse {
+  bool ok = 1;
+  string message = 2;
 }

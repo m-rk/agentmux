@@ -82,13 +82,14 @@ func runWizardForm(clients map[string]*tuiclient.Client) error {
 	}
 
 	var (
-		host     = hostNames[0]
-		agent    = "claude-code"
-		instance = "claude-code"
-		runUser  string
-		workdir  string
-		provider string
-		model    string
+		host            = hostNames[0]
+		agent           = "claude-code"
+		instance        = "claude-code"
+		runUser         string
+		workdir         string
+		provider        string
+		model           string
+		compactOnUpdate string
 	)
 	if u, err := user.Current(); err == nil {
 		runUser = u.Username
@@ -111,6 +112,13 @@ func runWizardForm(clients map[string]*tuiclient.Client) error {
 			huh.NewInput().Title("Workdir").Description("blank = provisioner default").Value(&workdir),
 			huh.NewInput().Title("Provider").Description("zero/opencode only; blank = ollama").Value(&provider),
 			huh.NewInput().Title("Model").Description("zero/opencode only; blank = provisioner default").Value(&model),
+			huh.NewSelect[string]().Title("Compact before nightly resume?").
+				Description("claude-code only; prevents Claude Code's own huge-session resume prompt by compacting and restarting every night, not just on a version change").
+				Options(
+					huh.NewOption("on (default)", ""),
+					huh.NewOption("off", "off"),
+				).
+				Value(&compactOnUpdate),
 		),
 	)
 	if err := form.Run(); err != nil {
@@ -141,6 +149,7 @@ func runWizardForm(clients map[string]*tuiclient.Client) error {
 		Workdir:         workdir,
 		ResumeSessionId: resume,
 		RunUser:         runUser,
+		CompactOnUpdate: compactOnUpdate,
 	})
 	if err != nil {
 		return err

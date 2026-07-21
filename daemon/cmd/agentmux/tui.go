@@ -179,6 +179,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case renameDoneMsg:
+		if msg.err != nil {
+			m.err = msg.err.Error()
+		} else {
+			m.status = "renamed"
+		}
+		return m, nil
+
 	case controlDoneMsg:
 		if msg.err != nil {
 			m.err = fmt.Sprintf("%s/%s: %v", msg.host, msg.instance, msg.err)
@@ -229,6 +237,10 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "n":
 		return m, newInstanceCmd(m.program, m.clients)
+	case "R":
+		if r := m.selected(); r != nil {
+			return m, renameInstanceCmd(m.program, m.clients[r.host], *r)
+		}
 	case "r":
 		if m.selected() != nil {
 			m.confirm = pb.ControlAction_CONTROL_RESTART
@@ -407,7 +419,7 @@ func (m *model) View() string {
 		lines = append(lines, dimStyle.Render(m.status))
 	}
 
-	lines = append(lines, dimStyle.Render("a attach  n new  r restart  s stop  x start  q quit"))
+	lines = append(lines, dimStyle.Render("a attach  n new  R rename  r restart  s stop  x start  q quit"))
 	return strings.Join(lines, "\n")
 }
 

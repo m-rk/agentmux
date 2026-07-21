@@ -106,6 +106,10 @@ func (c *Client) ListResumableSessions(ctx context.Context, req *pb.ListResumabl
 	return c.api.ListResumableSessions(ctx, req)
 }
 
+func (c *Client) RenameInstance(ctx context.Context, req *pb.RenameInstanceRequest) (*pb.RenameInstanceResponse, error) {
+	return c.api.RenameInstance(ctx, req)
+}
+
 // PeekAttach attaches to an instance and reports PTY output for dur without
 // ever writing to stdin, so it's safe to use against a live session purely
 // to verify the pipe works (used by smoke tests, not the TUI itself).

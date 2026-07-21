@@ -130,6 +130,7 @@ func (s *Server) CreateInstance(ctx context.Context, req *pb.CreateInstanceReque
 		Workdir:         req.Workdir,
 		ResumeSessionID: req.ResumeSessionId,
 		RunUser:         req.RunUser,
+		CompactOnUpdate: req.CompactOnUpdate,
 	})
 	if err != nil {
 		return &pb.CreateInstanceResponse{Ok: false, Message: err.Error()}, nil
