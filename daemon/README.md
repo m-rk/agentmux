@@ -78,6 +78,23 @@ refused rather than silently overwritten — this also catches the case of
 an instance installed by the older `backends/*/install.sh` scripts, which
 predate the registry file this wizard reads/writes.
 
+### Scripting: non-interactive create, rename, and resume lookup
+
+```sh
+./agentmux new -y -instance myinstance -agent claude-code -run-user ubuntu
+./agentmux rename -instance myinstance -tmux-name renamed -display-name "new name"
+./agentmux resume-list -workdir /path/to/project -run-user ubuntu
+```
+
+`new -y` skips the interactive form and creates directly from flags — same
+fields as the form, run `agentmux new -h` for the full list. `rename` is
+the CLI counterpart to the TUI's `R` keybinding: a tmux session rename
+applies live, a display name change (claude-code only) restarts the
+session. `resume-list` is the standalone form of the wizard's resume
+picker, useful for checking what's resumable before deciding what (if
+anything) to pass to `new -y -resume`. All three take `-host` (default
+`local`) to target any device from `hosts.yaml`.
+
 ## Multiple hosts over Tailscale
 
 On each host you want to control remotely, also bind a TCP listener on its

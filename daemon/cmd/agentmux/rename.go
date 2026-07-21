@@ -2,17 +2,62 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
+	"log"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 
+	"github.com/m-rk/agentmux/daemon/internal/daemoninstall"
+	"github.com/m-rk/agentmux/daemon/internal/hostsconfig"
 	"github.com/m-rk/agentmux/daemon/internal/pb"
 	"github.com/m-rk/agentmux/daemon/internal/tuiclient"
 )
 
 type renameDoneMsg struct{ err error }
+
+// runRenameCmd is the `agentmux rename` subcommand entrypoint — the
+// non-interactive, scriptable counterpart to the TUI's `R` keybinding.
+func runRenameCmd(args []string) {
+	fs := flag.NewFlagSet("rename", flag.ExitOnError)
+	socketPath := fs.String("socket", daemoninstall.SocketPath(), "Unix socket agentmuxd is listening on (used when no hosts.yaml is found)")
+	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml listing agentmuxd hosts to connect to")
+	host := fs.String("host", "local", "device the instance lives on (a name from hosts.yaml, or \"local\")")
+	instance := fs.String("instance", "", "instance name (required)")
+	tmuxName := fs.String("tmux-name", "", "new tmux session name; blank = unchanged")
+	displayName := fs.String("display-name", "", "new Remote Control display name (claude-code only); blank = unchanged. Restarts the session.")
+	fs.Parse(args)
+
+	if *instance == "" {
+		log.Fatal("rename: -instance is required")
+	}
+	if *tmuxName == "" && *displayName == "" {
+		log.Fatal("rename: at least one of -tmux-name / -display-name is required")
+	}
+
+	client, err := dialOneHost(*hostsPath, *socketPath, *host)
+	if err != nil {
+		log.Fatalf("rename: %v", err)
+	}
+	defer client.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	resp, err := client.RenameInstance(ctx, &pb.RenameInstanceRequest{
+		Instance:        *instance,
+		TmuxSessionName: *tmuxName,
+		DisplayName:     *displayName,
+	})
+	if err != nil {
+		log.Fatalf("rename: %v", err)
+	}
+	if !resp.Ok {
+		log.Fatalf("rename: %s", resp.Message)
+	}
+	fmt.Println(resp.Message)
+}
 
 // renameInstanceCmd launches a small form (device/agent already fixed —
 // this is a single selected row, not a new-instance wizard) to rename r's
