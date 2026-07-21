@@ -21,6 +21,10 @@ func main() {
 		runDaemonCmd(args[1:])
 	case "new":
 		runWizard(args[1:])
+	case "rename":
+		runRenameCmd(args[1:])
+	case "resume-list":
+		runResumeListCmd(args[1:])
 	case "session":
 		runSessionCmd(args[1:])
 	case "-h", "--help", "help":
@@ -41,6 +45,9 @@ Usage:
   agentmux daemon uninstall   remove the daemon
   agentmux daemon status      check whether the daemon is installed/running
   agentmux daemon run         run the daemon in the foreground (used by the installed unit)
-  agentmux new                interactive wizard to create a new instance
+  agentmux new                 interactive wizard to create a new instance
+  agentmux new -y ...          create an instance non-interactively (see -h)
+  agentmux rename ...          rename an instance's tmux session/display name
+  agentmux resume-list ...     list resumable Claude Code sessions for a workdir
   agentmux help                show this message`)
 }

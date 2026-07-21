@@ -86,6 +86,22 @@ func loadHosts(hostsPath, socketPath string) ([]hostsconfig.Host, error) {
 	return cfg.Hosts, nil
 }
 
+// dialOneHost is loadHosts plus picking and dialing a single named entry —
+// for CLI subcommands (rename, resume-list, new -y) that target exactly
+// one device rather than the TUI's dial-everything-and-merge behavior.
+func dialOneHost(hostsPath, socketPath, hostName string) (*tuiclient.Client, error) {
+	hosts, err := loadHosts(hostsPath, socketPath)
+	if err != nil {
+		return nil, err
+	}
+	for _, h := range hosts {
+		if h.Name == hostName {
+			return tuiclient.Dial(h.Name, h.Address)
+		}
+	}
+	return nil, fmt.Errorf("host %q not found in %s", hostName, hostsPath)
+}
+
 // streamHost feeds one host's events into the program, reconnecting with a
 // fixed delay if the stream fails so one unreachable host doesn't take down
 // the rest of the TUI.

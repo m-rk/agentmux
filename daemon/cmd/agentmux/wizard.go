@@ -19,31 +19,72 @@ import (
 )
 
 // runWizard is the `agentmux new` subcommand entrypoint: dial every
-// configured host (same hosts.yaml/-socket fallback as the TUI) and run
-// the interactive form.
+// configured host (same hosts.yaml/-socket fallback as the TUI) and either
+// run the interactive form, or — if -y is given — create the instance
+// directly from flags, for scripting (this repo's own migration off the
+// bash-installed instances onto this provisioner was originally driven by
+// a throwaway one-off CLI shaped exactly like this; promoted into the real
+// tool instead of staying a script nobody else could reuse).
 func runWizard(args []string) {
 	fs := flag.NewFlagSet("new", flag.ExitOnError)
 	socketPath := fs.String("socket", daemoninstall.SocketPath(), "Unix socket agentmuxd is listening on (used when no hosts.yaml is found)")
 	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml listing agentmuxd hosts to connect to")
+	nonInteractive := fs.Bool("y", false, "skip the interactive form; create directly from the flags below")
+	host := fs.String("host", "local", "device to create the instance on (a name from hosts.yaml, or \"local\"); -y only")
+	instance := fs.String("instance", "", "instance name; -y only")
+	agent := fs.String("agent", "", "claude-code | zero | opencode; -y only")
+	provider := fs.String("provider", "", "zero/opencode only; -y only")
+	model := fs.String("model", "", "zero/opencode only; -y only")
+	workdir := fs.String("workdir", "", "blank = provisioner default; -y only")
+	runUser := fs.String("run-user", "", "Linux only, required there; -y only")
+	resume := fs.String("resume", "", "claude-code only, a session ID; -y only")
+	compact := fs.String("compact", "", "claude-code only: \"\" (default/on) or \"off\"; -y only")
 	fs.Parse(args)
 
-	hosts, err := loadHosts(*hostsPath, *socketPath)
-	if err != nil {
-		log.Fatalf("loading hosts: %v", err)
-	}
-	clients := map[string]*tuiclient.Client{}
-	for _, h := range hosts {
-		c, err := tuiclient.Dial(h.Name, h.Address)
+	if !*nonInteractive {
+		hosts, err := loadHosts(*hostsPath, *socketPath)
 		if err != nil {
-			log.Fatalf("dialing %s (%s): %v", h.Name, h.Address, err)
+			log.Fatalf("loading hosts: %v", err)
 		}
-		clients[h.Name] = c
-		defer c.Close()
+		clients := map[string]*tuiclient.Client{}
+		for _, h := range hosts {
+			c, err := tuiclient.Dial(h.Name, h.Address)
+			if err != nil {
+				log.Fatalf("dialing %s (%s): %v", h.Name, h.Address, err)
+			}
+			clients[h.Name] = c
+			defer c.Close()
+		}
+		if err := runWizardForm(clients); err != nil {
+			log.Fatalf("new: %v", err)
+		}
+		return
 	}
 
-	if err := runWizardForm(clients); err != nil {
+	client, err := dialOneHost(*hostsPath, *socketPath, *host)
+	if err != nil {
 		log.Fatalf("new: %v", err)
 	}
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	resp, err := client.CreateInstance(ctx, &pb.CreateInstanceRequest{
+		InstanceName:    *instance,
+		Agent:           *agent,
+		Provider:        *provider,
+		Model:           *model,
+		Workdir:         *workdir,
+		ResumeSessionId: *resume,
+		RunUser:         *runUser,
+		CompactOnUpdate: *compact,
+	})
+	if err != nil {
+		log.Fatalf("new: %v", err)
+	}
+	if !resp.Ok {
+		log.Fatalf("new: %s", resp.Message)
+	}
+	fmt.Println(resp.Message)
 }
 
 type wizardDoneMsg struct{ err error }
