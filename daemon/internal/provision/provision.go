@@ -25,6 +25,7 @@ type Options struct {
 	Workdir         string
 	ResumeSessionID string
 	RunUser         string
+	CompactOnUpdate string // claude-code only: "", "on", or "off" — see proto doc
 }
 
 var identifierRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)

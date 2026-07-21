@@ -242,6 +242,33 @@ same `~/.claude/projects` scan `ListResumableSessions` uses, preferring
 that over the registry's (usually empty) field, and persists it back —
 self-correcting the gap going forward.
 
+This is opt-out, not hardcoded: `AGENTMUX_COMPACT_ON_UPDATE` in the
+registry (set via `CreateInstanceRequest.compact_on_update`, exposed as a
+wizard field) controls it per instance — `"off"` falls back to the old
+version-change-only restart, anything else (including unset, so every
+already-migrated instance keeps today's behavior) keeps compacting nightly.
+
+### Renaming an instance
+
+`RenameInstance` updates an existing instance's tmux session name and/or
+(claude-code only) its Remote Control display name — wired into the TUI as
+`R`. A tmux session name change applies live via `tmux rename-session`,
+no restart needed. A display name change can't be applied live (it's baked
+into the `claude --remote-control` argv at launch), so it goes through the
+same restart path `Control`'s own restart action uses.
+
+That restart is issued **by the daemon**, a separate always-running
+process — not by hand-driving `systemctl stop && systemctl start` as two
+shell commands from inside the instance being restarted. The latter is a
+real trap, hit once while migrating this repo's own hosting instance onto
+the new provisioner: `stop`'s side effect (killing the tmux session) also
+kills the shell running the command, so the chained `start` never executes
+— the unit is left stopped until something else notices and starts it by
+hand. `RenameInstance`/`Control`'s restart doesn't have this problem
+because the daemon process lives outside any instance's own tmux session
+tree, even when the instance being restarted is the one hosting whoever's
+driving the TUI.
+
 ## Repo layout
 
 `daemon/`, one Go module, one binary (`cmd/agentmux`):

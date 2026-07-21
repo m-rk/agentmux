@@ -847,6 +847,10 @@ type CreateInstanceRequest struct {
 	Workdir         string                 `protobuf:"bytes,5,opt,name=workdir,proto3" json:"workdir,omitempty"`                                          // empty = provisioner default
 	ResumeSessionId string                 `protobuf:"bytes,6,opt,name=resume_session_id,json=resumeSessionId,proto3" json:"resume_session_id,omitempty"` // claude-code only; empty = fresh session
 	RunUser         string                 `protobuf:"bytes,7,opt,name=run_user,json=runUser,proto3" json:"run_user,omitempty"`                           // Linux only; empty = provisioner default
+	// claude-code only. "", "on", or "off" — empty means "use the default"
+	// (on). Off skips the nightly compact-then-restart cycle entirely,
+	// falling back to the old version-change-only restart behavior.
+	CompactOnUpdate string `protobuf:"bytes,8,opt,name=compact_on_update,json=compactOnUpdate,proto3" json:"compact_on_update,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -926,6 +930,13 @@ func (x *CreateInstanceRequest) GetResumeSessionId() string {
 func (x *CreateInstanceRequest) GetRunUser() string {
 	if x != nil {
 		return x.RunUser
+	}
+	return ""
+}
+
+func (x *CreateInstanceRequest) GetCompactOnUpdate() string {
+	if x != nil {
+		return x.CompactOnUpdate
 	}
 	return ""
 }
@@ -1130,6 +1141,118 @@ func (x *ListResumableSessionsResponse) GetSessions() []*ResumableSession {
 	return nil
 }
 
+type RenameInstanceRequest struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Instance        string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
+	TmuxSessionName string                 `protobuf:"bytes,2,opt,name=tmux_session_name,json=tmuxSessionName,proto3" json:"tmux_session_name,omitempty"` // empty = unchanged
+	DisplayName     string                 `protobuf:"bytes,3,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`               // empty = unchanged; claude-code only
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *RenameInstanceRequest) Reset() {
+	*x = RenameInstanceRequest{}
+	mi := &file_agentmuxd_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenameInstanceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenameInstanceRequest) ProtoMessage() {}
+
+func (x *RenameInstanceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agentmuxd_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenameInstanceRequest.ProtoReflect.Descriptor instead.
+func (*RenameInstanceRequest) Descriptor() ([]byte, []int) {
+	return file_agentmuxd_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *RenameInstanceRequest) GetInstance() string {
+	if x != nil {
+		return x.Instance
+	}
+	return ""
+}
+
+func (x *RenameInstanceRequest) GetTmuxSessionName() string {
+	if x != nil {
+		return x.TmuxSessionName
+	}
+	return ""
+}
+
+func (x *RenameInstanceRequest) GetDisplayName() string {
+	if x != nil {
+		return x.DisplayName
+	}
+	return ""
+}
+
+type RenameInstanceResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RenameInstanceResponse) Reset() {
+	*x = RenameInstanceResponse{}
+	mi := &file_agentmuxd_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenameInstanceResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenameInstanceResponse) ProtoMessage() {}
+
+func (x *RenameInstanceResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_agentmuxd_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenameInstanceResponse.ProtoReflect.Descriptor instead.
+func (*RenameInstanceResponse) Descriptor() ([]byte, []int) {
+	return file_agentmuxd_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *RenameInstanceResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+func (x *RenameInstanceResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 var File_agentmuxd_proto protoreflect.FileDescriptor
 
 const file_agentmuxd_proto_rawDesc = "" +
@@ -1173,7 +1296,7 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\x06action\x18\x02 \x01(\x0e2\x1b.agentmuxd.v1.ControlActionR\x06action\";\n" +
 	"\x0fControlResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\xe5\x01\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\x91\x02\n" +
 	"\x15CreateInstanceRequest\x12#\n" +
 	"\rinstance_name\x18\x01 \x01(\tR\finstanceName\x12\x14\n" +
 	"\x05agent\x18\x02 \x01(\tR\x05agent\x12\x1a\n" +
@@ -1181,7 +1304,8 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\x05model\x18\x04 \x01(\tR\x05model\x12\x18\n" +
 	"\aworkdir\x18\x05 \x01(\tR\aworkdir\x12*\n" +
 	"\x11resume_session_id\x18\x06 \x01(\tR\x0fresumeSessionId\x12\x19\n" +
-	"\brun_user\x18\a \x01(\tR\arunUser\"B\n" +
+	"\brun_user\x18\a \x01(\tR\arunUser\x12*\n" +
+	"\x11compact_on_update\x18\b \x01(\tR\x0fcompactOnUpdate\"B\n" +
 	"\x16CreateInstanceResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"S\n" +
@@ -1193,7 +1317,14 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12,\n" +
 	"\x12last_modified_unix\x18\x02 \x01(\x03R\x10lastModifiedUnix\"[\n" +
 	"\x1dListResumableSessionsResponse\x12:\n" +
-	"\bsessions\x18\x01 \x03(\v2\x1e.agentmuxd.v1.ResumableSessionR\bsessions*R\n" +
+	"\bsessions\x18\x01 \x03(\v2\x1e.agentmuxd.v1.ResumableSessionR\bsessions\"\x82\x01\n" +
+	"\x15RenameInstanceRequest\x12\x1a\n" +
+	"\binstance\x18\x01 \x01(\tR\binstance\x12*\n" +
+	"\x11tmux_session_name\x18\x02 \x01(\tR\x0ftmuxSessionName\x12!\n" +
+	"\fdisplay_name\x18\x03 \x01(\tR\vdisplayName\"B\n" +
+	"\x16RenameInstanceResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage*R\n" +
 	"\x06Status\x12\x12\n" +
 	"\x0eSTATUS_UNKNOWN\x10\x00\x12\x12\n" +
 	"\x0eSTATUS_RUNNING\x10\x01\x12\x0f\n" +
@@ -1207,14 +1338,15 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\x0fCONTROL_UNKNOWN\x10\x00\x12\x11\n" +
 	"\rCONTROL_START\x10\x01\x12\x10\n" +
 	"\fCONTROL_STOP\x10\x02\x12\x13\n" +
-	"\x0fCONTROL_RESTART\x10\x032\x9b\x04\n" +
+	"\x0fCONTROL_RESTART\x10\x032\xf8\x04\n" +
 	"\x0eAgentmuxDaemon\x12X\n" +
 	"\rListInstances\x12\".agentmuxd.v1.ListInstancesRequest\x1a#.agentmuxd.v1.ListInstancesResponse\x12P\n" +
 	"\fStreamEvents\x12!.agentmuxd.v1.StreamEventsRequest\x1a\x1b.agentmuxd.v1.InstanceEvent0\x01\x12F\n" +
 	"\x06Attach\x12\x1b.agentmuxd.v1.ClientMessage\x1a\x1b.agentmuxd.v1.ServerMessage(\x010\x01\x12F\n" +
 	"\aControl\x12\x1c.agentmuxd.v1.ControlRequest\x1a\x1d.agentmuxd.v1.ControlResponse\x12[\n" +
 	"\x0eCreateInstance\x12#.agentmuxd.v1.CreateInstanceRequest\x1a$.agentmuxd.v1.CreateInstanceResponse\x12p\n" +
-	"\x15ListResumableSessions\x12*.agentmuxd.v1.ListResumableSessionsRequest\x1a+.agentmuxd.v1.ListResumableSessionsResponseB-Z+github.com/m-rk/agentmux/daemon/internal/pbb\x06proto3"
+	"\x15ListResumableSessions\x12*.agentmuxd.v1.ListResumableSessionsRequest\x1a+.agentmuxd.v1.ListResumableSessionsResponse\x12[\n" +
+	"\x0eRenameInstance\x12#.agentmuxd.v1.RenameInstanceRequest\x1a$.agentmuxd.v1.RenameInstanceResponseB-Z+github.com/m-rk/agentmux/daemon/internal/pbb\x06proto3"
 
 var (
 	file_agentmuxd_proto_rawDescOnce sync.Once
@@ -1229,7 +1361,7 @@ func file_agentmuxd_proto_rawDescGZIP() []byte {
 }
 
 var file_agentmuxd_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_agentmuxd_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_agentmuxd_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_agentmuxd_proto_goTypes = []any{
 	(Status)(0),                           // 0: agentmuxd.v1.Status
 	(EventType)(0),                        // 1: agentmuxd.v1.EventType
@@ -1250,6 +1382,8 @@ var file_agentmuxd_proto_goTypes = []any{
 	(*ListResumableSessionsRequest)(nil),  // 16: agentmuxd.v1.ListResumableSessionsRequest
 	(*ResumableSession)(nil),              // 17: agentmuxd.v1.ResumableSession
 	(*ListResumableSessionsResponse)(nil), // 18: agentmuxd.v1.ListResumableSessionsResponse
+	(*RenameInstanceRequest)(nil),         // 19: agentmuxd.v1.RenameInstanceRequest
+	(*RenameInstanceResponse)(nil),        // 20: agentmuxd.v1.RenameInstanceResponse
 }
 var file_agentmuxd_proto_depIdxs = []int32{
 	0,  // 0: agentmuxd.v1.Instance.status:type_name -> agentmuxd.v1.Status
@@ -1266,14 +1400,16 @@ var file_agentmuxd_proto_depIdxs = []int32{
 	12, // 11: agentmuxd.v1.AgentmuxDaemon.Control:input_type -> agentmuxd.v1.ControlRequest
 	14, // 12: agentmuxd.v1.AgentmuxDaemon.CreateInstance:input_type -> agentmuxd.v1.CreateInstanceRequest
 	16, // 13: agentmuxd.v1.AgentmuxDaemon.ListResumableSessions:input_type -> agentmuxd.v1.ListResumableSessionsRequest
-	5,  // 14: agentmuxd.v1.AgentmuxDaemon.ListInstances:output_type -> agentmuxd.v1.ListInstancesResponse
-	7,  // 15: agentmuxd.v1.AgentmuxDaemon.StreamEvents:output_type -> agentmuxd.v1.InstanceEvent
-	11, // 16: agentmuxd.v1.AgentmuxDaemon.Attach:output_type -> agentmuxd.v1.ServerMessage
-	13, // 17: agentmuxd.v1.AgentmuxDaemon.Control:output_type -> agentmuxd.v1.ControlResponse
-	15, // 18: agentmuxd.v1.AgentmuxDaemon.CreateInstance:output_type -> agentmuxd.v1.CreateInstanceResponse
-	18, // 19: agentmuxd.v1.AgentmuxDaemon.ListResumableSessions:output_type -> agentmuxd.v1.ListResumableSessionsResponse
-	14, // [14:20] is the sub-list for method output_type
-	8,  // [8:14] is the sub-list for method input_type
+	19, // 14: agentmuxd.v1.AgentmuxDaemon.RenameInstance:input_type -> agentmuxd.v1.RenameInstanceRequest
+	5,  // 15: agentmuxd.v1.AgentmuxDaemon.ListInstances:output_type -> agentmuxd.v1.ListInstancesResponse
+	7,  // 16: agentmuxd.v1.AgentmuxDaemon.StreamEvents:output_type -> agentmuxd.v1.InstanceEvent
+	11, // 17: agentmuxd.v1.AgentmuxDaemon.Attach:output_type -> agentmuxd.v1.ServerMessage
+	13, // 18: agentmuxd.v1.AgentmuxDaemon.Control:output_type -> agentmuxd.v1.ControlResponse
+	15, // 19: agentmuxd.v1.AgentmuxDaemon.CreateInstance:output_type -> agentmuxd.v1.CreateInstanceResponse
+	18, // 20: agentmuxd.v1.AgentmuxDaemon.ListResumableSessions:output_type -> agentmuxd.v1.ListResumableSessionsResponse
+	20, // 21: agentmuxd.v1.AgentmuxDaemon.RenameInstance:output_type -> agentmuxd.v1.RenameInstanceResponse
+	15, // [15:22] is the sub-list for method output_type
+	8,  // [8:15] is the sub-list for method input_type
 	8,  // [8:8] is the sub-list for extension type_name
 	8,  // [8:8] is the sub-list for extension extendee
 	0,  // [0:8] is the sub-list for field type_name
@@ -1299,7 +1435,7 @@ func file_agentmuxd_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agentmuxd_proto_rawDesc), len(file_agentmuxd_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   16,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
