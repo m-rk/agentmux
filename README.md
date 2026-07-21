@@ -4,39 +4,92 @@ Agents that are remote controlled, persistent, redundant and self-maintained.
 
 The idea: coding-agent CLIs (Claude Code, [opencode](https://opencode.ai),
 [Zero](https://github.com/Gitlawb/zero), and whatever comes next) are most
-useful when there's always a live
-session you can drop into from anywhere — not just while a terminal happens
-to be open. agentmux keeps one running per backend, brings it back after a
-reboot, and keeps the CLI itself up to date without you babysitting it.
+useful when there's always a live session you can drop into from anywhere —
+not just while a terminal happens to be open. agentmux keeps one running per
+backend, brings it back after a reboot, and keeps the CLI itself up to date
+without you babysitting it.
 
-Four properties every backend here aims for:
+## agentmux CLI
+
+`agentmux` is a single self-contained binary: a background daemon, a TUI to
+see and control every instance across every machine you run it on, and a
+wizard for creating new ones. This is the recommended way to run agentmux —
+no bash installers to run by hand.
+
+<p align="center">
+  <img src="docs/design/img/tui-list.png" alt="agentmux TUI: list of instances across hosts" width="49%">
+  <img src="docs/design/img/tui-wizard.png" alt="agentmux new: instance creation wizard" width="49%">
+</p>
+
+```sh
+git clone https://github.com/m-rk/agentmux.git
+cd agentmux/daemon
+go build -o agentmux ./cmd/agentmux
+
+sudo ./agentmux daemon install   # Linux: installs a systemd unit
+./agentmux daemon install        # macOS: installs a per-user LaunchAgent, no sudo
+
+./agentmux new                   # wizard: pick device, agent, model, workdir
+./agentmux                       # TUI: attach, rename, restart, create — across every host
+```
+
+- **One binary, no bash** — `agentmux new` provisions `claude-code`, `zero`,
+  and `opencode` instances end to end (registry file, systemd
+  unit/LaunchAgent, tmux session) on Linux or macOS. `agentmux new -y ...`
+  does the same non-interactively, for scripting.
+- **Multi-host** — list other machines in `~/.config/agentmux/hosts.yaml`
+  (e.g. reachable over Tailscale) and the TUI dials all of them at once,
+  merged into one table.
+- **Rename in place** — `agentmux rename` (or `R` in the TUI) renames an
+  instance's tmux session and/or Claude Code Remote Control display name
+  without losing the session.
+- **Resume lookup** — `agentmux resume-list` shows what Claude Code sessions
+  are resumable for a workdir; the wizard offers the same as a picker.
+- **Compact-before-resume** — every nightly update compacts and restarts a
+  Claude Code session (configurable per instance) so a long-running,
+  unattended session never gets stuck behind Claude Code's own "resume from
+  a huge session summary?" prompt.
+
+See [`daemon/README.md`](daemon/README.md) to build and run it, and
+[`docs/design/daemon-tui.md`](docs/design/daemon-tui.md) for the full design.
+
+## Four properties
+
+Every backend here aims for:
 
 - **Persistence** — the session lives in `tmux`, detached, so SSH drops and
   network blips don't kill it.
-- **Remote access** — reattach from anywhere (`tmux attach`, or a backend's
-  own remote-control feature if it has one).
+- **Remote access** — reattach from anywhere (`tmux attach`, the `agentmux`
+  TUI, or a backend's own remote-control feature if it has one).
 - **Self-maintenance** — a scheduled job updates the CLI and restarts the
-  session only when the version actually changed, so it doesn't go stale.
+  session only when needed, so it doesn't go stale.
 - **Redundancy** — running more than one backend side by side on the same
   box (different CLIs, different model providers) so an outage or degraded
   provider doesn't take out your only agent, and gives you a choice of
   agent/model for the task at hand.
 
-## Backends
+## Manual install (no daemon)
+
+`agentmux new` runs the same provisioning logic as the installer scripts
+below, exposed directly for a one-off instance where you don't want a
+background daemon or TUI (e.g. inside a container), or if you'd rather drive
+things by hand.
 
 | Backend | Linux | macOS |
 |---|---|---|
 | [`backends/agentmux`](backends/agentmux) | systemd | LaunchAgents |
 | [`backends/claude-code`](backends/claude-code) | systemd | LaunchAgents |
 
-`backends/agentmux` is the direction of travel: one named instance combines an
-agent CLI, a model provider, a model, a workdir, and host supervisor wiring.
-Provider-specific backends like `opencode-ollama` and `zero-ollama` are avoided
-so new agents/providers/models can be mixed without cloning whole directories.
+`backends/agentmux` is the more general of the two: one named instance
+combines an agent CLI, a model provider, a model, a workdir, and host
+supervisor wiring, so new agents/providers/models can be mixed without
+cloning whole directories. `backends/claude-code` is a dedicated installer
+predating that generalization, kept for its Remote Control-specific
+defaults.
 
-## Quickstart (configurable backend)
+### Quickstart (configurable backend)
 
-### macOS
+#### macOS
 
 ```sh
 # one-time, manual:
@@ -66,7 +119,7 @@ tmux attach -t work-zero
 Use another instance name, agent, model, or workdir to run multiple agentmux
 instances side by side on the same machine.
 
-### Linux systemd
+#### Linux systemd
 
 ```sh
 git clone https://github.com/m-rk/agentmux.git
@@ -81,30 +134,9 @@ sudo ./install.sh \
 See [`backends/agentmux`](backends/agentmux) for supported agent/provider
 combinations and all install flags.
 
-## Tests
+### Quickstart (Claude Code backend)
 
-Run the lightweight regression harness:
-
-```sh
-tests/smoke.sh
-```
-
-By default it uses fake local tools for provider/agent checks, so it does not
-need a running model provider. To include a real Ollama + Zero generation smoke:
-
-```sh
-AGENTMUX_LIVE_OLLAMA=1 tests/smoke.sh
-```
-
-To include a real Ollama + opencode generation smoke:
-
-```sh
-AGENTMUX_LIVE_OPENCODE=1 tests/smoke.sh
-```
-
-## Quickstart (Claude Code backend)
-
-### macOS
+#### macOS
 
 ```sh
 git clone https://github.com/m-rk/agentmux.git
@@ -155,7 +187,7 @@ LaunchAgent/systemd names — see
 To remove the LaunchAgents: `./uninstall-macos.sh` (leaves any running tmux
 session alone).
 
-### Linux systemd
+#### Linux systemd
 
 ```sh
 git clone https://github.com/m-rk/agentmux.git
@@ -188,20 +220,26 @@ To remove: `sudo ./uninstall.sh` (leaves any running tmux session alone).
 See [`backends/claude-code`](backends/claude-code) for the scripts,
 LaunchAgent templates, and systemd unit templates.
 
-## Daemon + TUI
+## Tests
 
-[`daemon/`](daemon) builds a single `agentmux` binary: the TUI by default
-(`agentmux`), a self-install for its own background daemon
-(`agentmux daemon install`), and a wizard for creating new instances —
-locally or on any other host in `~/.config/agentmux/hosts.yaml` —
-(`agentmux new`), across a Unix socket or Tailscale. See
-[`docs/design/daemon-tui.md`](docs/design/daemon-tui.md) for the design and
-[`daemon/README.md`](daemon/README.md) to build and run it.
+Run the lightweight regression harness:
 
-<p align="center">
-  <img src="docs/design/img/tui-list.png" alt="agentmux TUI: list of instances across hosts" width="49%">
-  <img src="docs/design/img/tui-wizard.png" alt="agentmux new: instance creation wizard" width="49%">
-</p>
+```sh
+tests/smoke.sh
+```
+
+By default it uses fake local tools for provider/agent checks, so it does not
+need a running model provider. To include a real Ollama + Zero generation smoke:
+
+```sh
+AGENTMUX_LIVE_OLLAMA=1 tests/smoke.sh
+```
+
+To include a real Ollama + opencode generation smoke:
+
+```sh
+AGENTMUX_LIVE_OPENCODE=1 tests/smoke.sh
+```
 
 ## Roadmap
 
@@ -209,4 +247,5 @@ locally or on any other host in `~/.config/agentmux/hosts.yaml` —
   running side by side adds to the redundancy/variety this repo is going
   for
 - Health-check / notification on failed updates instead of just journal logs
-- Cross-device visualization/control via the `daemon/` TUI (see above)
+- TLS/auth for the daemon's TCP listener, instead of relying solely on
+  tailnet ACLs
