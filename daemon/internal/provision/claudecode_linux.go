@@ -53,7 +53,7 @@ RandomizedDelaySec=120
 WantedBy=timers.target
 `
 
-const defaultOnCalendar = "*-*-* 03:00:00 UTC"
+const defaultOnCalendar = "*-*-* 03:00:00 Australia/Perth"
 
 // createClaudeCode is the native Go port of
 // backends/claude-code/install.sh's Linux path: validate, resolve
