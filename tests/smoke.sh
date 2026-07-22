@@ -101,6 +101,9 @@ SH
 
     cat > "$FAKE_BIN/tmux" <<'SH'
 #!/bin/bash
+if [ "${1:-}" = "-L" ]; then
+    shift 2
+fi
 case "$1" in
     has-session)
         exit 1
@@ -223,11 +226,11 @@ check_live_ollama() {
     local output="$TMP_ROOT/live-zero-output"
 
     if ! (cd "$workdir" && zero exec --model "${AGENTMUX_LIVE_MODEL:-gpt-oss:20b-cloud}" "reply with exactly: ok" > "$output"); then
-        tmux kill-session -t "$session" 2>/dev/null || true
+        tmux -L "agentmux-$session" kill-session -t "$session" 2>/dev/null || true
         fail "live zero exec"
     fi
     assert_file_contains "$output" "ok" "live zero exec"
-    tmux kill-session -t "$session" 2>/dev/null || true
+    tmux -L "agentmux-$session" kill-session -t "$session" 2>/dev/null || true
 }
 
 check_live_opencode() {
@@ -255,11 +258,11 @@ check_live_opencode() {
         bash "$ROOT/backends/agentmux/rc-start.sh"
 
     if ! (cd "$workdir" && opencode run --model "ollama/$model" "reply with exactly: ok" > "$output"); then
-        tmux kill-session -t "$session" 2>/dev/null || true
+        tmux -L "agentmux-$session" kill-session -t "$session" 2>/dev/null || true
         fail "live opencode run"
     fi
     assert_file_contains "$output" "ok" "live opencode run"
-    tmux kill-session -t "$session" 2>/dev/null || true
+    tmux -L "agentmux-$session" kill-session -t "$session" 2>/dev/null || true
 }
 
 write_fake_tools

@@ -26,12 +26,11 @@ When run from a terminal, the installer prompts for the tmux session name,
 Claude display name, update time, final confirmation, and whether to attach
 to the tmux session immediately. The generated default tmux name is
 `<machine-slug>-claude-YYYY-MM-DD`; the generated default display name is
-`<user>:<host> 🤹 <workdir-basename>` (e.g. `mark:harley-mini 🤹 claude-code`)
-— already self-identifying as an agentmux session, so no suffix is added to
-it. `<host>` is the network/mDNS hostname (e.g. `harley-mini`, the name in
-`harley-mini.local`), not the free-text Computer Name shown in System
-Settings, since that can contain spaces/punctuation a hostname can't. The
-`<user>:` part is omitted entirely on a single-user machine (detected via
+`<user>:<host> 🤹 <workdir-basename>` — already self-identifying as an
+agentmux session, so no suffix is added to it. `<host>` is the network/mDNS
+hostname (the name before `.local`), not the free-text Computer Name shown in
+System Settings, since that can contain spaces/punctuation a hostname can't.
+The `<user>:` part is omitted entirely on a single-user machine (detected via
 real, non-system macOS accounts) since it adds nothing there. `" agentmux"`
 is still appended to any custom display name (flag, env var, or typed at
 the prompt) unless you pass `--no-suffix`.
@@ -89,7 +88,7 @@ AGENTMUX_START_INTERVAL=300 \
 Reattach:
 
 ```sh
-tmux attach -t "$AGENTMUX_TMUX_SESSION_NAME"
+tmux -L agentmux-claude-code attach -t work-claude
 ```
 
 Uninstall:
@@ -191,22 +190,22 @@ instance name, `--tmux-session`/`--display-name`):
 ```sh
 # macOS
 ./install-macos.sh \
-  --instance pointpost \
-  --workdir "$HOME/projects/pointpost" \
+  --instance project-a \
+  --workdir "$HOME/projects/project-a" \
   --yes
 
 # Linux (no --workdir flag; use the env var instead)
-sudo AGENTMUX_WORKDIR="$HOME/projects/pointpost" ./install.sh \
-  --instance pointpost
+sudo AGENTMUX_WORKDIR="$HOME/projects/project-a" ./install.sh \
+  --instance project-a
 ```
 
-This creates `com.agentmux.pointpost[.update]` LaunchAgents (or
-`agentmux-pointpost[.service|-update.service|-update.timer]` on Linux),
-a dedicated workdir, a tmux session named `pointpost` by default, and a
-Remote Control display name of `<user>:<host> 🤹 pointpost` by default —
+This creates `com.agentmux.project-a[.update]` LaunchAgents (or
+`agentmux-project-a[.service|-update.service|-update.timer]` on Linux),
+a dedicated workdir, a tmux session named `project-a` by default, and a
+Remote Control display name of `<user>:<host> 🤹 project-a` by default —
 each distinct from the default `claude-code` instance so both can run side
 by side without colliding. Remove it with `./uninstall-macos.sh --instance
-pointpost` or `sudo ./uninstall.sh --instance pointpost`.
+project-a` or `sudo ./uninstall.sh --instance project-a`.
 
 Every instance runs its own tmux server (`tmux -L agentmux-<instance>`),
 not the user's default one — reattach with `tmux -L agentmux-<instance>
