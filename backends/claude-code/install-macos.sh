@@ -103,10 +103,9 @@ ATTACH_AFTER_INSTALL="${AGENTMUX_ATTACH_AFTER_INSTALL:-}"
 machine_name() {
     local name=""
 
-    # LocalHostName is the mDNS/Bonjour name (e.g. "harley-mini", the
-    # <name> in <name>.local) -- distinct from the free-text ComputerName
-    # (e.g. "Harley Mini") shown in System Settings, which isn't a valid
-    # hostname (can contain spaces) and needn't match it.
+    # LocalHostName is the mDNS/Bonjour name (the host portion of
+    # <host>.local), distinct from the free-text ComputerName shown in
+    # System Settings, which can contain spaces and needn't match it.
     if command -v scutil >/dev/null 2>&1; then
         name="$(scutil --get LocalHostName 2>/dev/null || true)"
     fi
@@ -347,7 +346,7 @@ confirm_install() {
 confirm_attach() {
     local answer
 
-    read -r -p "Attach to Claude Code now to finish first-run login/trust? [Y/n]: " answer
+    read -r -p "Attach to Claude Code now? [Y/n]: " answer
     case "$answer" in
         "" | [Yy] | [Yy][Ee][Ss]) return 0 ;;
         *) return 1 ;;

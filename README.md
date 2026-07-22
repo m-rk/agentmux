@@ -70,15 +70,14 @@ Every backend here aims for:
 
 ## Manual install (no daemon)
 
-`agentmux new` runs the same provisioning logic as the installer scripts
-below, exposed directly for a one-off instance where you don't want a
-background daemon or TUI (e.g. inside a container), or if you'd rather drive
-things by hand.
+`agentmux new` creates instances through a running agentmux daemon. If you
+only need local instances and don't want the daemon or TUI, the installer
+scripts below provide the equivalent host-supervisor setup directly.
 
-| Backend | Linux | macOS |
-|---|---|---|
-| [`backends/agentmux`](backends/agentmux) | systemd | LaunchAgents |
-| [`backends/claude-code`](backends/claude-code) | systemd | LaunchAgents |
+| Installer | Agent CLIs | Provider configuration | Linux | macOS |
+|---|---|---|---|---|
+| [`backends/agentmux`](backends/agentmux) | `zero`, `opencode` | Ollama | systemd | LaunchAgents |
+| [`backends/claude-code`](backends/claude-code) | Claude Code | Managed by Claude Code | systemd | LaunchAgents |
 
 `backends/agentmux` is the more general of the two: one named instance
 combines an agent CLI, a model provider, a model, a workdir, and host
@@ -113,7 +112,7 @@ This creates `com.agentmux.work-zero` and
 `~/.agentmux/work-zero`. Reattach with:
 
 ```sh
-tmux attach -t work-zero
+tmux -L agentmux-work-zero attach -t work-zero
 ```
 
 Use another instance name, agent, model, or workdir to run multiple agentmux
@@ -159,9 +158,10 @@ instead:
   --yes
 ```
 
-Add `--attach` to attach immediately after installing, which is useful on
-first run so you can complete Claude Code login and trust prompts before
-leaving the session detached.
+Claude Code must already be authenticated: run `claude` once and complete
+login before installing. The installer verifies authentication and
+pre-accepts workspace trust for the configured workdir. Add `--attach` to
+enter the tmux session immediately after installing.
 
 Use `./install-macos.sh --plan` to preview the LaunchAgents and settings
 without writing files. A normal install creates two user LaunchAgents,
@@ -173,11 +173,9 @@ without `sudo`:
   default, updates Claude Code, and restarts the tmux session only when the
   version changed.
 
-Logs go to `~/Library/Logs/agentmux`. Reattach with the configured tmux
-session name, or from the Claude Code mobile app via Remote Control. On
-first launch, Claude Code may ask you to log in or trust the dedicated
-workdir; let the installer attach after installing, or attach once and
-complete those prompts if needed.
+Logs go to `~/Library/Logs/agentmux`. Reattach with
+`tmux -L agentmux-<instance> attach -t <tmux-session>`, or from the Claude
+Code mobile app via Remote Control.
 
 Pass `--instance NAME` (default: `claude-code`) to install a second, third,
 ... instance side by side, each with its own workdir, tmux session, and
@@ -207,13 +205,15 @@ override with `AGENTMUX_RUN_USER`):
 - `agentmux-claude-code.service` — starts (and restarts, on boot) a `tmux`
   session named `$AGENTMUX_SESSION_NAME` running `claude --remote-control`
   in `~/.agentmux/claude-code`.
-- `agentmux-claude-code-update.timer` — nightly (default 3am UTC, override
-  with `AGENTMUX_ON_CALENDAR`) checks for a new Claude Code version, and
-  only restarts the session if one was installed.
+- `agentmux-claude-code-update.timer` — nightly (default 03:00 in the
+  configured `Australia/Perth` timezone, override with
+  `AGENTMUX_ON_CALENDAR`) checks for a new Claude Code version, and only
+  restarts the session if one was installed.
 
-Reattach any time with `tmux attach -t $AGENTMUX_SESSION_NAME`, or from the
-Claude Code mobile app via Remote Control (the session shows up under
-`$AGENTMUX_SESSION_NAME`).
+Reattach any time with
+`tmux -L agentmux-<instance> attach -t <tmux-session>`, or from the Claude
+Code mobile app via Remote Control, where it appears under the configured
+display name.
 
 To remove: `sudo ./uninstall.sh` (leaves any running tmux session alone).
 
