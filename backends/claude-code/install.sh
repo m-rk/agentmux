@@ -28,7 +28,7 @@
 #   AGENTMUX_DISPLAY_SUFFIX (default: 1; set 0/false/no/off to disable)
 #   AGENTMUX_RUN_USER (default: $SUDO_USER)
 #   AGENTMUX_RESUME (session ID to resume on first start)
-#   AGENTMUX_ON_CALENDAR (default: "*-*-* 03:00:00 UTC")
+#   AGENTMUX_ON_CALENDAR (default: "*-*-* 03:00:00 Australia/Perth")
 #   AGENTMUX_WORKDIR (default: $USER_HOME/.agentmux/$AGENTMUX_INSTANCE_NAME)
 #
 # The instance name defaults to "claude-code" so a zero-flag install
@@ -42,7 +42,7 @@
 # AGENTMUX_DISPLAY_SUFFIX=0 is given (matching install-macos.sh's default).
 #
 # Example:
-#   sudo ./install.sh --session-name my-server --on-calendar "*-*-* 03:00:00 Australia/Perth"
+#   sudo ./install.sh --session-name my-server --on-calendar "*-*-* 03:00:00 UTC"
 #
 # Re-running is safe and rewrites the units/env file with current values —
 # the env file is regenerated each time, not merged — but it does not
@@ -76,7 +76,7 @@ Env aliases:
   AGENTMUX_DISPLAY_SUFFIX (default: 1; set 0/false/no/off to disable)
   AGENTMUX_RUN_USER (default: $SUDO_USER)
   AGENTMUX_RESUME (session ID to resume on first start)
-  AGENTMUX_ON_CALENDAR (default: "*-*-* 03:00:00 UTC")
+  AGENTMUX_ON_CALENDAR (default: "*-*-* 03:00:00 Australia/Perth")
   AGENTMUX_WORKDIR (default: $USER_HOME/.agentmux/$AGENTMUX_INSTANCE_NAME)
 
 A second (or third, ...) instance can be installed side by side with
@@ -95,7 +95,7 @@ case "${AGENTMUX_DISPLAY_SUFFIX:-1}" in
 esac
 RUN_USER="${AGENTMUX_RUN_USER:-${SUDO_USER:-}}"
 RESUME_ID="${AGENTMUX_RESUME:-}"
-ON_CALENDAR="${AGENTMUX_ON_CALENDAR:-*-*-* 03:00:00 UTC}"
+ON_CALENDAR="${AGENTMUX_ON_CALENDAR:-*-*-* 03:00:00 Australia/Perth}"
 PLAN=0
 
 while [ "$#" -gt 0 ]; do

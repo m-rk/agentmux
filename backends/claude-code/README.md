@@ -153,7 +153,7 @@ AGENTMUX_SESSION_NAME="my-session"       # also: AGENTMUX_TMUX_SESSION_NAME
 AGENTMUX_DISPLAY_NAME="My Session"       # also: AGENTMUX_REMOTE_NAME
 AGENTMUX_DISPLAY_SUFFIX=0                # 0/false/no/off disables the suffix
 AGENTMUX_RUN_USER="runner"               # defaults to SUDO_USER
-AGENTMUX_ON_CALENDAR="*-*-* 03:00:00 UTC"
+AGENTMUX_ON_CALENDAR="*-*-* 03:00:00 Australia/Perth"
 ```
 
 `install.sh` is safe to re-run to change these values, but note it only
