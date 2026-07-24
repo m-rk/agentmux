@@ -76,7 +76,7 @@ scripts below provide the equivalent host-supervisor setup directly.
 
 | Installer | Agent CLIs | Provider configuration | Linux | macOS |
 |---|---|---|---|---|
-| [`backends/agentmux`](backends/agentmux) | `zero`, `opencode` | Ollama | systemd | LaunchAgents |
+| [`backends/agentmux`](backends/agentmux) | `zero`, `opencode`, `kilo` | Ollama | systemd | LaunchAgents |
 | [`backends/claude-code`](backends/claude-code) | Claude Code | Managed by Claude Code | systemd | LaunchAgents |
 
 `backends/agentmux` is the more general of the two: one named instance

@@ -25,6 +25,7 @@ current_version() {
     case "$AGENTMUX_AGENT" in
         zero) zero --version 2>&1 ;;
         opencode) opencode --version 2>&1 ;;
+        kilo) kilo --version 2>&1 ;;
         *) echo "unsupported agent: $AGENTMUX_AGENT"; return 1 ;;
     esac
 }
@@ -36,6 +37,9 @@ update_agent() {
             ;;
         opencode)
             opencode upgrade --method npm
+            ;;
+        kilo)
+            kilo upgrade
             ;;
         *)
             log "unsupported agent: $AGENTMUX_AGENT"

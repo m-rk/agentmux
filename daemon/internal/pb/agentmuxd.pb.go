@@ -841,9 +841,9 @@ func (x *ControlResponse) GetMessage() string {
 type CreateInstanceRequest struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	InstanceName    string                 `protobuf:"bytes,1,opt,name=instance_name,json=instanceName,proto3" json:"instance_name,omitempty"`
-	Agent           string                 `protobuf:"bytes,2,opt,name=agent,proto3" json:"agent,omitempty"`                                              // "claude-code" | "zero" | "opencode"
-	Provider        string                 `protobuf:"bytes,3,opt,name=provider,proto3" json:"provider,omitempty"`                                        // zero/opencode only
-	Model           string                 `protobuf:"bytes,4,opt,name=model,proto3" json:"model,omitempty"`                                              // zero/opencode only
+	Agent           string                 `protobuf:"bytes,2,opt,name=agent,proto3" json:"agent,omitempty"`                                              // "claude-code" | "zero" | "opencode" | "kilo"
+	Provider        string                 `protobuf:"bytes,3,opt,name=provider,proto3" json:"provider,omitempty"`                                        // zero/opencode/kilo only
+	Model           string                 `protobuf:"bytes,4,opt,name=model,proto3" json:"model,omitempty"`                                              // zero/opencode/kilo only
 	Workdir         string                 `protobuf:"bytes,5,opt,name=workdir,proto3" json:"workdir,omitempty"`                                          // empty = provisioner default
 	ResumeSessionId string                 `protobuf:"bytes,6,opt,name=resume_session_id,json=resumeSessionId,proto3" json:"resume_session_id,omitempty"` // claude-code only; empty = fresh session
 	RunUser         string                 `protobuf:"bytes,7,opt,name=run_user,json=runUser,proto3" json:"run_user,omitempty"`                           // Linux only; empty = provisioner default

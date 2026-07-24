@@ -5,6 +5,8 @@
 package provision
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -61,10 +63,10 @@ func Create(opts Options) (string, error) {
 	switch opts.Agent {
 	case "claude-code":
 		return createClaudeCode(opts)
-	case "zero", "opencode":
+	case "zero", "opencode", "kilo":
 		return createAgentmux(opts)
 	default:
-		return "", fmt.Errorf("unsupported agent %q (want claude-code, zero, or opencode)", opts.Agent)
+		return "", fmt.Errorf("unsupported agent %q (want claude-code, zero, opencode, or kilo)", opts.Agent)
 	}
 }
 
@@ -216,6 +218,86 @@ func ListResumable(workdir, runUser string) ([]ResumableSession, error) {
 	}
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].LastModified.After(sessions[j].LastModified) })
 	return sessions, nil
+}
+
+// LastMessageIsCompactSummary reports whether workdir's most recently
+// modified resumable session already ends with a compact-boundary message
+// — i.e. a previous nightly update already compacted it and nothing has
+// happened in it since, so sending another /compact would be a no-op
+// (Claude Code itself refuses with "Not enough messages to compact.",
+// which otherwise wastes a nightly maintenance cycle waiting on a prompt
+// that was never going anywhere). A workdir with no resumable sessions
+// yet reports false, not an error.
+func LastMessageIsCompactSummary(workdir, runUser string) (bool, error) {
+	sessions, err := ListResumable(workdir, runUser)
+	if err != nil {
+		return false, err
+	}
+	if len(sessions) == 0 {
+		return false, nil
+	}
+	home, err := resumeHomeDir(runUser)
+	if err != nil {
+		return false, err
+	}
+	path := filepath.Join(home, ".claude", "projects", slugifyWorkdir(workdir), sessions[0].SessionID+".jsonl")
+	line, err := lastLine(path)
+	if err != nil {
+		return false, err
+	}
+	return isCompactSummaryLine(line), nil
+}
+
+// isCompactSummaryLine reports whether line is a Claude Code transcript
+// entry with "isCompactSummary":true. A malformed or unparseable line
+// (e.g. a partially-flushed write from a session still being written to)
+// is treated as "not a compact summary" rather than an error, since a
+// false negative here just means one redundant /compact, not a failure.
+func isCompactSummaryLine(line []byte) bool {
+	var entry struct {
+		IsCompactSummary bool `json:"isCompactSummary"`
+	}
+	if err := json.Unmarshal(line, &entry); err != nil {
+		return false
+	}
+	return entry.IsCompactSummary
+}
+
+// lastLine reads the final non-empty line of path without loading the
+// whole file into memory — Claude Code session transcripts can run into
+// the tens of megabytes, and individual lines (a single large tool
+// result) can themselves be over 100KB, so the read window doubles until
+// it contains a newline rather than assuming a fixed chunk size suffices.
+func lastLine(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("opening %s: %w", path, err)
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stat %s: %w", path, err)
+	}
+	size := info.Size()
+
+	for window := int64(64 * 1024); ; window *= 2 {
+		readSize := window
+		if readSize > size {
+			readSize = size
+		}
+		buf := make([]byte, readSize)
+		if _, err := f.ReadAt(buf, size-readSize); err != nil {
+			return nil, fmt.Errorf("reading %s: %w", path, err)
+		}
+		trimmed := bytes.TrimRight(buf, "\n")
+		if idx := bytes.LastIndexByte(trimmed, '\n'); idx >= 0 {
+			return trimmed[idx+1:], nil
+		}
+		if readSize == size {
+			return trimmed, nil // whole file is a single line (or empty)
+		}
+	}
 }
 
 // slugifyWorkdir mirrors Claude Code's own (undocumented, empirically

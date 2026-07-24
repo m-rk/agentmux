@@ -8,7 +8,7 @@ Installs one agentmux instance on Linux using systemd.
 
 Flags:
   --instance NAME              instance name and default tmux session
-  --agent NAME                 agent CLI: zero or opencode
+  --agent NAME                 agent CLI: zero, opencode, or kilo
   --provider NAME              model provider: ollama
   --model MODEL                provider model id/tag
   --provider-base-url URL      provider OpenAI-compatible base URL
@@ -151,7 +151,7 @@ validate_identifier() {
 
 validate_supported() {
     case "$AGENT:$PROVIDER" in
-        zero:ollama | opencode:ollama) ;;
+        zero:ollama | opencode:ollama | kilo:ollama) ;;
         *) echo "unsupported agent/provider combination: $AGENT/$PROVIDER" >&2; exit 1 ;;
     esac
 }
