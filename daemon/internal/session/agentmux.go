@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -13,27 +14,33 @@ import (
 
 const (
 	// kiloReadyMarker is text kilo's TUI only renders once it's actually
-	// interactive (the empty-input placeholder) — not present during the
+	// interactive (the footer command-hint bar) — not present during the
 	// cold-boot window (tmux pane exists but node/kilo hasn't drawn its
 	// first frame yet), which idle-stability detection would wrongly
 	// treat as "settled": a pane that hasn't started rendering is just as
 	// unchanging as one that's finished. Confirmed against a live cold
 	// start: the pane can sit blank/on the splash for several seconds
-	// (model-list fetch, indexing) before this text ever appears.
-	kiloReadyMarker       = "Ask anything"
+	// (model-list fetch, indexing) before this text ever appears. Not
+	// "Ask anything" (the empty-input placeholder) — confirmed that text
+	// is absent when resuming a session via `kilo --session <id>` that
+	// already has history (see latestKiloSessionID), which left
+	// enableKiloRemote timing out on every resumed launch even though the
+	// TUI was, in fact, already interactive.
+	kiloReadyMarker       = "ctrl+p commands"
 	kiloReadyPollInterval = 500 * time.Millisecond
 	kiloReadyTimeout      = 30 * time.Second
 )
 
 // kiloSeedMessage is sent once, right after remote is enabled on a
-// freshly created kilo session. Kilo has no separate "register this
-// session" step — a session doesn't exist (and so isn't visible in the
-// mobile/web app's session list) until its first message is sent,
-// confirmed via `kilo session list` staying empty for an instance that
-// had never been typed into despite /remote already being connected. For
-// a remote-only user with no terminal to type that first message from,
-// agentmux has to send it instead, or the instance would sit invisible
-// forever.
+// freshly created kilo session — and only on that session's true first
+// launch, never on a later resume (see latestKiloSessionID). Kilo has no
+// separate "register this session" step — a session doesn't exist (and
+// so isn't visible in the mobile/web app's session list) until its first
+// message is sent, confirmed via `kilo session list` staying empty for an
+// instance that had never been typed into despite /remote already being
+// connected. For a remote-only user with no terminal to type that first
+// message from, agentmux has to send it instead, or the instance would
+// sit invisible forever.
 const kiloSeedMessage = "This is an automated startup check-in from agentmux, just to register this session in your session list. Please reply with a short acknowledgement and take no other action."
 
 // RunAgentmux is `agentmux session run --instance NAME` for the zero/
@@ -80,6 +87,17 @@ func RunAgentmux(name string) error {
 	if err != nil {
 		return err
 	}
+	resumingKilo := false
+	if agent == "kilo" {
+		id, err := latestKiloSessionID(workdir)
+		if err != nil {
+			return fmt.Errorf("checking for an existing kilo session in %s: %w", workdir, err)
+		}
+		if id != "" {
+			launchCmd = "kilo --session " + id
+			resumingKilo = true
+		}
+	}
 	cmd := withPath("tmux", "-L", socket, "new-session", "-d", "-s", session, "-c", workdir, launchCmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("starting tmux session %s: %w: %s", session, err, out)
@@ -88,8 +106,10 @@ func RunAgentmux(name string) error {
 		if err := enableKiloRemote(socket, session); err != nil {
 			return fmt.Errorf("enabling remote for %s: %w", session, err)
 		}
-		if err := seedKiloSession(socket, session); err != nil {
-			return fmt.Errorf("seeding initial session for %s: %w", session, err)
+		if !resumingKilo {
+			if err := seedKiloSession(socket, session); err != nil {
+				return fmt.Errorf("seeding initial session for %s: %w", session, err)
+			}
 		}
 	}
 	return nil
@@ -148,6 +168,58 @@ func enableKiloRemote(socket, session string) error {
 		return fmt.Errorf("submitting /remote to %s: %w", session, err)
 	}
 	return nil
+}
+
+// latestKiloSessionID returns the id of the most recently updated kilo
+// session already recorded for workdir, or "" if none exists yet. Without
+// this, every tmux-session recreation — including a plain nightly `kilo
+// upgrade` restart, which doesn't imply any conversation was actually
+// lost — launched a bare `kilo` and re-ran seedKiloSession, abandoning the
+// previous session and creating a brand new one in its place; confirmed
+// live, this left the user's session list permanently accumulating
+// duplicate "Agentmux startup check-in" entries, one per restart, forever.
+// RunAgentmux now launches `kilo --session <id>` instead when one is
+// found, which resumes that exact session (verified: same session id,
+// full history replayed, no new row created) rather than starting fresh.
+//
+// `kilo session list`'s default project-scoping is inconsistent for
+// directories without a distinct git identity — confirmed empirically,
+// unrelated directories can share its fallback "global" project and all
+// show up together in one unscoped listing — so results here are always
+// filtered by the directory field explicitly rather than trusted by scope
+// alone. Deliberately omits --all: confirmed it crashes kilo outright
+// ("undefined is not an object (evaluating 'J.time.updated')") when
+// combined with a directory that has no sessions of its own yet, which is
+// exactly the first-ever-launch case this function most needs to handle
+// correctly.
+func latestKiloSessionID(workdir string) (string, error) {
+	cmd := withPath("kilo", "session", "list", "--format", "json")
+	cmd.Dir = workdir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("listing kilo sessions: %w", err)
+	}
+	if len(bytes.TrimSpace(out)) == 0 {
+		return "", nil // a project with zero sessions prints nothing, not "[]"
+	}
+	var sessions []struct {
+		ID        string `json:"id"`
+		Directory string `json:"directory"`
+		Updated   int64  `json:"updated"`
+	}
+	if err := json.Unmarshal(out, &sessions); err != nil {
+		return "", fmt.Errorf("parsing kilo session list: %w", err)
+	}
+	best, bestUpdated := "", int64(0)
+	for _, s := range sessions {
+		if s.Directory != workdir {
+			continue
+		}
+		if best == "" || s.Updated > bestUpdated {
+			best, bestUpdated = s.ID, s.Updated
+		}
+	}
+	return best, nil
 }
 
 // seedKiloSession types kiloSeedMessage into a just-remote-enabled kilo

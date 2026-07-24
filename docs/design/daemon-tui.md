@@ -303,8 +303,13 @@ binary:
   workspace) is *also* unchanging — idle-stability can't tell "settled"
   apart from "hasn't started yet," so it fired on a not-yet-interactive
   pane and the keystrokes went nowhere. Fixed by polling for a
-  known-only-once-ready piece of text (`kiloReadyMarker`, the empty-input
-  placeholder) instead of content stability.
+  known-only-once-ready piece of text (`kiloReadyMarker`) instead of
+  content stability. That marker started as the empty-input placeholder
+  ("Ask anything"), but that text turned out to be absent whenever a
+  session is resumed with existing history (see the fourth issue below) —
+  switched to the footer command-hint bar ("ctrl+p commands"), confirmed
+  present at the same instant as the placeholder on a fresh boot, but
+  also present on a resumed one where the placeholder isn't.
 - **The command palette's fuzzy filter updates asynchronously.** Typing
   `/remote` and pressing Enter in the same `tmux send-keys` call raced the
   palette's own filter/selection update: Enter could arrive before
@@ -326,6 +331,37 @@ low-cost "just checking in, no action needed" message — via the same
 send-text-then-Enter-as-two-calls pattern, purely to make the session
 exist. It doesn't wait for a reply; submitting is what creates the
 session record, not the model actually answering it.
+
+A fourth issue only showed up after a live instance survived a nightly
+`kilo upgrade` restart: unlike Claude Code's `--resume`, launching plain
+`kilo` always starts a brand new conversation — there's no notion of "the
+session that was running before this restart." Since `RunAgentmux`
+recreates the tmux session (and therefore relaunches `kilo`) any time it
+isn't already running — which a version-triggered restart guarantees —
+every such restart was quietly abandoning the previous kilo session and
+running the seed-message step again, creating a fresh, separately-numbered
+session each time. Confirmed live: a single instance that had only been
+restarted once by the nightly timer already had two session rows for the
+same directory, one of them dead the moment it was created. Left alone,
+that's an unbounded number of "Agentmux startup check-in" rows piling up
+in the mobile app forever, one per restart, with no way to tell them
+apart. Kilo does support resuming, just not automatically: `kilo --session
+<id>` (or `-s`) continues an existing session in place — same id, full
+history replayed, confirmed via `kilo db` that no new row appears. So
+`RunAgentmux` now looks up the most recently updated session already
+recorded for the workdir (`latestKiloSessionID`) before deciding how to
+launch: found one → `kilo --session <id>`, skip the seed step entirely;
+found none → plain `kilo`, seed as before. `kilo session list`'s own
+default scoping isn't reliable for this lookup — directories without a
+distinct git identity all fall into a shared "global" project bucket and
+list *each other's* sessions together — so results are filtered by the
+`directory` field client-side rather than trusted by scope. Two more kilo
+quirks fell out of building this: `kilo session list --all --format json`
+crashes outright (`undefined is not an object (evaluating
+'J.time.updated')`) when combined with a directory that has no sessions of
+its own yet, so `--all` is deliberately not used; and a directory with
+zero sessions prints nothing at all on stdout, not `[]`, so empty output
+has to be treated as "no sessions" rather than a JSON parse error.
 
 ## Repo layout
 
