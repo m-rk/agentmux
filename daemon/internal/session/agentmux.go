@@ -25,6 +25,17 @@ const (
 	kiloReadyTimeout      = 30 * time.Second
 )
 
+// kiloSeedMessage is sent once, right after remote is enabled on a
+// freshly created kilo session. Kilo has no separate "register this
+// session" step — a session doesn't exist (and so isn't visible in the
+// mobile/web app's session list) until its first message is sent,
+// confirmed via `kilo session list` staying empty for an instance that
+// had never been typed into despite /remote already being connected. For
+// a remote-only user with no terminal to type that first message from,
+// agentmux has to send it instead, or the instance would sit invisible
+// forever.
+const kiloSeedMessage = "This is an automated startup check-in from agentmux, just to register this session in your session list. Please reply with a short acknowledgement and take no other action."
+
 // RunAgentmux is `agentmux session run --instance NAME` for the zero/
 // opencode agents: writes the provider config file, waits for the
 // provider to be reachable, then idempotently ensures the instance's tmux
@@ -76,6 +87,9 @@ func RunAgentmux(name string) error {
 	if agent == "kilo" {
 		if err := enableKiloRemote(socket, session); err != nil {
 			return fmt.Errorf("enabling remote for %s: %w", session, err)
+		}
+		if err := seedKiloSession(socket, session); err != nil {
+			return fmt.Errorf("seeding initial session for %s: %w", session, err)
 		}
 	}
 	return nil
@@ -132,6 +146,24 @@ func enableKiloRemote(socket, session string) error {
 	time.Sleep(500 * time.Millisecond)
 	if err := tmux("-L", socket, "send-keys", "-t", session, "Enter").Run(); err != nil {
 		return fmt.Errorf("submitting /remote to %s: %w", session, err)
+	}
+	return nil
+}
+
+// seedKiloSession types kiloSeedMessage into a just-remote-enabled kilo
+// session and submits it, the same two-send-keys-calls-with-a-pause
+// pattern enableKiloRemote uses and for the same reason: submitting in
+// the same call as the text is unreliable. Doesn't wait for a reply —
+// submitting the message is what creates the session record; agentmux
+// doesn't need the model to actually finish responding.
+func seedKiloSession(socket, session string) error {
+	tmux := func(args ...string) *exec.Cmd { return withPath("tmux", args...) }
+	if err := tmux("-L", socket, "send-keys", "-t", session, kiloSeedMessage).Run(); err != nil {
+		return fmt.Errorf("sending seed message to %s: %w", session, err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if err := tmux("-L", socket, "send-keys", "-t", session, "Enter").Run(); err != nil {
+		return fmt.Errorf("submitting seed message to %s: %w", session, err)
 	}
 	return nil
 }

@@ -312,6 +312,21 @@ binary:
   the text typed but nothing chosen. Fixed by sending the text and Enter
   as two separate `send-keys` calls with a short pause between them.
 
+A third issue only showed up once the first two kilo instances sat idle
+for a while: neither appeared in the Kilo mobile app, despite `/remote`
+having connected successfully (confirmed via an active TLS connection to
+`ingest.kilosessions.ai` at the OS level). `kilo session list` explained
+why — a session doesn't exist as an entity at all, remote-visible or
+otherwise, until its first message is sent; enabling `/remote` alone just
+opens the relay channel; it doesn't register anything for the app to
+show. That's a real gap for agentmux's actual use case: a remote-only
+user has no terminal to type that first message from. So `RunAgentmux`
+sends one more thing after `/remote` — `kiloSeedMessage`, a fixed,
+low-cost "just checking in, no action needed" message — via the same
+send-text-then-Enter-as-two-calls pattern, purely to make the session
+exist. It doesn't wait for a reply; submitting is what creates the
+session record, not the model actually answering it.
+
 ## Repo layout
 
 `daemon/`, one Go module, one binary (`cmd/agentmux`):
