@@ -363,6 +363,43 @@ its own yet, so `--all` is deliberately not used; and a directory with
 zero sessions prints nothing at all on stdout, not `[]`, so empty output
 has to be treated as "no sessions" rather than a JSON parse error.
 
+### Setting a kilo session's display name
+
+Claude Code's Remote Control display name and kilo's session title are
+conceptually the same thing — a human-readable label distinguishing one
+instance from another across hosts, in the same "&lt;user&gt;:&lt;host&gt;
+🤹 &lt;workdir-basename&gt;" format (`provision.DisplayNameFor`) — but kilo
+has no way to set one while `/remote` is active. `kilo run --title` only
+exists in `kilo run --interactive` (split-footer) mode, and that mode has
+no `/remote` support at all; the two are mutually exclusive in this kilo
+version. Filing that gap upstream was considered and explicitly declined
+(remote matters more right now).
+
+The workaround is `kilo db` — kilo's own sanctioned tool for running SQL
+against its local SQLite database — writing directly to the session
+table's `title` column. Confirmed working end-to-end against a live,
+already-remote-connected production session: the local write took effect
+immediately, and the new title did eventually appear in the mobile app,
+but only after a multi-minute delay and only for a *live* session (an
+identical write against a dead/abandoned session, tested for comparison,
+never synced at all). This points to the sync being driven by the
+connected kilo process's own periodic heartbeat, not any kind of
+immediate or global push — there's no way to force it, and the delay is a
+real, undocumented characteristic of this mechanism, not a bug in
+agentmux's implementation of it. `time_updated` also doesn't reliably
+reflect whether a sync happened.
+
+Given that, `titleNewKiloSession` treats the title as a nice-to-have, not
+a core feature: it's called once, right after `seedKiloSession` creates a
+session for the first time (never on a `--session <id>` resume, so a
+title the user changes by hand afterward is never clobbered), and every
+failure is logged to stderr and swallowed rather than propagated —
+`RunAgentmux` must never fail just because a cosmetic, privately-reverse-
+engineered write against kilo's own undocumented schema didn't go
+through. `waitForKiloSessionID` polls for up to 10s first, since
+`seedKiloSession` returns as soon as the message is submitted, without
+waiting for kilo to actually register the resulting session row.
+
 ## Repo layout
 
 `daemon/`, one Go module, one binary (`cmd/agentmux`):

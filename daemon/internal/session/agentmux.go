@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/m-rk/agentmux/daemon/internal/provision"
 )
 
 const (
@@ -110,6 +112,7 @@ func RunAgentmux(name string) error {
 			if err := seedKiloSession(socket, session); err != nil {
 				return fmt.Errorf("seeding initial session for %s: %w", session, err)
 			}
+			titleNewKiloSession(workdir, fields["AGENTMUX_RUN_USER"])
 		}
 	}
 	return nil
@@ -236,6 +239,75 @@ func seedKiloSession(socket, session string) error {
 	time.Sleep(500 * time.Millisecond)
 	if err := tmux("-L", socket, "send-keys", "-t", session, "Enter").Run(); err != nil {
 		return fmt.Errorf("submitting seed message to %s: %w", session, err)
+	}
+	return nil
+}
+
+// titleNewKiloSession sets a freshly created kilo session's title to
+// agentmux's own display-name convention (provision.DisplayNameFor —
+// the same "<user>:<host> 🤹 <workdir-basename>" format claude-code
+// uses), via `kilo db` — kilo's own sanctioned SQL-against-its-local-
+// database tool, and the only way to write a session's title at all
+// outside of `kilo run --title`, which only exists in --interactive
+// mode and can't run alongside /remote (see the design doc). This
+// writes straight to kilo's private, undocumented schema, and the
+// resulting sync back up to the cloud/app is equally undocumented —
+// confirmed working live, but only once the connected process's own
+// heartbeat pushed it, a few minutes after the write, not instantly.
+// Best-effort only, deliberately swallowing errors rather than
+// returning them: remote and seeding are the load-bearing parts of
+// this flow, and a cosmetic title must never be able to take either of
+// them down, especially given kilo could change this private schema
+// out from under agentmux at any point. Only ever called right after
+// seedKiloSession, on a session's true first creation — never on a
+// resume — so a title the user changes by hand in the app afterward is
+// never clobbered.
+func titleNewKiloSession(workdir, runUser string) {
+	id, err := waitForKiloSessionID(workdir, 10*time.Second)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "agentmux: not setting a kilo session title for %s: %v\n", workdir, err)
+		return
+	}
+	title := provision.DisplayNameFor(runUser, workdir)
+	if err := setKiloSessionTitle(workdir, id, title); err != nil {
+		fmt.Fprintf(os.Stderr, "agentmux: not setting a kilo session title for %s: %v\n", workdir, err)
+	}
+}
+
+// waitForKiloSessionID polls latestKiloSessionID until it finds a
+// session for workdir or timeout elapses — seedKiloSession submits the
+// message and returns without waiting for kilo to finish registering
+// it, so the row isn't guaranteed to exist yet the instant it returns.
+func waitForKiloSessionID(workdir string, timeout time.Duration) (string, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		id, err := latestKiloSessionID(workdir)
+		if err != nil {
+			return "", err
+		}
+		if id != "" {
+			return id, nil
+		}
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("timed out after %s waiting for the seeded session to appear", timeout)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// setKiloSessionTitle writes title into kilo's local session table for
+// id via `kilo db`, which runs the given SQL directly with no
+// parameterization — id is always kilo's own generated ses_-prefixed
+// identifier, but title is built from a hostname/workdir basename, so
+// it's escaped defensively even though neither is attacker-controlled
+// in practice.
+func setKiloSessionTitle(workdir, id, title string) error {
+	escaped := strings.ReplaceAll(title, "'", "''")
+	query := fmt.Sprintf("UPDATE session SET title = '%s' WHERE id = '%s'", escaped, id)
+	cmd := withPath("kilo", "db", query)
+	cmd.Dir = workdir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("kilo db: %w: %s", err, out)
 	}
 	return nil
 }

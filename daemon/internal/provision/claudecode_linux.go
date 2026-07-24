@@ -98,7 +98,7 @@ func createClaudeCode(opts Options) (string, error) {
 	}
 
 	claudeJSON := claudeJSONPath(u.HomeDir)
-	displayName := displayNameFor(runUser, workdir)
+	displayName := DisplayNameFor(runUser, workdir)
 
 	if !claudeLoggedIn(runUser) {
 		return "", fmt.Errorf("Claude Code does not appear to be logged in for user %q; run 'claude' once as %s to log in, then retry", runUser, runUser)

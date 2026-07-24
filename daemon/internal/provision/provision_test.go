@@ -130,20 +130,20 @@ func TestDisplayNameFor(t *testing.T) {
 
 	t.Run("single real user: no user prefix", func(t *testing.T) {
 		realUserCount = func() int { return 1 }
-		got := displayNameFor("testuser", "/home/testuser/.agentmux/probe")
+		got := DisplayNameFor("testuser", "/home/testuser/.agentmux/probe")
 		if !strings.HasSuffix(got, "🤹 probe") {
-			t.Errorf("displayNameFor = %q, want suffix %q", got, "🤹 probe")
+			t.Errorf("DisplayNameFor = %q, want suffix %q", got, "🤹 probe")
 		}
 		if strings.HasPrefix(got, "testuser:") {
-			t.Errorf("displayNameFor = %q, should not have a user prefix on a single-user machine", got)
+			t.Errorf("DisplayNameFor = %q, should not have a user prefix on a single-user machine", got)
 		}
 	})
 
 	t.Run("multiple real users: user prefix included", func(t *testing.T) {
 		realUserCount = func() int { return 2 }
-		got := displayNameFor("testuser", "/home/testuser/.agentmux/probe")
+		got := DisplayNameFor("testuser", "/home/testuser/.agentmux/probe")
 		if !strings.HasPrefix(got, "testuser:") {
-			t.Errorf("displayNameFor = %q, want prefix %q", got, "testuser:")
+			t.Errorf("DisplayNameFor = %q, want prefix %q", got, "testuser:")
 		}
 	})
 }

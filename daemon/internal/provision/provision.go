@@ -155,10 +155,10 @@ func machineName(fallback string) string {
 	return name
 }
 
-// displayNameFor mirrors install.sh's default display-name heuristic:
+// DisplayNameFor mirrors install.sh's default display-name heuristic:
 // "<user>:<host> 🤹 <workdir-basename>", with the "<user>:" prefix omitted
 // on single-real-user machines.
-func displayNameFor(runUser, workdir string) string {
+func DisplayNameFor(runUser, workdir string) string {
 	prefix := ""
 	if realUserCount() != 1 {
 		prefix = runUser + ":"
