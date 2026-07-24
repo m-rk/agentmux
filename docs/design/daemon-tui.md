@@ -400,6 +400,40 @@ through. `waitForKiloSessionID` polls for up to 10s first, since
 `seedKiloSession` returns as soon as the message is submitted, without
 waiting for kilo to actually register the resulting session row.
 
+### Local kilo env overlay
+
+kilo already merges a personal global config (`~/.config/kilo/`) into
+every project automatically, so extending kilo with an extra
+provider — a private/paid gateway, a different model catalog, whatever —
+needs no agentmux involvement at all; that's just kilo's own config
+system, and belongs entirely in the user's own global config, never in
+this repo.
+
+The one gap agentmux does need to close: kilo flatly refuses any
+`"{env:VAR}"` reference inside *project*-level config
+(`kilo.json`) — "environment references are not allowed in project
+config", confirmed via `kilo config check` — while allowing it fine in
+the global config an interactive terminal session would already have the
+right environment for, via its normal shell profile. agentmux's
+tmux-launched kilo processes are non-interactive and don't source a
+shell profile, so without help, a provider needing an API key via
+`{env:VAR}` in the global config would work from a terminal but silently
+resolve to nothing inside every agentmux-managed instance.
+
+`readKiloExtraEnv` reads an optional, never-committed dotenv-style file
+at `~/.config/agentmux/kilo-env` (`NAME=VALUE` per line, optional
+leading `export `, `#` comments and blank lines skipped — deliberately
+carrying no opinion about what's in it) and `RunAgentmux` appends its
+entries to `Cmd.Env` on the `tmux new-session` call that starts a
+socket's server (only runs when no server/session exists yet, see the
+`hasSession` check earlier in `RunAgentmux`) — every pane subsequently
+opened under that socket, including a later `--session <id>` resume,
+inherits it from the server. Deliberately not a `tmux -e`/`setenv` CLI
+argument: those land in `/proc/<pid>/cmdline`, which is world-readable,
+unlike `/proc/<pid>/environ`. A missing file is not an error, just
+"nothing to add" — most boxes won't have one, and behavior is unchanged
+from before this mechanism existed.
+
 ## Repo layout
 
 `daemon/`, one Go module, one binary (`cmd/agentmux`):

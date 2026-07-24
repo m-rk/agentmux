@@ -101,6 +101,21 @@ func RunAgentmux(name string) error {
 		}
 	}
 	cmd := withPath("tmux", "-L", socket, "new-session", "-d", "-s", session, "-c", workdir, launchCmd)
+	if agent == "kilo" {
+		// Sets it on the tmux *server's* environment (this new-session call
+		// only runs when no server/session exists yet for this socket, see
+		// the hasSession check above), which every pane subsequently
+		// launched under this socket — including a later `--session <id>`
+		// resume — inherits. Passed via Cmd.Env rather than a tmux -e/
+		// setenv CLI argument deliberately: CLI args land in
+		// /proc/<pid>/cmdline, which is world-readable, unlike
+		// /proc/<pid>/environ.
+		env, err := readKiloExtraEnv()
+		if err != nil {
+			return fmt.Errorf("reading local kilo env overlay: %w", err)
+		}
+		cmd.Env = append(cmd.Env, env...)
+	}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("starting tmux session %s: %w: %s", session, err, out)
 	}
@@ -443,6 +458,60 @@ func writeKiloCodeConfig(provider, model, baseURL, workdir string) error {
 		},
 	}
 	return writeJSONAtomic(filepath.Join(workdir, "kilo.json"), doc)
+}
+
+// readKiloExtraEnv reads an optional local, never-committed dotenv-style
+// file at ~/.config/agentmux/kilo-env (NAME=VALUE per line, an optional
+// leading "export ", blank lines and lines starting with "#" ignored)
+// and returns its entries ready to append to an exec.Cmd's Env.
+//
+// kilo merges a personal global config (~/.config/kilo/) into every
+// project automatically, so defining an extra provider — a private/paid
+// gateway, say — needs no agentmux involvement at all... except that kilo
+// flatly refuses any "{env:VAR}" reference in *project*-level config
+// ("environment references are not allowed in project config", confirmed
+// via `kilo config check`), while allowing it in the global config an
+// interactive terminal session would already have from its normal shell
+// profile. agentmux's tmux-launched kilo processes are non-interactive
+// and don't source a shell profile, so without this, a provider needing
+// an API key via "{env:VAR}" in the global config would work in a
+// terminal but silently fail (empty/missing key) inside every
+// agentmux-managed instance. This file exists solely to close that one
+// gap — it carries no opinion about what provider or key it holds,
+// agentmux's own source never needs to know. A missing file is not an
+// error, just "nothing to add" — most boxes won't have one.
+func readKiloExtraEnv() ([]string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".config", "agentmux", "kilo-env"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var env []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(line, "export ")
+		name, value, ok := strings.Cut(line, "=")
+		if line == "" || strings.HasPrefix(line, "#") || !ok {
+			continue
+		}
+		// Shell-quoted values (the file is also meant to be `source`-able
+		// from a shell profile, where quoting matters) aren't unquoted by
+		// Go's exec.Cmd the way a shell would — confirmed the hard way: an
+		// unstripped surrounding '"' landed inside the actual env var
+		// value, corrupting an API key enough that kilo crashed outright on
+		// startup rather than just failing auth gracefully.
+		if len(value) >= 2 && (value[0] == '"' && value[len(value)-1] == '"' || value[0] == '\'' && value[len(value)-1] == '\'') {
+			value = value[1 : len(value)-1]
+		}
+		env = append(env, name+"="+value)
+	}
+	return env, nil
 }
 
 func writeJSONAtomic(path string, doc any) error {
