@@ -55,7 +55,7 @@ Per instance it reports:
 
 Status heuristic (v1): idle-time based — no pane output change for N
 seconds means `idle`. True "waiting for input" detection is agent-CLI
-specific (each of zero/opencode/claude-code prompts differently) and is
+specific (each of zero/opencode/kilo/claude-code prompts differently) and is
 deferred; the idle heuristic is a reasonable proxy and can be special-cased
 per agent later without changing the wire protocol.
 
@@ -165,7 +165,7 @@ NAME` now, and the Go binary looks up its own config.
 `install-macos.sh`) and `internal/session` (native Go port of
 `rc-start.sh`/`rc-update.sh`) implement the full instance lifecycle with no
 bash in the loop, for every agent/platform combination this repo supports
-(`claude-code`, `zero`, `opencode` × Linux, macOS). Both packages split
+(`claude-code`, `zero`, `opencode`, `kilo` × Linux, macOS). Both packages split
 three ways per agent:
 
 - A shared file (`claudecode.go`, `agentmux.go`) for logic that's genuinely
@@ -248,6 +248,16 @@ wizard field) controls it per instance — `"off"` falls back to the old
 version-change-only restart, anything else (including unset, so every
 already-migrated instance keeps today's behavior) keeps compacting nightly.
 
+An instance that sat idle since its last nightly update has nothing new to
+compact — its transcript's last message is already the compact-boundary
+summary from that earlier run. Sending another `/compact` in that state is
+a pure no-op (Claude Code refuses it outright: "Not enough messages to
+compact."), which would otherwise burn the idle-wait/compact timeouts on a
+prompt that was never going anywhere. `LastMessageIsCompactSummary` checks
+the newest `~/.claude/projects` transcript's last line for
+`isCompactSummary:true` before sending `/compact` at all, so this case
+skips straight to resolving the resume ID.
+
 ### Renaming an instance
 
 `RenameInstance` updates an existing instance's tmux session name and/or
@@ -268,6 +278,39 @@ hand. `RenameInstance`/`Control`'s restart doesn't have this problem
 because the daemon process lives outside any instance's own tmux session
 tree, even when the instance being restarted is the one hosting whoever's
 driving the TUI.
+
+### Kilo Code's remote relay
+
+Claude Code's Remote Control (mobile/web app visibility into a running
+session) is a launch flag, `--remote-control <display>`, baked straight
+into the `claude` argv at session-create time. Kilo CLI (the
+`@kilocode/cli` npm package, an opencode fork) has no launch-flag
+equivalent for its own version of the same feature — the only way to turn
+it on is the in-TUI `/remote` slash command. So `RunAgentmux` drives it the
+same way the nightly compact does for claude-code: after starting a brand
+new kilo session (never on the idempotent no-op path), it types `/remote`
+into the running pane and confirms it.
+
+Two timing traps showed up doing this against a real kilo process, both
+found by testing against actual provisioned instances rather than a fake
+binary:
+
+- **Idle-stability detection is the wrong readiness signal for a cold
+  boot.** The nightly-compact code already waits for a pane to stop
+  changing before typing into it, but that assumes the pane is already
+  showing real content. A tmux pane that exists but hasn't been painted to
+  yet (node/kilo still starting, fetching its model list, indexing the
+  workspace) is *also* unchanging — idle-stability can't tell "settled"
+  apart from "hasn't started yet," so it fired on a not-yet-interactive
+  pane and the keystrokes went nowhere. Fixed by polling for a
+  known-only-once-ready piece of text (`kiloReadyMarker`, the empty-input
+  placeholder) instead of content stability.
+- **The command palette's fuzzy filter updates asynchronously.** Typing
+  `/remote` and pressing Enter in the same `tmux send-keys` call raced the
+  palette's own filter/selection update: Enter could arrive before
+  `/remote` was actually the selected item, leaving the palette open with
+  the text typed but nothing chosen. Fixed by sending the text and Enter
+  as two separate `send-keys` calls with a short pause between them.
 
 ## Repo layout
 

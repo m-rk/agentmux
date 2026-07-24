@@ -121,9 +121,9 @@ message ControlResponse {
 
 message CreateInstanceRequest {
   string instance_name = 1;
-  string agent = 2;              // "claude-code" | "zero" | "opencode"
-  string provider = 3;           // zero/opencode only
-  string model = 4;               // zero/opencode only
+  string agent = 2;              // "claude-code" | "zero" | "opencode" | "kilo"
+  string provider = 3;           // zero/opencode/kilo only
+  string model = 4;               // zero/opencode/kilo only
   string workdir = 5;             // empty = provisioner default
   string resume_session_id = 6;   // claude-code only; empty = fresh session
   string run_user = 7;            // Linux only; empty = provisioner default

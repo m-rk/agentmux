@@ -158,7 +158,7 @@ func TestProviderBaseURL(t *testing.T) {
 }
 
 func TestValidateSupportedAgentProvider(t *testing.T) {
-	valid := [][2]string{{"zero", "ollama"}, {"opencode", "ollama"}}
+	valid := [][2]string{{"zero", "ollama"}, {"opencode", "ollama"}, {"kilo", "ollama"}}
 	for _, v := range valid {
 		if err := validateSupportedAgentProvider(v[0], v[1]); err != nil {
 			t.Errorf("validateSupportedAgentProvider(%q, %q) = %v, want nil", v[0], v[1], err)

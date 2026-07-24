@@ -4,9 +4,25 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
+)
+
+const (
+	// kiloReadyMarker is text kilo's TUI only renders once it's actually
+	// interactive (the empty-input placeholder) — not present during the
+	// cold-boot window (tmux pane exists but node/kilo hasn't drawn its
+	// first frame yet), which idle-stability detection would wrongly
+	// treat as "settled": a pane that hasn't started rendering is just as
+	// unchanging as one that's finished. Confirmed against a live cold
+	// start: the pane can sit blank/on the splash for several seconds
+	// (model-list fetch, indexing) before this text ever appears.
+	kiloReadyMarker       = "Ask anything"
+	kiloReadyPollInterval = 500 * time.Millisecond
+	kiloReadyTimeout      = 30 * time.Second
 )
 
 // RunAgentmux is `agentmux session run --instance NAME` for the zero/
@@ -57,6 +73,11 @@ func RunAgentmux(name string) error {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("starting tmux session %s: %w: %s", session, err, out)
 	}
+	if agent == "kilo" {
+		if err := enableKiloRemote(socket, session); err != nil {
+			return fmt.Errorf("enabling remote for %s: %w", session, err)
+		}
+	}
 	return nil
 }
 
@@ -86,6 +107,54 @@ func UpdateAgentmux(name string) error {
 	return updateAgentmux(name)
 }
 
+// enableKiloRemote sends the /remote slash command to a freshly-started
+// kilo TUI session — kilo's own equivalent of Claude Code's
+// --remote-control launch flag, except it has no such flag; /remote is a
+// runtime command, confirmed by driving the TUI directly and checking its
+// own logs for the resulting kilosessions.ai relay connection. Only called
+// right after creating a brand new session (RunAgentmux's hasSession
+// early-return skips this on every idempotent re-check), matching where
+// claude-code's --remote-control is passed at that same creation point.
+func enableKiloRemote(socket, session string) error {
+	tmux := func(args ...string) *exec.Cmd { return withPath("tmux", args...) }
+	if err := waitForPaneText(tmux, socket, session, kiloReadyMarker, kiloReadyPollInterval, kiloReadyTimeout); err != nil {
+		return fmt.Errorf("waiting for %s to become interactive before enabling remote: %w", session, err)
+	}
+	time.Sleep(500 * time.Millisecond) // let input handling finish mounting right after its first paint
+	if err := tmux("-L", socket, "send-keys", "-t", session, "/remote").Run(); err != nil {
+		return fmt.Errorf("sending /remote to %s: %w", session, err)
+	}
+	// The command palette's fuzzy filter/selection updates asynchronously
+	// after each keystroke; sending Enter in the same send-keys call as
+	// the text races that update and can land before /remote is actually
+	// selected, leaving the palette open with the text typed but nothing
+	// chosen (confirmed empirically: same-call Enter silently no-opped).
+	time.Sleep(500 * time.Millisecond)
+	if err := tmux("-L", socket, "send-keys", "-t", session, "Enter").Run(); err != nil {
+		return fmt.Errorf("submitting /remote to %s: %w", session, err)
+	}
+	return nil
+}
+
+// waitForPaneText polls session's pane content until it contains marker,
+// or returns an error once timeout elapses.
+func waitForPaneText(tmux func(args ...string) *exec.Cmd, socket, session, marker string, pollInterval, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		out, err := tmux("-L", socket, "capture-pane", "-p", "-t", session).Output()
+		if err != nil {
+			return fmt.Errorf("capturing pane: %w", err)
+		}
+		if strings.Contains(string(out), marker) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out after %s waiting for %q", timeout, marker)
+		}
+		time.Sleep(pollInterval)
+	}
+}
+
 func waitForProvider(provider string, waitSeconds int) error {
 	if provider != "ollama" {
 		return nil
@@ -108,6 +177,8 @@ func configureAgent(agent, provider, model, baseURL, workdir string) error {
 		return writeZeroConfig(provider, model, baseURL, workdir)
 	case "opencode":
 		return writeOpencodeConfig(provider, model, baseURL, workdir)
+	case "kilo":
+		return writeKiloCodeConfig(provider, model, baseURL, workdir)
 	default:
 		return fmt.Errorf("unsupported agent: %s", agent)
 	}
@@ -115,7 +186,7 @@ func configureAgent(agent, provider, model, baseURL, workdir string) error {
 
 func launchCommand(agent string) (string, error) {
 	switch agent {
-	case "zero", "opencode":
+	case "zero", "opencode", "kilo":
 		return agent, nil
 	default:
 		return "", fmt.Errorf("unsupported agent: %s", agent)
@@ -171,6 +242,31 @@ func writeOpencodeConfig(provider, model, baseURL, workdir string) error {
 		},
 	}
 	return writeJSONAtomic(filepath.Join(workdir, "opencode.json"), doc)
+}
+
+// writeKiloCodeConfig mirrors writeOpencodeConfig: Kilo CLI (`kilo`, from
+// the @kilocode/cli npm package) is a fork of opencode and shares its
+// config schema, just under its own project-level file name/$schema URL.
+func writeKiloCodeConfig(provider, model, baseURL, workdir string) error {
+	doc := map[string]any{
+		"$schema": "https://app.kilo.ai/config.json",
+		"model":   provider + "/" + model,
+		"provider": map[string]any{
+			provider: map[string]any{
+				"npm":  "@ai-sdk/openai-compatible",
+				"name": provider,
+				"options": map[string]any{
+					"baseURL": baseURL,
+				},
+				"models": map[string]any{
+					model: map[string]any{
+						"name": model,
+					},
+				},
+			},
+		},
+	}
+	return writeJSONAtomic(filepath.Join(workdir, "kilo.json"), doc)
 }
 
 func writeJSONAtomic(path string, doc any) error {

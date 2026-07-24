@@ -31,7 +31,7 @@ fail() {
 
 require_supported() {
     case "$AGENTMUX_AGENT:$AGENTMUX_PROVIDER" in
-        zero:ollama | opencode:ollama) ;;
+        zero:ollama | opencode:ollama | kilo:ollama) ;;
         *) fail "unsupported agent/provider combination: $AGENTMUX_AGENT/$AGENTMUX_PROVIDER" ;;
     esac
 }
@@ -106,10 +106,42 @@ EOF
     mv "$tmp_file" "$config_file"
 }
 
+# Kilo CLI (`kilo`, the @kilocode/cli npm package) is a fork of opencode and
+# shares its config schema, just under its own project-level file name/
+# $schema URL.
+write_kilo_config() {
+    local config_file="$AGENTMUX_WORKDIR/kilo.json"
+    local tmp_file="$config_file.tmp"
+    local model_ref="$AGENTMUX_PROVIDER/$AGENTMUX_MODEL"
+
+    cat > "$tmp_file" <<EOF
+{
+  "\$schema": "https://app.kilo.ai/config.json",
+  "model": "$model_ref",
+  "provider": {
+    "$AGENTMUX_PROVIDER": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "$AGENTMUX_PROVIDER",
+      "options": {
+        "baseURL": "$AGENTMUX_PROVIDER_BASE_URL"
+      },
+      "models": {
+        "$AGENTMUX_MODEL": {
+          "name": "$AGENTMUX_MODEL"
+        }
+      }
+    }
+  }
+}
+EOF
+    mv "$tmp_file" "$config_file"
+}
+
 configure_agent() {
     case "$AGENTMUX_AGENT" in
         zero) write_zero_config ;;
         opencode) write_opencode_config ;;
+        kilo) write_kilo_config ;;
         *) fail "unsupported agent: $AGENTMUX_AGENT" ;;
     esac
 }
@@ -118,6 +150,7 @@ launch_command() {
     case "$AGENTMUX_AGENT" in
         zero) printf '%s' "zero" ;;
         opencode) printf '%s' "opencode" ;;
+        kilo) printf '%s' "kilo" ;;
         *) fail "unsupported agent: $AGENTMUX_AGENT" ;;
     esac
 }

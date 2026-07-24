@@ -63,10 +63,10 @@ func Create(opts Options) (string, error) {
 	switch opts.Agent {
 	case "claude-code":
 		return createClaudeCode(opts)
-	case "zero", "opencode":
+	case "zero", "opencode", "kilo":
 		return createAgentmux(opts)
 	default:
-		return "", fmt.Errorf("unsupported agent %q (want claude-code, zero, or opencode)", opts.Agent)
+		return "", fmt.Errorf("unsupported agent %q (want claude-code, zero, opencode, or kilo)", opts.Agent)
 	}
 }
 

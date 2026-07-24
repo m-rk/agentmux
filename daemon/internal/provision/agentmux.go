@@ -10,7 +10,7 @@ const (
 
 func validateSupportedAgentProvider(agent, provider string) error {
 	switch agent + ":" + provider {
-	case "zero:ollama", "opencode:ollama":
+	case "zero:ollama", "opencode:ollama", "kilo:ollama":
 		return nil
 	default:
 		return fmt.Errorf("unsupported agent/provider combination: %s/%s", agent, provider)
