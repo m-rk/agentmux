@@ -202,3 +202,55 @@ func write(t *testing.T, dir, name, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestIsCompactSummaryLine(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{"compact summary", `{"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}`, true},
+		{"explicit false", `{"type":"user","isCompactSummary":false}`, false},
+		{"field absent", `{"type":"assistant","message":{"role":"assistant"}}`, false},
+		{"empty line", ``, false},
+		{"malformed json", `{not json`, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isCompactSummaryLine([]byte(c.line)); got != c.want {
+				t.Errorf("isCompactSummaryLine(%q) = %v, want %v", c.line, got, c.want)
+			}
+		})
+	}
+}
+
+func TestLastLine(t *testing.T) {
+	dir := t.TempDir()
+
+	cases := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"multiple lines", "first\nsecond\nthird\n", "third"},
+		{"no trailing newline", "first\nsecond\nthird", "third"},
+		{"single line", "only\n", "only"},
+		{"empty file", "", ""},
+		{"large last line spans read window", strings.Repeat("a", 100) + "\n" + strings.Repeat("b", 200*1024), strings.Repeat("b", 200*1024)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(dir, c.name+".jsonl")
+			if err := os.WriteFile(path, []byte(c.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got, err := lastLine(path)
+			if err != nil {
+				t.Fatalf("lastLine: %v", err)
+			}
+			if string(got) != c.want {
+				t.Errorf("lastLine() = %d bytes, want %d bytes (mismatch)", len(got), len(c.want))
+			}
+		})
+	}
+}
