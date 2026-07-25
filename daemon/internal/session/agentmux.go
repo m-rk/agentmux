@@ -89,18 +89,7 @@ func RunAgentmux(name string) error {
 	if err != nil {
 		return err
 	}
-	resumingKilo := false
-	if agent == "kilo" {
-		id, err := latestKiloSessionID(workdir)
-		if err != nil {
-			return fmt.Errorf("checking for an existing kilo session in %s: %w", workdir, err)
-		}
-		if id != "" {
-			launchCmd = "kilo --session " + id
-			resumingKilo = true
-		}
-	}
-	cmd := withPath("tmux", "-L", socket, "new-session", "-d", "-s", session, "-c", workdir, launchCmd)
+	var kiloEnv []string
 	if agent == "kilo" {
 		// Sets it on the tmux *server's* environment (this new-session call
 		// only runs when no server/session exists yet for this socket, see
@@ -114,20 +103,30 @@ func RunAgentmux(name string) error {
 		if err != nil {
 			return fmt.Errorf("reading local kilo env overlay: %w", err)
 		}
-		cmd.Env = append(cmd.Env, env...)
+		kiloEnv = env
+
+		id, err := latestKiloSessionID(workdir)
+		if err != nil {
+			return fmt.Errorf("checking for an existing kilo session in %s: %w", workdir, err)
+		}
+		if id == "" {
+			displayName := provision.DisplayNameFor(fields["AGENTMUX_RUN_USER"], workdir)
+			newID, err := seedKiloSession(workdir, kiloEnv, displayName)
+			if err != nil {
+				return fmt.Errorf("seeding initial kilo session in %s: %w", workdir, err)
+			}
+			id = newID
+		}
+		launchCmd = "kilo --session " + id
 	}
+	cmd := withPath("tmux", "-L", socket, "new-session", "-d", "-s", session, "-c", workdir, launchCmd)
+	cmd.Env = append(cmd.Env, kiloEnv...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("starting tmux session %s: %w: %s", session, err, out)
 	}
 	if agent == "kilo" {
 		if err := enableKiloRemote(socket, session); err != nil {
 			return fmt.Errorf("enabling remote for %s: %w", session, err)
-		}
-		if !resumingKilo {
-			if err := seedKiloSession(socket, session); err != nil {
-				return fmt.Errorf("seeding initial session for %s: %w", session, err)
-			}
-			titleNewKiloSession(workdir, fields["AGENTMUX_RUN_USER"])
 		}
 	}
 	return nil
@@ -159,31 +158,62 @@ func UpdateAgentmux(name string) error {
 	return updateAgentmux(name)
 }
 
-// enableKiloRemote sends the /remote slash command to a freshly-started
-// kilo TUI session — kilo's own equivalent of Claude Code's
-// --remote-control launch flag, except it has no such flag; /remote is a
-// runtime command, confirmed by driving the TUI directly and checking its
-// own logs for the resulting kilosessions.ai relay connection. Only called
-// right after creating a brand new session (RunAgentmux's hasSession
-// early-return skips this on every idempotent re-check), matching where
-// claude-code's --remote-control is passed at that same creation point.
+// kiloRemoteIndicator is the footer badge kilo renders once a session is
+// actually connected to the remote relay.
+const kiloRemoteIndicator = "◆ Remote"
+
+// kiloRemoteEntryMarker is the command palette's fixed help text for its
+// /remote entry. Waited on before submitting Enter so the toggle isn't
+// blind-submitted before the palette's async fuzzy-filter has actually
+// rendered /remote as the top (selected) candidate — a fixed delay alone
+// was confirmed live to sometimes race this and silently no-op: the
+// palette stayed open with "/remote" typed but Enter landed before
+// selection settled.
+const kiloRemoteEntryMarker = "Enable or disable remote session relay"
+
+// enableKiloRemote ensures session ends up connected to kilo's remote
+// relay — kilo's own equivalent of Claude Code's --remote-control launch
+// flag, except it has no such flag; /remote is a runtime-only toggle.
+// Confirmed live: launching via `kilo --session <id>` (every kilo
+// instance agentmux creates now goes through this path — see
+// seedKiloSession) auto-connects remote by default already, no /remote
+// command needed. Because it's a toggle, unconditionally sending /remote
+// (the original approach) silently *disconnects* an already-connected
+// session instead of connecting it — confirmed live via kilo's own
+// "Remote disabled" toast appearing right after an unconditional toggle
+// on a session that had auto-connected on resume. So: wait for the TUI,
+// check whether it's already connected, and only drive the toggle if it
+// isn't — keeping the keystroke automation (and its timing fragility)
+// off the common path, as a fallback for a machine/config where the
+// auto-connect-on-resume behavior doesn't hold.
 func enableKiloRemote(socket, session string) error {
 	tmux := func(args ...string) *exec.Cmd { return withPath("tmux", args...) }
 	if err := waitForPaneText(tmux, socket, session, kiloReadyMarker, kiloReadyPollInterval, kiloReadyTimeout); err != nil {
 		return fmt.Errorf("waiting for %s to become interactive before enabling remote: %w", session, err)
 	}
 	time.Sleep(500 * time.Millisecond) // let input handling finish mounting right after its first paint
+
+	out, err := tmux("-L", socket, "capture-pane", "-p", "-t", session).Output()
+	if err != nil {
+		return fmt.Errorf("checking remote status for %s: %w", session, err)
+	}
+	if strings.Contains(string(out), kiloRemoteIndicator) {
+		return nil // already connected (kilo --session auto-connects on resume)
+	}
+
 	if err := tmux("-L", socket, "send-keys", "-t", session, "/remote").Run(); err != nil {
 		return fmt.Errorf("sending /remote to %s: %w", session, err)
 	}
-	// The command palette's fuzzy filter/selection updates asynchronously
-	// after each keystroke; sending Enter in the same send-keys call as
-	// the text races that update and can land before /remote is actually
-	// selected, leaving the palette open with the text typed but nothing
-	// chosen (confirmed empirically: same-call Enter silently no-opped).
-	time.Sleep(500 * time.Millisecond)
+	if err := waitForPaneText(tmux, socket, session, kiloRemoteEntryMarker, kiloReadyPollInterval, kiloReadyTimeout); err != nil {
+		return fmt.Errorf("waiting for the /remote command palette entry to render in %s: %w", session, err)
+	}
+	time.Sleep(400 * time.Millisecond) // palette text and its selection state are separate render passes
 	if err := tmux("-L", socket, "send-keys", "-t", session, "Enter").Run(); err != nil {
 		return fmt.Errorf("submitting /remote to %s: %w", session, err)
+	}
+
+	if err := waitForPaneText(tmux, socket, session, kiloRemoteIndicator, kiloReadyPollInterval, 5*time.Second); err != nil {
+		return fmt.Errorf("/remote was submitted for %s but the remote indicator never appeared: %w", session, err)
 	}
 	return nil
 }
@@ -228,9 +258,20 @@ func latestKiloSessionID(workdir string) (string, error) {
 	if err := json.Unmarshal(out, &sessions); err != nil {
 		return "", fmt.Errorf("parsing kilo session list: %w", err)
 	}
+	// kilo records a session's directory fully resolved (symlinks
+	// followed) — e.g. a workdir under macOS's /tmp, which is itself a
+	// symlink to /private/tmp, comes back as /private/tmp/..., not
+	// /tmp/.... Comparing against the literal workdir string missed
+	// every session for a symlinked path; resolve both sides the same
+	// way before comparing. Falls back to the literal path if it
+	// doesn't exist (nothing to resolve) or resolution fails.
+	resolvedWorkdir := workdir
+	if resolved, err := filepath.EvalSymlinks(workdir); err == nil {
+		resolvedWorkdir = resolved
+	}
 	best, bestUpdated := "", int64(0)
 	for _, s := range sessions {
-		if s.Directory != workdir {
+		if s.Directory != workdir && s.Directory != resolvedWorkdir {
 			continue
 		}
 		if best == "" || s.Updated > bestUpdated {
@@ -240,61 +281,68 @@ func latestKiloSessionID(workdir string) (string, error) {
 	return best, nil
 }
 
-// seedKiloSession types kiloSeedMessage into a just-remote-enabled kilo
-// session and submits it, the same two-send-keys-calls-with-a-pause
-// pattern enableKiloRemote uses and for the same reason: submitting in
-// the same call as the text is unreliable. Doesn't wait for a reply —
-// submitting the message is what creates the session record; agentmux
-// doesn't need the model to actually finish responding.
-func seedKiloSession(socket, session string) error {
+// kiloSeedTimeout bounds how long the one-shot `kilo run` used by
+// seedKiloSession to create a fresh session is allowed to take: a full
+// round trip to the model, not just a TUI paint, so wider than
+// kiloReadyTimeout.
+const kiloSeedTimeout = 45 * time.Second
+
+// seedKiloSession creates workdir's first kilo session via a single
+// non-interactive `kilo run <message> --title <title>` invocation inside
+// a throwaway tmux session, rather than the previous approach (launch a
+// bare interactive `kilo`, type the seed message via send-keys, then
+// patch the title into kilo's private sqlite schema afterward via `kilo
+// db`). That approach raced kilo's own async title handling and was
+// confirmed live to sometimes lose the custom title back to the raw
+// seed-message text after a later relaunch. `--title` is kilo's own
+// supported, natively-synced title mechanism — confirmed live to land
+// immediately and survive a relaunch, unlike the private-schema write.
+// Must run inside a real pty: a bare exec.Command with no tty attached
+// was confirmed to hang indefinitely rather than complete, hence the
+// throwaway tmux session rather than running the command directly.
+// Returns the new session's ID so the caller can attach the actual
+// long-running pane to it via `kilo --session <id>` — the same rendering
+// path (full TUI, correct agent/model) already used for resumes, since
+// `kilo run --interactive` was confirmed to render a different, more
+// limited UI that didn't even pick up the configured model.
+func seedKiloSession(workdir string, env []string, title string) (string, error) {
+	runCmd := fmt.Sprintf("kilo run %s --title %s", shellQuote(kiloSeedMessage), shellQuote(title))
+
+	socket := "agentmux-kilo-seed-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 	tmux := func(args ...string) *exec.Cmd { return withPath("tmux", args...) }
-	if err := tmux("-L", socket, "send-keys", "-t", session, kiloSeedMessage).Run(); err != nil {
-		return fmt.Errorf("sending seed message to %s: %w", session, err)
-	}
-	time.Sleep(500 * time.Millisecond)
-	if err := tmux("-L", socket, "send-keys", "-t", session, "Enter").Run(); err != nil {
-		return fmt.Errorf("submitting seed message to %s: %w", session, err)
-	}
-	return nil
-}
+	defer tmux("-L", socket, "kill-server").Run()
 
-// titleNewKiloSession sets a freshly created kilo session's title to
-// agentmux's own display-name convention (provision.DisplayNameFor —
-// the same "<user>:<host> 🤹 <workdir-basename>" format claude-code
-// uses), via `kilo db` — kilo's own sanctioned SQL-against-its-local-
-// database tool, and the only way to write a session's title at all
-// outside of `kilo run --title`, which only exists in --interactive
-// mode and can't run alongside /remote (see the design doc). This
-// writes straight to kilo's private, undocumented schema, and the
-// resulting sync back up to the cloud/app is equally undocumented —
-// confirmed working live, but only once the connected process's own
-// heartbeat pushed it, a few minutes after the write, not instantly.
-// Best-effort only, deliberately swallowing errors rather than
-// returning them: remote and seeding are the load-bearing parts of
-// this flow, and a cosmetic title must never be able to take either of
-// them down, especially given kilo could change this private schema
-// out from under agentmux at any point. Only ever called right after
-// seedKiloSession, on a session's true first creation — never on a
-// resume — so a title the user changes by hand in the app afterward is
-// never clobbered.
-func titleNewKiloSession(workdir, runUser string) {
-	id, err := waitForKiloSessionID(workdir, 10*time.Second)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "agentmux: not setting a kilo session title for %s: %v\n", workdir, err)
-		return
+	newSession := tmux("-L", socket, "new-session", "-d", "-s", "seed", "-c", workdir, runCmd)
+	newSession.Env = append(newSession.Env, env...)
+	if out, err := newSession.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("starting seed session: %w: %s", err, out)
 	}
-	title := provision.DisplayNameFor(runUser, workdir)
-	if err := setKiloSessionTitle(workdir, id, title); err != nil {
-		fmt.Fprintf(os.Stderr, "agentmux: not setting a kilo session title for %s: %v\n", workdir, err)
-	}
-}
 
-// waitForKiloSessionID polls latestKiloSessionID until it finds a
-// session for workdir or timeout elapses — seedKiloSession submits the
-// message and returns without waiting for kilo to finish registering
-// it, so the row isn't guaranteed to exist yet the instant it returns.
-func waitForKiloSessionID(workdir string, timeout time.Duration) (string, error) {
-	deadline := time.Now().Add(timeout)
+	// tmux new-session -d returns as soon as it forks, not once the pane
+	// is actually registered — checking has-session immediately can race
+	// that and see "not found" before the session ever existed, which
+	// looks identical to "already finished." Only treat its absence as
+	// completion once it's been observed alive at least once.
+	deadline := time.Now().Add(kiloSeedTimeout)
+	observedAlive := false
+	for {
+		alive := tmux("-L", socket, "has-session", "-t", "seed").Run() == nil
+		if alive {
+			observedAlive = true
+		} else if observedAlive {
+			break
+		}
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("timed out after %s waiting for the seed session to finish", kiloSeedTimeout)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	// The one-shot `kilo run` process exiting doesn't guarantee kilo's own
+	// session-list visibility has caught up yet (the same class of lag
+	// waitForKiloSessionID used to guard against for the old send-keys
+	// flow) — poll briefly rather than failing on the first empty check.
+	seedDeadline := time.Now().Add(10 * time.Second)
 	for {
 		id, err := latestKiloSessionID(workdir)
 		if err != nil {
@@ -303,28 +351,19 @@ func waitForKiloSessionID(workdir string, timeout time.Duration) (string, error)
 		if id != "" {
 			return id, nil
 		}
-		if time.Now().After(deadline) {
-			return "", fmt.Errorf("timed out after %s waiting for the seeded session to appear", timeout)
+		if time.Now().After(seedDeadline) {
+			return "", fmt.Errorf("kilo run exited but no session was found for %s after %s", workdir, 10*time.Second)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 }
 
-// setKiloSessionTitle writes title into kilo's local session table for
-// id via `kilo db`, which runs the given SQL directly with no
-// parameterization — id is always kilo's own generated ses_-prefixed
-// identifier, but title is built from a hostname/workdir basename, so
-// it's escaped defensively even though neither is attacker-controlled
-// in practice.
-func setKiloSessionTitle(workdir, id, title string) error {
-	escaped := strings.ReplaceAll(title, "'", "''")
-	query := fmt.Sprintf("UPDATE session SET title = '%s' WHERE id = '%s'", escaped, id)
-	cmd := withPath("kilo", "db", query)
-	cmd.Dir = workdir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("kilo db: %w: %s", err, out)
-	}
-	return nil
+// shellQuote wraps s in single quotes for safe use inside a shell command
+// string built by hand (tmux new-session's shell-command argument is
+// passed to the pane's shell, not exec'd as an argv array), escaping any
+// embedded single quotes.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
 // waitForPaneText polls session's pane content until it contains marker,
