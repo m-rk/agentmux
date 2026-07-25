@@ -89,7 +89,7 @@ func createAgentmux(opts Options) (string, error) {
 
 	name := opts.InstanceName
 	if name == "" {
-		name = defaultAgentmuxInstance
+		name = defaultInstanceName(opts.Agent, opts.Workdir)
 	}
 	if err := validateIdentifier("instance name", name); err != nil {
 		return "", err

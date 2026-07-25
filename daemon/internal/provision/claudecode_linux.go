@@ -62,7 +62,7 @@ const defaultOnCalendar = "*-*-* 03:00:00 Australia/Perth"
 func createClaudeCode(opts Options) (string, error) {
 	name := opts.InstanceName
 	if name == "" {
-		name = defaultClaudeCodeInstance
+		name = defaultInstanceName(opts.Agent, opts.Workdir)
 	}
 	if err := validateIdentifier("instance name", name); err != nil {
 		return "", err

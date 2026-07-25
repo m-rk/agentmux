@@ -39,6 +39,22 @@ func validateIdentifier(label, value string) error {
 	return nil
 }
 
+// defaultInstanceName computes the instance name used when -instance is
+// left blank: "<workdir-basename>-<agent>" when a workdir was given, so a
+// bare `agentmux new -y -agent=kilo -workdir=~/foo` produces "foo-kilo"
+// rather than every unnamed instance colliding on one fixed name. Falls
+// back to each agent's fixed default only when there's no workdir either
+// to derive a name from.
+func defaultInstanceName(agent, workdir string) string {
+	if workdir != "" {
+		return filepath.Base(workdir) + "-" + agent
+	}
+	if agent == "claude-code" {
+		return defaultClaudeCodeInstance
+	}
+	return defaultAgentmuxInstance
+}
+
 // Create dispatches to the right agent-specific provisioner, after
 // refusing to silently clobber an existing instance registered under a
 // different agent. The wizard form's instance-name field doesn't update
@@ -50,11 +66,7 @@ func validateIdentifier(label, value string) error {
 func Create(opts Options) (string, error) {
 	name := opts.InstanceName
 	if name == "" {
-		if opts.Agent == "claude-code" {
-			name = defaultClaudeCodeInstance
-		} else {
-			name = defaultAgentmuxInstance
-		}
+		name = defaultInstanceName(opts.Agent, opts.Workdir)
 	}
 	if err := guardAgentMismatch(name, opts.Agent); err != nil {
 		return "", err
