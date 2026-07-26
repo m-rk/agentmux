@@ -5,6 +5,7 @@ import (
 	"hash/fnv"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/m-rk/agentmux/daemon/internal/provision"
@@ -21,7 +22,21 @@ const (
 	// compactTimeout accommodates a large (hundreds-of-thousands-of-tokens)
 	// session taking a while to compact.
 	compactTimeout = 10 * time.Minute
+	// remoteControlIdleStable/-Timeout gate ensureClaudeRemoteControl's
+	// keystrokes behind a much shorter idle check than waitForPaneIdle's
+	// overnight-friendly defaults above: this runs on every periodic tick
+	// (every few minutes on macOS), so a busy pane just means "try again
+	// next tick" rather than something worth blocking on.
+	remoteControlIdleStable  = 5 * time.Second
+	remoteControlIdleTimeout = 15 * time.Second
 )
+
+// claudeRemoteIndicator is the footer text Claude Code shows only while
+// Remote Control is actually connected — confirmed live, not guessed from
+// bundle strings: a session started without --remote-control shows no such
+// text at all, and the "/remote-control" palette entry itself reads
+// "Disconnect Remote Control" while a session is connected.
+const claudeRemoteIndicator = "/rc"
 
 // compactOnUpdateEnabled reports whether the nightly update should compact
 // and always restart (true, the default — preserves behavior for any
@@ -64,7 +79,8 @@ func RunClaudeCode(name string) error {
 	}
 
 	if hasSession(socket, session) {
-		return nil
+		tmux := func(args ...string) *exec.Cmd { return withPath("tmux", args...) }
+		return ensureClaudeRemoteControl(tmux, socket, session)
 	}
 
 	claudeArgs := []string{"--remote-control", display}
@@ -102,6 +118,54 @@ func StopClaudeCode(name string) error {
 // RunClaudeCode directly, with no service manager involved.
 func UpdateClaudeCode(name string) error {
 	return updateClaudeCode(name)
+}
+
+// claudeRemoteConnected checks only the pane's last line, matching where
+// Claude Code renders the indicator (confirmed live). Checking the whole
+// pane is unsafe: a workdir path containing "rc" (e.g. a directory ending in
+// "-rc" or "/src") renders in the welcome box and false-positives a plain
+// substring search over the full capture.
+func claudeRemoteConnected(tmux func(args ...string) *exec.Cmd, socket, session string) bool {
+	out, err := tmux("-L", socket, "capture-pane", "-p", "-t", session).Output()
+	if err != nil {
+		return false
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) == 0 {
+		return false
+	}
+	return strings.Contains(lines[len(lines)-1], claudeRemoteIndicator)
+}
+
+// ensureClaudeRemoteControl works around Claude Code's own Remote Control
+// bug (anthropics/claude-code#31853): the server drops the websocket every
+// ~25 minutes and, after the third drop, gives up reconnecting for good with
+// no client-side recovery. The fix is a single idempotent slash command, so
+// it's cheap enough to run on every periodic `session run` tick rather than
+// waiting for the nightly update.
+func ensureClaudeRemoteControl(tmux func(args ...string) *exec.Cmd, socket, session string) error {
+	if claudeRemoteConnected(tmux, socket, session) {
+		return nil
+	}
+	// Never type into a pane mid-response; if it's busy, skip this tick and
+	// let the next one (a few minutes away) retry instead of blocking.
+	if err := waitForPaneIdle(tmux, socket, session, remoteControlIdleStable, remoteControlIdleTimeout); err != nil {
+		return nil
+	}
+	if claudeRemoteConnected(tmux, socket, session) {
+		return nil // reconnected on its own while we were checking idle
+	}
+	if err := tmux("-L", socket, "send-keys", "-t", session, "/remote-control", "Enter").Run(); err != nil {
+		return fmt.Errorf("sending /remote-control to %s: %w", session, err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if claudeRemoteConnected(tmux, socket, session) {
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("remote control still not connected in %s after toggling", session)
 }
 
 func hasSession(socket, session string) bool {
