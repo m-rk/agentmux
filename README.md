@@ -243,21 +243,26 @@ AGENTMUX_LIVE_OPENCODE=1 tests/smoke.sh
 
 ## Known limitations
 
-- **Kilo's remote relay allows only one connected CLI session per account.**
-  Running several `kilo` instances under the same account (this repo's own
-  multi-project setup does exactly that) means only the most recently
-  (re)connected one stays reachable from the mobile/web app — the previous
-  one gets a permanent WebSocket close (code `4409`, no auto-reconnect).
-  Confirmed in kilo's own client source, not documented anywhere in kilo's
-  docs: [`remote-ws.ts`](https://github.com/Kilo-Org/kilocode/blob/main/packages/opencode/src/kilo-sessions/remote-ws.ts)
-  treats `4401`/`4403`/`4409` as the only permanent (non-retrying) close
-  codes, and [`remote-ws.test.ts`](https://github.com/Kilo-Org/kilocode/blob/main/packages/opencode/test/kilocode/sessions/remote-ws.test.ts)
-  tests `4409` explicitly as a conflict code. `agentmux`'s own kilo
-  provisioning (`enableKiloRemote` in `daemon/internal/session/agentmux.go`)
-  avoids re-toggling a session that's already connected, but has no way to
-  work around the underlying per-account limit — with several kilo instances
-  on one account, only one is ever reachable from the app at a time, and
-  which one is essentially a race.
+- **Kilo's remote relay may allow only one connected CLI session per account
+  — unconfirmed in practice.** Kilo's own client source treats certain close
+  codes as permanent (non-retrying):
+  [`remote-ws.ts`](https://github.com/Kilo-Org/kilocode/blob/main/packages/opencode/src/kilo-sessions/remote-ws.ts)
+  lists `4401`/`4403`/`4409` as the only such codes, and
+  [`remote-ws.test.ts`](https://github.com/Kilo-Org/kilocode/blob/main/packages/opencode/test/kilocode/sessions/remote-ws.test.ts)
+  tests `4409` explicitly as a conflict code — which reads like a
+  one-connection-per-account cap. In practice this hasn't reproduced: on one
+  machine running 3+ `kilo` instances under the same account concurrently for
+  hours, none of the observed disconnects used those codes (only `1000`,
+  `4000`, `1006`), all of which auto-reconnected, and all instances stayed
+  simultaneously reachable. So either the server doesn't enforce the cap the
+  client code implies, it's gated on something narrower than "same account"
+  (e.g. a specific token/identity rather than the CLI instance), or it's real
+  but timing-dependent (e.g. triggered by near-simultaneous reconnects rather
+  than steady-state concurrent connections) and hasn't been hit yet.
+  `agentmux`'s own kilo provisioning (`enableKiloRemote` in
+  `daemon/internal/session/agentmux.go`) avoids re-toggling a session that's
+  already connected, which is a reasonable precaution regardless of whether
+  the underlying cap is real.
 
 ## Roadmap
 
