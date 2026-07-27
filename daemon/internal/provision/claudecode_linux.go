@@ -53,7 +53,40 @@ RandomizedDelaySec=120
 WantedBy=timers.target
 `
 
+const claudeCodeTickServiceTemplate = `[Unit]
+Description=Periodic health check for %[1]s / %[2]s
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=%[3]s
+ExecStart=%[4]s session run --instance %[1]s
+TimeoutStartSec=30
+`
+
+const claudeCodeTickTimerTemplate = `[Unit]
+Description=Periodic health check timer for %[1]s / %[2]s
+
+[Timer]
+OnUnitActiveSec=%[3]d
+OnBootSec=%[3]d
+
+[Install]
+WantedBy=timers.target
+`
+
 const defaultOnCalendar = "*-*-* 03:00:00 Australia/Perth"
+
+// defaultTickIntervalSecs matches the macOS LaunchAgent's own
+// defaultStartInterval: how often `session run --instance NAME` re-checks
+// that the tmux session is still up and (claude-code only) that Remote
+// Control is still connected — see ensureClaudeRemoteControl in
+// daemon/internal/session/claudecode.go. Linux's systemd unit only ever ran
+// this once at boot before, so a dead session or a dropped Remote Control
+// connection (anthropics/claude-code#31853) just sat broken until someone
+// noticed and restarted it by hand.
+const defaultTickIntervalSecs = 300
 
 // createClaudeCode is the native Go port of
 // backends/claude-code/install.sh's Linux path: validate, resolve
@@ -119,6 +152,8 @@ func createClaudeCode(opts Options) (string, error) {
 	serviceName := "agentmux-" + name + ".service"
 	updateServiceName := "agentmux-" + name + "-update.service"
 	timerName := "agentmux-" + name + "-update.timer"
+	tickServiceName := "agentmux-" + name + "-tick.service"
+	tickTimerName := "agentmux-" + name + "-tick.timer"
 
 	regPath, err := writeRegistry(name, []kv{
 		{"AGENTMUX_INSTANCE_NAME", name},
@@ -143,7 +178,7 @@ func createClaudeCode(opts Options) (string, error) {
 		self = resolved
 	}
 
-	if err := installClaudeCodeUnits(name, sessionName, runUser, self, serviceName, updateServiceName, timerName); err != nil {
+	if err := installClaudeCodeUnits(name, sessionName, runUser, self, serviceName, updateServiceName, timerName, tickServiceName, tickTimerName); err != nil {
 		return "", err
 	}
 
@@ -158,10 +193,12 @@ func claudeLoggedIn(runUser string) bool {
 	return claudeLoggedInVia(runas.Command(runUser, "claude", "auth", "status", "--json"))
 }
 
-func installClaudeCodeUnits(name, sessionName, runUser, binPath, serviceName, updateServiceName, timerName string) error {
+func installClaudeCodeUnits(name, sessionName, runUser, binPath, serviceName, updateServiceName, timerName, tickServiceName, tickTimerName string) error {
 	unit := fmt.Sprintf(claudeCodeUnitTemplate, name, sessionName, runUser, binPath)
 	updateUnit := fmt.Sprintf(claudeCodeUpdateUnitTemplate, name, sessionName, binPath)
 	timer := fmt.Sprintf(claudeCodeTimerTemplate, name, sessionName, defaultOnCalendar)
+	tickService := fmt.Sprintf(claudeCodeTickServiceTemplate, name, sessionName, runUser, binPath)
+	tickTimer := fmt.Sprintf(claudeCodeTickTimerTemplate, name, sessionName, defaultTickIntervalSecs)
 
 	if err := os.WriteFile("/etc/systemd/system/"+serviceName, []byte(unit), 0o644); err != nil {
 		return err
@@ -172,6 +209,12 @@ func installClaudeCodeUnits(name, sessionName, runUser, binPath, serviceName, up
 	if err := os.WriteFile("/etc/systemd/system/"+timerName, []byte(timer), 0o644); err != nil {
 		return err
 	}
+	if err := os.WriteFile("/etc/systemd/system/"+tickServiceName, []byte(tickService), 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile("/etc/systemd/system/"+tickTimerName, []byte(tickTimer), 0o644); err != nil {
+		return err
+	}
 
 	if err := runSystemctl("daemon-reload"); err != nil {
 		return err
@@ -180,6 +223,9 @@ func installClaudeCodeUnits(name, sessionName, runUser, binPath, serviceName, up
 		return err
 	}
 	if err := runSystemctl("enable", "--now", timerName); err != nil {
+		return err
+	}
+	if err := runSystemctl("enable", "--now", tickTimerName); err != nil {
 		return err
 	}
 	return nil
