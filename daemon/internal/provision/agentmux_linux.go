@@ -50,13 +50,36 @@ RandomizedDelaySec=120
 WantedBy=timers.target
 `
 
+const agentmuxTickServiceTemplate = `[Unit]
+Description=Periodic health check for agentmux instance %[1]s
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=%[2]s
+ExecStart=%[3]s session run --instance %[1]s
+TimeoutStartSec=30
+`
+
+const agentmuxTickTimerTemplate = `[Unit]
+Description=Periodic health check timer for agentmux instance %[1]s
+
+[Timer]
+OnUnitActiveSec=%[2]d
+OnBootSec=%[2]d
+
+[Install]
+WantedBy=timers.target
+`
+
 // createAgentmux is the native Go port of backends/agentmux/install.sh's
 // Linux path (the "zero"/"opencode" + ollama backend), mirroring
 // createClaudeCode's structure.
 func createAgentmux(opts Options) (string, error) {
 	name := opts.InstanceName
 	if name == "" {
-		name = defaultAgentmuxInstance
+		name = defaultInstanceName(opts.Agent, opts.Workdir)
 	}
 	if err := validateIdentifier("instance name", name); err != nil {
 		return "", err
@@ -117,6 +140,8 @@ func createAgentmux(opts Options) (string, error) {
 	serviceName := "agentmux-" + name + ".service"
 	updateServiceName := "agentmux-" + name + "-update.service"
 	timerName := "agentmux-" + name + "-update.timer"
+	tickServiceName := "agentmux-" + name + "-tick.service"
+	tickTimerName := "agentmux-" + name + "-tick.timer"
 
 	regPath, err := writeRegistry(name, []kv{
 		{"AGENTMUX_INSTANCE_NAME", name},
@@ -143,7 +168,7 @@ func createAgentmux(opts Options) (string, error) {
 		self = resolved
 	}
 
-	if err := installAgentmuxUnits(name, opts.Agent, provider, runUser, self, serviceName, updateServiceName, timerName); err != nil {
+	if err := installAgentmuxUnits(name, opts.Agent, provider, runUser, self, serviceName, updateServiceName, timerName, tickServiceName, tickTimerName); err != nil {
 		return "", err
 	}
 
@@ -169,10 +194,12 @@ func checkOllama() error {
 	return nil
 }
 
-func installAgentmuxUnits(name, agent, provider, runUser, binPath, serviceName, updateServiceName, timerName string) error {
+func installAgentmuxUnits(name, agent, provider, runUser, binPath, serviceName, updateServiceName, timerName, tickServiceName, tickTimerName string) error {
 	unit := fmt.Sprintf(agentmuxUnitTemplate, name, agent, provider, runUser, binPath)
 	updateUnit := fmt.Sprintf(agentmuxUpdateUnitTemplate, name, binPath)
 	timer := fmt.Sprintf(agentmuxTimerTemplate, name, defaultOnCalendar)
+	tickService := fmt.Sprintf(agentmuxTickServiceTemplate, name, runUser, binPath)
+	tickTimer := fmt.Sprintf(agentmuxTickTimerTemplate, name, defaultTickIntervalSecs)
 
 	if err := os.WriteFile("/etc/systemd/system/"+serviceName, []byte(unit), 0o644); err != nil {
 		return err
@@ -183,6 +210,12 @@ func installAgentmuxUnits(name, agent, provider, runUser, binPath, serviceName, 
 	if err := os.WriteFile("/etc/systemd/system/"+timerName, []byte(timer), 0o644); err != nil {
 		return err
 	}
+	if err := os.WriteFile("/etc/systemd/system/"+tickServiceName, []byte(tickService), 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile("/etc/systemd/system/"+tickTimerName, []byte(tickTimer), 0o644); err != nil {
+		return err
+	}
 	if err := runSystemctl("daemon-reload"); err != nil {
 		return err
 	}
@@ -190,6 +223,9 @@ func installAgentmuxUnits(name, agent, provider, runUser, binPath, serviceName, 
 		return err
 	}
 	if err := runSystemctl("enable", "--now", timerName); err != nil {
+		return err
+	}
+	if err := runSystemctl("enable", "--now", tickTimerName); err != nil {
 		return err
 	}
 	return nil

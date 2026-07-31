@@ -69,9 +69,10 @@ quit.
 ```
 
 Prompts for device (any host from `hosts.yaml`, or `local`), agent
-(`claude-code`, `zero`, or `opencode`), instance name, run-as user (Linux
-only — a macOS instance always runs as whoever ran the wizard), workdir,
-and provider/model (zero/opencode only). Calls the target device's daemon
+(`claude-code`, `zero`, `opencode`, or `kilo`), instance name, run-as user
+(Linux only — a macOS instance always runs as whoever ran the wizard),
+workdir, and provider/model (zero/opencode/kilo only). Calls the target
+device's daemon
 over the same connection the TUI uses — creating on a remote device just
 means picking it from the same list. If `claude-code` is selected and an
 explicit workdir was given, it looks up resumable sessions for that workdir

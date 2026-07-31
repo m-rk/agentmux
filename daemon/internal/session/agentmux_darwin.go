@@ -43,6 +43,8 @@ func updateAgent(agent string) error {
 		return withPath("zero", "update", "--check").Run()
 	case "opencode":
 		return withPath("opencode", "upgrade", "--method", "npm").Run()
+	case "kilo":
+		return withPath("kilo", "upgrade").Run()
 	default:
 		return fmt.Errorf("unsupported agent: %s", agent)
 	}

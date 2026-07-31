@@ -101,7 +101,7 @@ func Run(name string) error {
 	switch agent {
 	case "claude-code":
 		return RunClaudeCode(name)
-	case "zero", "opencode":
+	case "zero", "opencode", "kilo":
 		return RunAgentmux(name)
 	default:
 		return fmt.Errorf("unsupported agent %q for instance %q", agent, name)
@@ -116,7 +116,7 @@ func Update(name string) error {
 	switch agent {
 	case "claude-code":
 		return UpdateClaudeCode(name)
-	case "zero", "opencode":
+	case "zero", "opencode", "kilo":
 		return UpdateAgentmux(name)
 	default:
 		return fmt.Errorf("unsupported agent %q for instance %q", agent, name)
@@ -131,7 +131,7 @@ func Stop(name string) error {
 	switch agent {
 	case "claude-code":
 		return StopClaudeCode(name)
-	case "zero", "opencode":
+	case "zero", "opencode", "kilo":
 		return StopAgentmux(name)
 	default:
 		return fmt.Errorf("unsupported agent %q for instance %q", agent, name)

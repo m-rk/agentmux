@@ -9,6 +9,7 @@ Supported combinations today:
 |---|---|---|
 | `zero` | `ollama` | Writes `.zero/config.json` in the instance workdir. |
 | `opencode` | `ollama` | Writes `opencode.json` in the instance workdir. |
+| `kilo` | `ollama` | Writes `kilo.json` in the instance workdir (Kilo CLI is an opencode fork sharing its config schema). |
 
 The public shape is intentionally generic now, even while the provider matrix is
 small, so new provider adapters can be added without creating another
@@ -26,6 +27,7 @@ ollama signin
 
 npm install -g @gitlawb/zero      # for --agent zero
 npm install -g opencode-ai        # for --agent opencode
+npm install -g @kilocode/cli      # for --agent kilo
 ```
 
 On Linux, install Ollama with its systemd service and run `ollama signin` as

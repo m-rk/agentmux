@@ -130,20 +130,20 @@ func TestDisplayNameFor(t *testing.T) {
 
 	t.Run("single real user: no user prefix", func(t *testing.T) {
 		realUserCount = func() int { return 1 }
-		got := displayNameFor("testuser", "/home/testuser/.agentmux/probe")
+		got := DisplayNameFor("testuser", "/home/testuser/.agentmux/probe")
 		if !strings.HasSuffix(got, "🤹 probe") {
-			t.Errorf("displayNameFor = %q, want suffix %q", got, "🤹 probe")
+			t.Errorf("DisplayNameFor = %q, want suffix %q", got, "🤹 probe")
 		}
 		if strings.HasPrefix(got, "testuser:") {
-			t.Errorf("displayNameFor = %q, should not have a user prefix on a single-user machine", got)
+			t.Errorf("DisplayNameFor = %q, should not have a user prefix on a single-user machine", got)
 		}
 	})
 
 	t.Run("multiple real users: user prefix included", func(t *testing.T) {
 		realUserCount = func() int { return 2 }
-		got := displayNameFor("testuser", "/home/testuser/.agentmux/probe")
+		got := DisplayNameFor("testuser", "/home/testuser/.agentmux/probe")
 		if !strings.HasPrefix(got, "testuser:") {
-			t.Errorf("displayNameFor = %q, want prefix %q", got, "testuser:")
+			t.Errorf("DisplayNameFor = %q, want prefix %q", got, "testuser:")
 		}
 	})
 }
@@ -158,7 +158,7 @@ func TestProviderBaseURL(t *testing.T) {
 }
 
 func TestValidateSupportedAgentProvider(t *testing.T) {
-	valid := [][2]string{{"zero", "ollama"}, {"opencode", "ollama"}}
+	valid := [][2]string{{"zero", "ollama"}, {"opencode", "ollama"}, {"kilo", "ollama"}}
 	for _, v := range valid {
 		if err := validateSupportedAgentProvider(v[0], v[1]); err != nil {
 			t.Errorf("validateSupportedAgentProvider(%q, %q) = %v, want nil", v[0], v[1], err)
@@ -200,5 +200,57 @@ func write(t *testing.T, dir, name, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestIsCompactSummaryLine(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{"compact summary", `{"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}`, true},
+		{"explicit false", `{"type":"user","isCompactSummary":false}`, false},
+		{"field absent", `{"type":"assistant","message":{"role":"assistant"}}`, false},
+		{"empty line", ``, false},
+		{"malformed json", `{not json`, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isCompactSummaryLine([]byte(c.line)); got != c.want {
+				t.Errorf("isCompactSummaryLine(%q) = %v, want %v", c.line, got, c.want)
+			}
+		})
+	}
+}
+
+func TestLastLine(t *testing.T) {
+	dir := t.TempDir()
+
+	cases := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"multiple lines", "first\nsecond\nthird\n", "third"},
+		{"no trailing newline", "first\nsecond\nthird", "third"},
+		{"single line", "only\n", "only"},
+		{"empty file", "", ""},
+		{"large last line spans read window", strings.Repeat("a", 100) + "\n" + strings.Repeat("b", 200*1024), strings.Repeat("b", 200*1024)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(dir, c.name+".jsonl")
+			if err := os.WriteFile(path, []byte(c.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got, err := lastLine(path)
+			if err != nil {
+				t.Fatalf("lastLine: %v", err)
+			}
+			if string(got) != c.want {
+				t.Errorf("lastLine() = %d bytes, want %d bytes (mismatch)", len(got), len(c.want))
+			}
+		})
 	}
 }

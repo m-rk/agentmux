@@ -99,6 +99,19 @@ fi
 exit 0
 SH
 
+    cat > "$FAKE_BIN/kilo" <<'SH'
+#!/bin/bash
+if [ "${1:-}" = "--version" ]; then
+    printf 'kilo 0.0.0\n'
+    exit 0
+fi
+if [ "${1:-}" = "upgrade" ]; then
+    printf 'already current\n'
+    exit 0
+fi
+exit 0
+SH
+
     cat > "$FAKE_BIN/tmux" <<'SH'
 #!/bin/bash
 if [ "${1:-}" = "-L" ]; then
@@ -121,7 +134,7 @@ case "$1" in
 esac
 SH
 
-    chmod +x "$FAKE_BIN/ollama" "$FAKE_BIN/zero" "$FAKE_BIN/opencode" "$FAKE_BIN/tmux"
+    chmod +x "$FAKE_BIN/ollama" "$FAKE_BIN/zero" "$FAKE_BIN/opencode" "$FAKE_BIN/kilo" "$FAKE_BIN/tmux"
 }
 
 check_shell_syntax() {
@@ -201,6 +214,27 @@ check_opencode_config_rendering() {
     assert_file_contains "$tmux_log" "opencode" "opencode launch command"
 }
 
+check_kilo_config_rendering() {
+    local workdir="$TMP_ROOT/kilo-work"
+    local tmux_log="$TMP_ROOT/kilo-tmux.log"
+
+    AGENTMUX_TEST_TMUX_LOG="$tmux_log" \
+    HOME="$FAKE_HOME" \
+    PATH="$FAKE_BIN:$PATH" \
+    AGENTMUX_INSTANCE_NAME="test-kilo" \
+    AGENTMUX_AGENT="kilo" \
+    AGENTMUX_PROVIDER="ollama" \
+    AGENTMUX_MODEL="gpt-oss:20b-cloud" \
+    AGENTMUX_TMUX_SESSION_NAME="test-kilo" \
+    AGENTMUX_WORKDIR="$workdir" \
+    AGENTMUX_PROVIDER_WAIT_SECONDS=1 \
+        bash "$ROOT/backends/agentmux/rc-start.sh"
+
+    assert_file_contains "$workdir/kilo.json" '"model": "ollama/gpt-oss:20b-cloud"' "kilo config model"
+    assert_file_contains "$workdir/kilo.json" '"baseURL": "http://localhost:11434/v1"' "kilo config base URL"
+    assert_file_contains "$tmux_log" "kilo" "kilo launch command"
+}
+
 check_live_ollama() {
     if [ "${AGENTMUX_LIVE_OLLAMA:-0}" != "1" ]; then
         pass "live ollama smoke skipped"
@@ -270,5 +304,6 @@ check_shell_syntax
 check_plan_modes
 check_zero_config_rendering
 check_opencode_config_rendering
+check_kilo_config_rendering
 check_live_ollama
 check_live_opencode

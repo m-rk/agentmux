@@ -47,6 +47,8 @@ func updateAgent(runUser, agent string) error {
 		return runAs(runUser, "zero", "update", "--check").Run()
 	case "opencode":
 		return runAs(runUser, "opencode", "upgrade", "--method", "npm").Run()
+	case "kilo":
+		return runAs(runUser, "kilo", "upgrade").Run()
 	default:
 		return fmt.Errorf("unsupported agent: %s", agent)
 	}

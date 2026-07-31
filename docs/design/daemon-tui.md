@@ -55,7 +55,7 @@ Per instance it reports:
 
 Status heuristic (v1): idle-time based — no pane output change for N
 seconds means `idle`. True "waiting for input" detection is agent-CLI
-specific (each of zero/opencode/claude-code prompts differently) and is
+specific (each of zero/opencode/kilo/claude-code prompts differently) and is
 deferred; the idle heuristic is a reasonable proxy and can be special-cased
 per agent later without changing the wire protocol.
 
@@ -165,7 +165,7 @@ NAME` now, and the Go binary looks up its own config.
 `install-macos.sh`) and `internal/session` (native Go port of
 `rc-start.sh`/`rc-update.sh`) implement the full instance lifecycle with no
 bash in the loop, for every agent/platform combination this repo supports
-(`claude-code`, `zero`, `opencode` × Linux, macOS). Both packages split
+(`claude-code`, `zero`, `opencode`, `kilo` × Linux, macOS). Both packages split
 three ways per agent:
 
 - A shared file (`claudecode.go`, `agentmux.go`) for logic that's genuinely
@@ -248,6 +248,16 @@ wizard field) controls it per instance — `"off"` falls back to the old
 version-change-only restart, anything else (including unset, so every
 already-migrated instance keeps today's behavior) keeps compacting nightly.
 
+An instance that sat idle since its last nightly update has nothing new to
+compact — its transcript's last message is already the compact-boundary
+summary from that earlier run. Sending another `/compact` in that state is
+a pure no-op (Claude Code refuses it outright: "Not enough messages to
+compact."), which would otherwise burn the idle-wait/compact timeouts on a
+prompt that was never going anywhere. `LastMessageIsCompactSummary` checks
+the newest `~/.claude/projects` transcript's last line for
+`isCompactSummary:true` before sending `/compact` at all, so this case
+skips straight to resolving the resume ID.
+
 ### Renaming an instance
 
 `RenameInstance` updates an existing instance's tmux session name and/or
@@ -268,6 +278,161 @@ hand. `RenameInstance`/`Control`'s restart doesn't have this problem
 because the daemon process lives outside any instance's own tmux session
 tree, even when the instance being restarted is the one hosting whoever's
 driving the TUI.
+
+### Kilo Code's remote relay
+
+Claude Code's Remote Control (mobile/web app visibility into a running
+session) is a launch flag, `--remote-control <display>`, baked straight
+into the `claude` argv at session-create time. Kilo CLI (the
+`@kilocode/cli` npm package, an opencode fork) has no launch-flag
+equivalent for its own version of the same feature — the only way to turn
+it on is the in-TUI `/remote` slash command. So `RunAgentmux` drives it the
+same way the nightly compact does for claude-code: after starting a brand
+new kilo session (never on the idempotent no-op path), it types `/remote`
+into the running pane and confirms it.
+
+Two timing traps showed up doing this against a real kilo process, both
+found by testing against actual provisioned instances rather than a fake
+binary:
+
+- **Idle-stability detection is the wrong readiness signal for a cold
+  boot.** The nightly-compact code already waits for a pane to stop
+  changing before typing into it, but that assumes the pane is already
+  showing real content. A tmux pane that exists but hasn't been painted to
+  yet (node/kilo still starting, fetching its model list, indexing the
+  workspace) is *also* unchanging — idle-stability can't tell "settled"
+  apart from "hasn't started yet," so it fired on a not-yet-interactive
+  pane and the keystrokes went nowhere. Fixed by polling for a
+  known-only-once-ready piece of text (`kiloReadyMarker`) instead of
+  content stability. That marker started as the empty-input placeholder
+  ("Ask anything"), but that text turned out to be absent whenever a
+  session is resumed with existing history (see the fourth issue below) —
+  switched to the footer command-hint bar ("ctrl+p commands"), confirmed
+  present at the same instant as the placeholder on a fresh boot, but
+  also present on a resumed one where the placeholder isn't.
+- **The command palette's fuzzy filter updates asynchronously.** Typing
+  `/remote` and pressing Enter in the same `tmux send-keys` call raced the
+  palette's own filter/selection update: Enter could arrive before
+  `/remote` was actually the selected item, leaving the palette open with
+  the text typed but nothing chosen. Fixed by sending the text and Enter
+  as two separate `send-keys` calls with a short pause between them.
+
+A third issue only showed up once the first two kilo instances sat idle
+for a while: neither appeared in the Kilo mobile app, despite `/remote`
+having connected successfully (confirmed via an active TLS connection to
+`ingest.kilosessions.ai` at the OS level). `kilo session list` explained
+why — a session doesn't exist as an entity at all, remote-visible or
+otherwise, until its first message is sent; enabling `/remote` alone just
+opens the relay channel; it doesn't register anything for the app to
+show. That's a real gap for agentmux's actual use case: a remote-only
+user has no terminal to type that first message from. So `RunAgentmux`
+sends one more thing after `/remote` — `kiloSeedMessage`, a fixed,
+low-cost "just checking in, no action needed" message — via the same
+send-text-then-Enter-as-two-calls pattern, purely to make the session
+exist. It doesn't wait for a reply; submitting is what creates the
+session record, not the model actually answering it.
+
+A fourth issue only showed up after a live instance survived a nightly
+`kilo upgrade` restart: unlike Claude Code's `--resume`, launching plain
+`kilo` always starts a brand new conversation — there's no notion of "the
+session that was running before this restart." Since `RunAgentmux`
+recreates the tmux session (and therefore relaunches `kilo`) any time it
+isn't already running — which a version-triggered restart guarantees —
+every such restart was quietly abandoning the previous kilo session and
+running the seed-message step again, creating a fresh, separately-numbered
+session each time. Confirmed live: a single instance that had only been
+restarted once by the nightly timer already had two session rows for the
+same directory, one of them dead the moment it was created. Left alone,
+that's an unbounded number of "Agentmux startup check-in" rows piling up
+in the mobile app forever, one per restart, with no way to tell them
+apart. Kilo does support resuming, just not automatically: `kilo --session
+<id>` (or `-s`) continues an existing session in place — same id, full
+history replayed, confirmed via `kilo db` that no new row appears. So
+`RunAgentmux` now looks up the most recently updated session already
+recorded for the workdir (`latestKiloSessionID`) before deciding how to
+launch: found one → `kilo --session <id>`, skip the seed step entirely;
+found none → plain `kilo`, seed as before. `kilo session list`'s own
+default scoping isn't reliable for this lookup — directories without a
+distinct git identity all fall into a shared "global" project bucket and
+list *each other's* sessions together — so results are filtered by the
+`directory` field client-side rather than trusted by scope. Two more kilo
+quirks fell out of building this: `kilo session list --all --format json`
+crashes outright (`undefined is not an object (evaluating
+'J.time.updated')`) when combined with a directory that has no sessions of
+its own yet, so `--all` is deliberately not used; and a directory with
+zero sessions prints nothing at all on stdout, not `[]`, so empty output
+has to be treated as "no sessions" rather than a JSON parse error.
+
+### Setting a kilo session's display name
+
+Claude Code's Remote Control display name and kilo's session title are
+conceptually the same thing — a human-readable label distinguishing one
+instance from another across hosts, in the same "&lt;user&gt;:&lt;host&gt;
+🤹 &lt;workdir-basename&gt;" format (`provision.DisplayNameFor`) — but kilo
+has no way to set one while `/remote` is active. `kilo run --title` only
+exists in `kilo run --interactive` (split-footer) mode, and that mode has
+no `/remote` support at all; the two are mutually exclusive in this kilo
+version. Filing that gap upstream was considered and explicitly declined
+(remote matters more right now).
+
+The workaround is `kilo db` — kilo's own sanctioned tool for running SQL
+against its local SQLite database — writing directly to the session
+table's `title` column. Confirmed working end-to-end against a live,
+already-remote-connected production session: the local write took effect
+immediately, and the new title did eventually appear in the mobile app,
+but only after a multi-minute delay and only for a *live* session (an
+identical write against a dead/abandoned session, tested for comparison,
+never synced at all). This points to the sync being driven by the
+connected kilo process's own periodic heartbeat, not any kind of
+immediate or global push — there's no way to force it, and the delay is a
+real, undocumented characteristic of this mechanism, not a bug in
+agentmux's implementation of it. `time_updated` also doesn't reliably
+reflect whether a sync happened.
+
+Given that, `titleNewKiloSession` treats the title as a nice-to-have, not
+a core feature: it's called once, right after `seedKiloSession` creates a
+session for the first time (never on a `--session <id>` resume, so a
+title the user changes by hand afterward is never clobbered), and every
+failure is logged to stderr and swallowed rather than propagated —
+`RunAgentmux` must never fail just because a cosmetic, privately-reverse-
+engineered write against kilo's own undocumented schema didn't go
+through. `waitForKiloSessionID` polls for up to 10s first, since
+`seedKiloSession` returns as soon as the message is submitted, without
+waiting for kilo to actually register the resulting session row.
+
+### Local kilo env overlay
+
+kilo already merges a personal global config (`~/.config/kilo/`) into
+every project automatically, so extending kilo with an extra
+provider — a private/paid gateway, a different model catalog, whatever —
+needs no agentmux involvement at all; that's just kilo's own config
+system, and belongs entirely in the user's own global config, never in
+this repo.
+
+The one gap agentmux does need to close: kilo flatly refuses any
+`"{env:VAR}"` reference inside *project*-level config
+(`kilo.json`) — "environment references are not allowed in project
+config", confirmed via `kilo config check` — while allowing it fine in
+the global config an interactive terminal session would already have the
+right environment for, via its normal shell profile. agentmux's
+tmux-launched kilo processes are non-interactive and don't source a
+shell profile, so without help, a provider needing an API key via
+`{env:VAR}` in the global config would work from a terminal but silently
+resolve to nothing inside every agentmux-managed instance.
+
+`readKiloExtraEnv` reads an optional, never-committed dotenv-style file
+at `~/.config/agentmux/kilo-env` (`NAME=VALUE` per line, optional
+leading `export `, `#` comments and blank lines skipped — deliberately
+carrying no opinion about what's in it) and `RunAgentmux` appends its
+entries to `Cmd.Env` on the `tmux new-session` call that starts a
+socket's server (only runs when no server/session exists yet, see the
+`hasSession` check earlier in `RunAgentmux`) — every pane subsequently
+opened under that socket, including a later `--session <id>` resume,
+inherits it from the server. Deliberately not a `tmux -e`/`setenv` CLI
+argument: those land in `/proc/<pid>/cmdline`, which is world-readable,
+unlike `/proc/<pid>/environ`. A missing file is not an error, just
+"nothing to add" — most boxes won't have one, and behavior is unchanged
+from before this mechanism existed.
 
 ## Repo layout
 

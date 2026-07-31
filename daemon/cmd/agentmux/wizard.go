@@ -32,9 +32,9 @@ func runWizard(args []string) {
 	nonInteractive := fs.Bool("y", false, "skip the interactive form; create directly from the flags below")
 	host := fs.String("host", "local", "device to create the instance on (a name from hosts.yaml, or \"local\"); -y only")
 	instance := fs.String("instance", "", "instance name; -y only")
-	agent := fs.String("agent", "", "claude-code | zero | opencode; -y only")
-	provider := fs.String("provider", "", "zero/opencode only; -y only")
-	model := fs.String("model", "", "zero/opencode only; -y only")
+	agent := fs.String("agent", "", "claude-code | zero | opencode | kilo; -y only")
+	provider := fs.String("provider", "", "zero/opencode/kilo only; -y only")
+	model := fs.String("model", "", "zero/opencode/kilo only; -y only")
 	workdir := fs.String("workdir", "", "blank = provisioner default; -y only")
 	runUser := fs.String("run-user", "", "Linux only, required there; -y only")
 	resume := fs.String("resume", "", "claude-code only, a session ID; -y only")
@@ -104,9 +104,9 @@ func newInstanceCmd(p *tea.Program, clients map[string]*tuiclient.Client) tea.Cm
 
 // runWizardForm prompts for device/agent/instance details, then calls
 // CreateInstance on the chosen host's client. claude-code (Linux only so
-// far) and zero/opencode (also Linux only so far) are selectable; macOS
-// provisioning isn't implemented yet and CreateInstance will report that
-// clearly rather than doing something wrong.
+// far) and zero/opencode/kilo (also Linux only so far) are selectable;
+// macOS provisioning isn't implemented yet and CreateInstance will report
+// that clearly rather than doing something wrong.
 func runWizardForm(clients map[string]*tuiclient.Client) error {
 	hostNames := make([]string, 0, len(clients))
 	for name := range clients {
@@ -144,6 +144,7 @@ func runWizardForm(clients map[string]*tuiclient.Client) error {
 					huh.NewOption("claude-code", "claude-code"),
 					huh.NewOption("zero", "zero"),
 					huh.NewOption("opencode", "opencode"),
+					huh.NewOption("kilo", "kilo"),
 				).
 				Value(&agent),
 		),
@@ -151,8 +152,8 @@ func runWizardForm(clients map[string]*tuiclient.Client) error {
 			huh.NewInput().Title("Instance name").Value(&instance),
 			huh.NewInput().Title("Run as user").Description("required; the device's OS username to run the session as").Value(&runUser),
 			huh.NewInput().Title("Workdir").Description("blank = provisioner default").Value(&workdir),
-			huh.NewInput().Title("Provider").Description("zero/opencode only; blank = ollama").Value(&provider),
-			huh.NewInput().Title("Model").Description("zero/opencode only; blank = provisioner default").Value(&model),
+			huh.NewInput().Title("Provider").Description("zero/opencode/kilo only; blank = ollama").Value(&provider),
+			huh.NewInput().Title("Model").Description("zero/opencode/kilo only; blank = provisioner default").Value(&model),
 			huh.NewSelect[string]().Title("Compact before nightly resume?").
 				Description("claude-code only; prevents Claude Code's own huge-session resume prompt by compacting and restarting every night, not just on a version change").
 				Options(

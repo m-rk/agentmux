@@ -5,6 +5,7 @@ import (
 	"hash/fnv"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/m-rk/agentmux/daemon/internal/provision"
@@ -21,7 +22,21 @@ const (
 	// compactTimeout accommodates a large (hundreds-of-thousands-of-tokens)
 	// session taking a while to compact.
 	compactTimeout = 10 * time.Minute
+	// remoteControlIdleStable/-Timeout gate ensureClaudeRemoteControl's
+	// keystrokes behind a much shorter idle check than waitForPaneIdle's
+	// overnight-friendly defaults above: this runs on every periodic tick
+	// (every few minutes on macOS), so a busy pane just means "try again
+	// next tick" rather than something worth blocking on.
+	remoteControlIdleStable  = 5 * time.Second
+	remoteControlIdleTimeout = 15 * time.Second
 )
+
+// claudeRemoteIndicator is the footer text Claude Code shows only while
+// Remote Control is actually connected — confirmed live, not guessed from
+// bundle strings: a session started without --remote-control shows no such
+// text at all, and the "/remote-control" palette entry itself reads
+// "Disconnect Remote Control" while a session is connected.
+const claudeRemoteIndicator = "/rc"
 
 // compactOnUpdateEnabled reports whether the nightly update should compact
 // and always restart (true, the default — preserves behavior for any
@@ -64,7 +79,8 @@ func RunClaudeCode(name string) error {
 	}
 
 	if hasSession(socket, session) {
-		return nil
+		tmux := func(args ...string) *exec.Cmd { return withPath("tmux", args...) }
+		return ensureClaudeRemoteControl(tmux, socket, session)
 	}
 
 	claudeArgs := []string{"--remote-control", display}
@@ -104,6 +120,54 @@ func UpdateClaudeCode(name string) error {
 	return updateClaudeCode(name)
 }
 
+// claudeRemoteConnected checks only the pane's last line, matching where
+// Claude Code renders the indicator (confirmed live). Checking the whole
+// pane is unsafe: a workdir path containing "rc" (e.g. a directory ending in
+// "-rc" or "/src") renders in the welcome box and false-positives a plain
+// substring search over the full capture.
+func claudeRemoteConnected(tmux func(args ...string) *exec.Cmd, socket, session string) bool {
+	out, err := tmux("-L", socket, "capture-pane", "-p", "-t", session).Output()
+	if err != nil {
+		return false
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) == 0 {
+		return false
+	}
+	return strings.Contains(lines[len(lines)-1], claudeRemoteIndicator)
+}
+
+// ensureClaudeRemoteControl works around Claude Code's own Remote Control
+// bug (anthropics/claude-code#31853): the server drops the websocket every
+// ~25 minutes and, after the third drop, gives up reconnecting for good with
+// no client-side recovery. The fix is a single idempotent slash command, so
+// it's cheap enough to run on every periodic `session run` tick rather than
+// waiting for the nightly update.
+func ensureClaudeRemoteControl(tmux func(args ...string) *exec.Cmd, socket, session string) error {
+	if claudeRemoteConnected(tmux, socket, session) {
+		return nil
+	}
+	// Never type into a pane mid-response; if it's busy, skip this tick and
+	// let the next one (a few minutes away) retry instead of blocking.
+	if err := waitForPaneIdle(tmux, socket, session, remoteControlIdleStable, remoteControlIdleTimeout); err != nil {
+		return nil
+	}
+	if claudeRemoteConnected(tmux, socket, session) {
+		return nil // reconnected on its own while we were checking idle
+	}
+	if err := tmux("-L", socket, "send-keys", "-t", session, "/remote-control", "Enter").Run(); err != nil {
+		return fmt.Errorf("sending /remote-control to %s: %w", session, err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if claudeRemoteConnected(tmux, socket, session) {
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("remote control still not connected in %s after toggling", session)
+}
+
 func hasSession(socket, session string) bool {
 	return withPath("tmux", "-L", socket, "has-session", "-t", session).Run() == nil
 }
@@ -112,37 +176,53 @@ func hasSessionAs(runUser, socket, session string) bool {
 	return runAs(runUser, "tmux", "-L", socket, "has-session", "-t", session).Run() == nil
 }
 
-// compactAndResolveResume compacts the live session (if one is running) via
-// tmux send-keys, waiting for it to go idle first (so /compact doesn't land
-// mid-response) and again afterward (so we don't restart before compaction
-// finishes), then figures out which session ID a subsequent restart should
-// --resume: the most recently modified session file for the instance's
-// workdir (the same ~/.claude/projects scan ListResumableSessions uses),
-// preferred over the registry's own AGENTMUX_RESUME field, which is only
-// ever set once — at creation time, and only if the wizard's resume picker
-// was used, so it's empty for most instances. Whatever's found gets
-// persisted back into the registry, so the next restart doesn't need to
-// look it up again.
+// compactAndResolveResume compacts the live session (if one is running and
+// isn't already sitting on a compact boundary from a previous update — see
+// below) via tmux send-keys, waiting for it to go idle first (so /compact
+// doesn't land mid-response) and again afterward (so we don't restart
+// before compaction finishes), then figures out which session ID a
+// subsequent restart should --resume: the most recently modified session
+// file for the instance's workdir (the same ~/.claude/projects scan
+// ListResumableSessions uses), preferred over the registry's own
+// AGENTMUX_RESUME field, which is only ever set once — at creation time,
+// and only if the wizard's resume picker was used, so it's empty for most
+// instances. Whatever's found gets persisted back into the registry, so
+// the next restart doesn't need to look it up again.
 //
 // This is what keeps a long-lived session small enough that a later
 // --resume never hits Claude Code's own "this session is huge, are you
 // sure?" interactive prompt — which would otherwise leave the instance
 // stuck waiting for input no one's there to give.
 //
+// If nothing happened in the session since the last time it was compacted
+// (the common case for an instance that sat idle overnight-to-overnight),
+// its transcript's last message is already the compact-boundary summary
+// from that earlier run, and sending another /compact would be a pure
+// no-op — Claude Code refuses it outright ("Not enough messages to
+// compact."), which would otherwise burn idleWaitTimeout/compactTimeout
+// waiting on a prompt that was never going anywhere. So that case skips
+// straight to resolving the resume ID.
+//
 // tmux is the caller's own tmux-command builder, already carrying the
 // right privilege-drop/PATH setup for its context (root-context Linux
 // update vs. current-user-context macOS update).
 func compactAndResolveResume(tmux func(args ...string) *exec.Cmd, name, workdir, runUser, socket, session string) (string, error) {
 	if tmux("-L", socket, "has-session", "-t", session).Run() == nil {
-		if err := waitForPaneIdle(tmux, socket, session, idleStableWindow, idleWaitTimeout); err != nil {
-			return "", fmt.Errorf("waiting for %s to go idle before compacting: %w", session, err)
+		alreadyCompacted, err := provision.LastMessageIsCompactSummary(workdir, runUser)
+		if err != nil {
+			return "", fmt.Errorf("checking whether %s is already compacted: %w", session, err)
 		}
-		if err := tmux("-L", socket, "send-keys", "-t", session, "/compact", "Enter").Run(); err != nil {
-			return "", fmt.Errorf("sending /compact to %s: %w", session, err)
-		}
-		time.Sleep(3 * time.Second) // let compaction visibly start before polling for idle again
-		if err := waitForPaneIdle(tmux, socket, session, idleStableWindow, compactTimeout); err != nil {
-			return "", fmt.Errorf("waiting for %s to finish compacting: %w", session, err)
+		if !alreadyCompacted {
+			if err := waitForPaneIdle(tmux, socket, session, idleStableWindow, idleWaitTimeout); err != nil {
+				return "", fmt.Errorf("waiting for %s to go idle before compacting: %w", session, err)
+			}
+			if err := tmux("-L", socket, "send-keys", "-t", session, "/compact", "Enter").Run(); err != nil {
+				return "", fmt.Errorf("sending /compact to %s: %w", session, err)
+			}
+			time.Sleep(3 * time.Second) // let compaction visibly start before polling for idle again
+			if err := waitForPaneIdle(tmux, socket, session, idleStableWindow, compactTimeout); err != nil {
+				return "", fmt.Errorf("waiting for %s to finish compacting: %w", session, err)
+			}
 		}
 	}
 

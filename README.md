@@ -76,7 +76,7 @@ scripts below provide the equivalent host-supervisor setup directly.
 
 | Installer | Agent CLIs | Provider configuration | Linux | macOS |
 |---|---|---|---|---|
-| [`backends/agentmux`](backends/agentmux) | `zero`, `opencode` | Ollama | systemd | LaunchAgents |
+| [`backends/agentmux`](backends/agentmux) | `zero`, `opencode`, `kilo` | Ollama | systemd | LaunchAgents |
 | [`backends/claude-code`](backends/claude-code) | Claude Code | Managed by Claude Code | systemd | LaunchAgents |
 
 `backends/agentmux` is the more general of the two: one named instance
@@ -240,6 +240,29 @@ To include a real Ollama + opencode generation smoke:
 ```sh
 AGENTMUX_LIVE_OPENCODE=1 tests/smoke.sh
 ```
+
+## Known limitations
+
+- **Kilo's remote relay may allow only one connected CLI session per account
+  — unconfirmed in practice.** Kilo's own client source treats certain close
+  codes as permanent (non-retrying):
+  [`remote-ws.ts`](https://github.com/Kilo-Org/kilocode/blob/main/packages/opencode/src/kilo-sessions/remote-ws.ts)
+  lists `4401`/`4403`/`4409` as the only such codes, and
+  [`remote-ws.test.ts`](https://github.com/Kilo-Org/kilocode/blob/main/packages/opencode/test/kilocode/sessions/remote-ws.test.ts)
+  tests `4409` explicitly as a conflict code — which reads like a
+  one-connection-per-account cap. In practice this hasn't reproduced: on one
+  machine running 3+ `kilo` instances under the same account concurrently for
+  hours, none of the observed disconnects used those codes (only `1000`,
+  `4000`, `1006`), all of which auto-reconnected, and all instances stayed
+  simultaneously reachable. So either the server doesn't enforce the cap the
+  client code implies, it's gated on something narrower than "same account"
+  (e.g. a specific token/identity rather than the CLI instance), or it's real
+  but timing-dependent (e.g. triggered by near-simultaneous reconnects rather
+  than steady-state concurrent connections) and hasn't been hit yet.
+  `agentmux`'s own kilo provisioning (`enableKiloRemote` in
+  `daemon/internal/session/agentmux.go`) avoids re-toggling a session that's
+  already connected, which is a reasonable precaution regardless of whether
+  the underlying cap is real.
 
 ## Roadmap
 

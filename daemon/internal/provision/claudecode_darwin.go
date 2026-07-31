@@ -100,7 +100,7 @@ func createClaudeCode(opts Options) (string, error) {
 
 	name := opts.InstanceName
 	if name == "" {
-		name = defaultClaudeCodeInstance
+		name = defaultInstanceName(opts.Agent, opts.Workdir)
 	}
 	if err := validateIdentifier("instance name", name); err != nil {
 		return "", err
@@ -130,7 +130,7 @@ func createClaudeCode(opts Options) (string, error) {
 	}
 
 	claudeJSON := claudeJSONPath(u.HomeDir)
-	displayName := displayNameFor(u.Username, workdir)
+	displayName := DisplayNameFor(u.Username, workdir)
 
 	if !claudeLoggedIn() {
 		return "", fmt.Errorf("Claude Code does not appear to be logged in; run 'claude' once to log in, then retry")
