@@ -27,6 +27,10 @@ func main() {
 		runResumeListCmd(args[1:])
 	case "session":
 		runSessionCmd(args[1:])
+	case "list":
+		runListCmd(args[1:])
+	case "control":
+		runControlCmd(args[1:])
 	case "-h", "--help", "help":
 		printUsage()
 	default:
@@ -49,5 +53,7 @@ Usage:
   agentmux new -y ...          create an instance non-interactively (see -h)
   agentmux rename ...          rename an instance's tmux session/display name
   agentmux resume-list ...     list resumable Claude Code sessions for a workdir
+  agentmux list                headless instance status (name/agent/model/status/workdir); add -json for scripts
+  agentmux control ...         start/stop/restart an instance without an attached terminal
   agentmux help                show this message`)
 }

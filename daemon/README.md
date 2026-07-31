@@ -84,12 +84,14 @@ refused rather than silently overwritten — this also catches the case of
 an instance installed by the older `backends/*/install.sh` scripts, which
 predate the registry file this wizard reads/writes.
 
-### Scripting: non-interactive create, rename, and resume lookup
+### Scripting: non-interactive create, rename, resume lookup, status, and control
 
 ```sh
 ./agentmux new -y -instance myinstance -agent claude-code -run-user ubuntu
 ./agentmux rename -instance myinstance -tmux-name renamed -display-name "new name"
 ./agentmux resume-list -workdir /path/to/project -run-user ubuntu
+./agentmux list -json
+./agentmux control -instance myinstance -action restart
 ```
 
 `new -y` skips the interactive form and creates directly from flags — same
@@ -98,8 +100,15 @@ the CLI counterpart to the TUI's `R` keybinding: a tmux session rename
 applies live, a display name change (claude-code only) restarts the
 session. `resume-list` is the standalone form of the wizard's resume
 picker, useful for checking what's resumable before deciding what (if
-anything) to pass to `new -y -resume`. All three take `-host` (default
-`local`) to target any device from `hosts.yaml`.
+anything) to pass to `new -y -resume`. `list` is the headless counterpart
+to the TUI's instance table (name/agent/model/status/workdir); `-json`
+gives a stable, scriptable shape, and `-host all` (the default) merges
+every device from `hosts.yaml` into one list. `control` is the CLI
+counterpart to the TUI's start/stop/restart keybindings — drive the same
+action without attaching a terminal, e.g. after editing an instance's
+`AGENTMUX_MODEL` and needing the running session to actually pick it up.
+All five take `-host` (default `local`, or `all` for `list`) to target any
+device from `hosts.yaml`.
 
 ## Multiple hosts over Tailscale
 
