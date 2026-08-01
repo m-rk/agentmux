@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/huh"
 
 	"github.com/m-rk/agentmux/daemon/internal/daemoninstall"
+	"github.com/m-rk/agentmux/daemon/internal/discordnotify"
 	"github.com/m-rk/agentmux/daemon/internal/hostsconfig"
 	"github.com/m-rk/agentmux/daemon/internal/pb"
 	"github.com/m-rk/agentmux/daemon/internal/tuiclient"
@@ -136,7 +137,7 @@ func runWizardForm(clients map[string]*tuiclient.Client) error {
 		runUser = u.Username
 	}
 
-	form := huh.NewForm(
+	groups := []*huh.Group{
 		huh.NewGroup(
 			huh.NewSelect[string]().Title("Device").Options(hostOptions...).Value(&host),
 			huh.NewSelect[string]().Title("Agent").
@@ -162,9 +163,30 @@ func runWizardForm(clients map[string]*tuiclient.Client) error {
 				).
 				Value(&compactOnUpdate),
 		),
-	)
+	}
+
+	// Optional onboarding step: only offered if Discord notifications
+	// aren't already configured, so returning wizard users creating a
+	// second/third instance aren't asked again every time.
+	setupDiscord := false
+	if discordCfg, err := discordnotify.Load(discordnotify.DefaultPath()); err == nil && discordCfg.WebhookURL == "" {
+		groups = append(groups, huh.NewGroup(
+			huh.NewConfirm().
+				Title("Set up Discord notifications?").
+				Description("Optional — lets agentmux message you proactively (e.g. a Claude Code refresh token about to expire). Can also be done later with 'agentmux notify discord setup'.").
+				Value(&setupDiscord),
+		))
+	}
+
+	form := huh.NewForm(groups...)
 	if err := form.Run(); err != nil {
 		return err
+	}
+
+	if setupDiscord {
+		if _, err := runDiscordSetupForm(); err != nil {
+			fmt.Printf("warning: Discord setup failed, continuing without it: %v\n", err)
+		}
 	}
 
 	client, ok := clients[host]

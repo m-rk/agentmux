@@ -50,11 +50,15 @@ sudo ./agentmux daemon install   # Linux: installs a systemd unit
   unattended session never gets stuck behind Claude Code's own "resume from
   a huge session summary?" prompt.
 - **Proactive Discord notifications** — `agentmux notify discord setup`
-  configures a Discord webhook; every periodic tick (every 5 min) then checks
-  each Claude Code instance's OAuth token expiry (Linux only for now — see
+  (also offered as an optional step in the `agentmux new` wizard, and
+  non-interactively via `-y -webhook-url`) configures a Discord webhook;
+  every periodic tick (every 5 min) then checks each Claude Code instance's
+  OAuth token expiry (Linux only for now — see
   [Known limitations](#known-limitations)) and posts a warning ~48h before
   the refresh token expires, and again the moment it actually does, so you
-  find out before a session silently stops working instead of after.
+  find out before a session silently stops working instead of after. The TUI
+  flags an unconfigured webhook in purple with a `D` key to set one up on the
+  spot.
 
 See [`daemon/README.md`](daemon/README.md) to build and run it, and
 [`docs/design/daemon-tui.md`](docs/design/daemon-tui.md) for the full design.
