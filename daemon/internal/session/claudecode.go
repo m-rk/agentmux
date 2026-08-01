@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/m-rk/agentmux/daemon/internal/discordnotify"
 	"github.com/m-rk/agentmux/daemon/internal/provision"
 )
 
@@ -29,6 +30,11 @@ const (
 	// next tick" rather than something worth blocking on.
 	remoteControlIdleStable  = 5 * time.Second
 	remoteControlIdleTimeout = 15 * time.Second
+	// authExpiryWarnWindow is how far ahead of a refresh-token expiry
+	// ensureClaudeAuthNotified fires its "expiring soon" warning — long
+	// enough that the user has a real chance to re-authenticate (run
+	// `claude` once) before the session actually breaks.
+	authExpiryWarnWindow = 48 * time.Hour
 )
 
 // claudeRemoteIndicator is the footer text Claude Code shows only while
@@ -80,6 +86,7 @@ func RunClaudeCode(name string) error {
 
 	if hasSession(socket, session) {
 		tmux := func(args ...string) *exec.Cmd { return withPath("tmux", args...) }
+		ensureClaudeAuthNotified(name, fields["AGENTMUX_RUN_USER"], display)
 		return ensureClaudeRemoteControl(tmux, socket, session)
 	}
 
@@ -166,6 +173,66 @@ func ensureClaudeRemoteControl(tmux func(args ...string) *exec.Cmd, socket, sess
 		time.Sleep(500 * time.Millisecond)
 	}
 	return fmt.Errorf("remote control still not connected in %s after toggling", session)
+}
+
+// ensureClaudeAuthNotified checks name's Claude Code OAuth token expiry
+// (Linux only today — see provision.CheckTokenExpiry's doc comment on the
+// macOS gap) and sends a Discord notification the first time it crosses
+// into "expiring soon" or "already expired," debounced via two registry
+// fields so a 5-minute tick doesn't resend the same notification forever.
+// Never returns an error: a broken Discord webhook or an unsupported
+// platform shouldn't stop RunClaudeCode's own tmux/remote-control self-heal,
+// so problems here are logged, not propagated.
+func ensureClaudeAuthNotified(name, runUser, displayName string) {
+	status, err := provision.CheckTokenExpiry("claude-code", runUser)
+	if err != nil {
+		fmt.Printf("warning: checking token expiry for %s: %v\n", name, err)
+		return
+	}
+	if !status.Supported {
+		return
+	}
+
+	fields, err := registry(name)
+	if err != nil {
+		fmt.Printf("warning: re-reading registry for %s: %v\n", name, err)
+		return
+	}
+
+	now := time.Now()
+	expired := !status.RefreshExpiresAt.IsZero() && now.After(status.RefreshExpiresAt)
+	expiringSoon := !expired && !status.RefreshExpiresAt.IsZero() && status.RefreshExpiresAt.Sub(now) < authExpiryWarnWindow
+	notifiedExpired := fields["AGENTMUX_AUTH_NOTIFIED_EXPIRED"] == "true"
+	notifiedSoon := fields["AGENTMUX_AUTH_NOTIFIED_EXPIRING"] == "true"
+
+	notify := func(msg string) {
+		cfg, err := discordnotify.Load(discordnotify.DefaultPath())
+		if err != nil || cfg.WebhookURL == "" {
+			return
+		}
+		if err := discordnotify.Send(cfg.WebhookURL, msg); err != nil {
+			fmt.Printf("warning: sending Discord notification for %s: %v\n", name, err)
+		}
+	}
+
+	switch {
+	case expired && !notifiedExpired:
+		notify(fmt.Sprintf("🔴 %s: Claude Code's refresh token has expired — the session will stop working on its next token refresh. Run `claude` and log in again.", displayName))
+		_ = SetRegistryField(name, "AGENTMUX_AUTH_NOTIFIED_EXPIRED", "true")
+	case expiringSoon && !notifiedSoon:
+		notify(fmt.Sprintf("🟡 %s: Claude Code's refresh token expires %s — re-authenticate soon (run `claude` and log in) to avoid an interruption.", displayName, status.RefreshExpiresAt.Format(time.RFC1123)))
+		_ = SetRegistryField(name, "AGENTMUX_AUTH_NOTIFIED_EXPIRING", "true")
+	case !expired && !expiringSoon:
+		// Healthy again (e.g. the user re-authenticated) — clear both
+		// flags so a future expiry gets a fresh notification instead of
+		// staying silenced forever.
+		if notifiedExpired {
+			_ = SetRegistryField(name, "AGENTMUX_AUTH_NOTIFIED_EXPIRED", "false")
+		}
+		if notifiedSoon {
+			_ = SetRegistryField(name, "AGENTMUX_AUTH_NOTIFIED_EXPIRING", "false")
+		}
+	}
 }
 
 func hasSession(socket, session string) bool {

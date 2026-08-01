@@ -31,6 +31,8 @@ func main() {
 		runListCmd(args[1:])
 	case "control":
 		runControlCmd(args[1:])
+	case "notify":
+		runNotifyCmd(args[1:])
 	case "-h", "--help", "help":
 		printUsage()
 	default:
@@ -55,5 +57,8 @@ Usage:
   agentmux resume-list ...     list resumable Claude Code sessions for a workdir
   agentmux list                headless instance status (name/agent/model/status/workdir); add -json for scripts
   agentmux control ...         start/stop/restart an instance without an attached terminal
+  agentmux notify discord setup    configure the Discord webhook agentmux notifies on (e.g. expiring auth)
+  agentmux notify discord setup -y -webhook-url URL   same, non-interactively
+  agentmux notify discord test     resend a test message using the saved webhook
   agentmux help                show this message`)
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/m-rk/agentmux/daemon/internal/daemoninstall"
+	"github.com/m-rk/agentmux/daemon/internal/discordnotify"
 	"github.com/m-rk/agentmux/daemon/internal/hostsconfig"
 	"github.com/m-rk/agentmux/daemon/internal/pb"
 	"github.com/m-rk/agentmux/daemon/internal/tuiclient"
@@ -55,7 +56,7 @@ func runTUI(args []string) {
 		}
 	}
 
-	m := &model{clients: clients, hostErr: map[string]string{}}
+	m := &model{clients: clients, hostErr: map[string]string{}, discordConfigured: discordConfiguredNow()}
 	program := tea.NewProgram(m, tea.WithAltScreen())
 	m.program = program
 
@@ -138,6 +139,7 @@ type hostErrMsg struct {
 	err  error // nil clears a previously reported error for this host
 }
 type attachDoneMsg struct{ err error }
+type discordSetupDoneMsg struct{ err error }
 type controlDoneMsg struct {
 	host     string
 	instance string
@@ -157,6 +159,16 @@ type model struct {
 	quitting  bool
 	width     int
 	height    int
+
+	discordConfigured bool
+}
+
+// discordConfiguredNow reports whether a Discord webhook is currently saved
+// — checked once at startup and refetched after the "D" setup action
+// completes, rather than on every render.
+func discordConfiguredNow() bool {
+	cfg, err := discordnotify.Load(discordnotify.DefaultPath())
+	return err == nil && cfg.WebhookURL != ""
 }
 
 func (m *model) Init() tea.Cmd { return nil }
@@ -184,6 +196,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err.Error()
 		} else {
 			m.status = "detached"
+		}
+		return m, nil
+
+	case discordSetupDoneMsg:
+		m.discordConfigured = discordConfiguredNow()
+		if msg.err != nil {
+			m.err = msg.err.Error()
+		} else {
+			m.status = "Discord notifications configured"
 		}
 		return m, nil
 
@@ -253,6 +274,8 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "n":
 		return m, newInstanceCmd(m.program, m.clients)
+	case "D":
+		return m, discordSetupCmd(m.program)
 	case "R":
 		if r := m.selected(); r != nil {
 			return m, renameInstanceCmd(m.program, m.clients[r.host], *r)
@@ -320,6 +343,18 @@ func attachCmd(p *tea.Program, client *tuiclient.Client, instance string) tea.Cm
 	}
 }
 
+// discordSetupCmd runs the same interactive form `agentmux notify discord
+// setup` does, taking over the terminal the same way attachCmd/
+// newInstanceCmd/renameInstanceCmd do.
+func discordSetupCmd(p *tea.Program) tea.Cmd {
+	return func() tea.Msg {
+		p.ReleaseTerminal()
+		_, err := runDiscordSetupForm()
+		p.RestoreTerminal()
+		return discordSetupDoneMsg{err: err}
+	}
+}
+
 func controlCmd(client *tuiclient.Client, host, instance string, action pb.ControlAction) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -340,6 +375,10 @@ var (
 	}
 	dimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	errStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	// discordStyle is Discord's own brand purple ("blurple"), used to flag
+	// that notifications aren't set up so it reads as a distinct, on-brand
+	// call to action rather than a generic warning.
+	discordStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true)
 )
 
 func statusLabel(s pb.Status) string {
@@ -411,6 +450,10 @@ func (m *model) View() string {
 		lines = append(lines, line)
 	}
 
+	if !m.discordConfigured {
+		lines = append(lines, discordStyle.Render("⬥ Discord notifications not set up — press D to configure"))
+	}
+
 	if len(m.hostErr) > 0 {
 		names := make([]string, 0, len(m.hostErr))
 		for name := range m.hostErr {
@@ -435,7 +478,7 @@ func (m *model) View() string {
 		lines = append(lines, dimStyle.Render(m.status))
 	}
 
-	lines = append(lines, dimStyle.Render("a attach  n new  R rename  r restart  s stop  x start  q quit"))
+	lines = append(lines, dimStyle.Render("a attach  n new  R rename  r restart  s stop  x start  D discord  q quit"))
 	return strings.Join(lines, "\n")
 }
 
