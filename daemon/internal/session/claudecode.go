@@ -133,15 +133,48 @@ func UpdateClaudeCode(name string) error {
 // "-rc" or "/src") renders in the welcome box and false-positives a plain
 // substring search over the full capture.
 func claudeRemoteConnected(tmux func(args ...string) *exec.Cmd, socket, session string) bool {
+	return strings.Contains(lastPaneLine(tmux, socket, session), claudeRemoteIndicator)
+}
+
+// claudeRemoteMenuFooter is the prompt on Claude Code's Remote Control
+// confirmation menu (Disconnect this session / Show QR code / Continue),
+// which /remote-control opens whenever it's invoked while already connected
+// (confirmed live against v2.1.220 — this is not the same as the plain
+// connect/disconnect toggle applied when currently disconnected, which takes
+// effect immediately with no menu). While this menu is up it covers the
+// footer claudeRemoteConnected reads, so a disconnected-looking pane may
+// really just be this menu sitting on top of a still-live connection.
+const claudeRemoteMenuFooter = "Esc to continue"
+
+func claudeRemoteMenuOpen(tmux func(args ...string) *exec.Cmd, socket, session string) bool {
+	return strings.Contains(lastPaneLine(tmux, socket, session), claudeRemoteMenuFooter)
+}
+
+// dismissClaudeRemoteMenuIfOpen closes the Remote Control menu via Escape —
+// the same as selecting its default-highlighted "Continue" entry, which
+// leaves the connection exactly as it already was. That makes this always
+// safe to call speculatively: it's a no-op if the menu isn't open, and a
+// no-op on connection state if it is.
+func dismissClaudeRemoteMenuIfOpen(tmux func(args ...string) *exec.Cmd, socket, session string) (bool, error) {
+	if !claudeRemoteMenuOpen(tmux, socket, session) {
+		return false, nil
+	}
+	if err := tmux("-L", socket, "send-keys", "-t", session, "Escape").Run(); err != nil {
+		return false, fmt.Errorf("dismissing remote control menu in %s: %w", session, err)
+	}
+	return true, nil
+}
+
+func lastPaneLine(tmux func(args ...string) *exec.Cmd, socket, session string) string {
 	out, err := tmux("-L", socket, "capture-pane", "-p", "-t", session).Output()
 	if err != nil {
-		return false
+		return ""
 	}
 	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
 	if len(lines) == 0 {
-		return false
+		return ""
 	}
-	return strings.Contains(lines[len(lines)-1], claudeRemoteIndicator)
+	return lines[len(lines)-1]
 }
 
 // ensureClaudeRemoteControl works around Claude Code's own Remote Control
@@ -150,9 +183,24 @@ func claudeRemoteConnected(tmux func(args ...string) *exec.Cmd, socket, session 
 // no client-side recovery. The fix is a single idempotent slash command, so
 // it's cheap enough to run on every periodic `session run` tick rather than
 // waiting for the nightly update.
+//
+// It also guards against Claude Code's confirmation menu (see
+// claudeRemoteMenuFooter): if a previous toggle — ours or a human's/another
+// agent's — left that menu open, claudeRemoteConnected can't see the "/rc"
+// footer behind it and would otherwise report "disconnected" forever and
+// leave the pane visibly wedged on the menu. Dismissing it before and after
+// toggling makes this self-healing regardless of how the menu got there.
 func ensureClaudeRemoteControl(tmux func(args ...string) *exec.Cmd, socket, session string) error {
 	if claudeRemoteConnected(tmux, socket, session) {
 		return nil
+	}
+	if dismissed, err := dismissClaudeRemoteMenuIfOpen(tmux, socket, session); err != nil {
+		return err
+	} else if dismissed {
+		time.Sleep(500 * time.Millisecond)
+		if claudeRemoteConnected(tmux, socket, session) {
+			return nil // the menu was hiding an already-live connection
+		}
 	}
 	// Never type into a pane mid-response; if it's busy, skip this tick and
 	// let the next one (a few minutes away) retry instead of blocking.
@@ -169,6 +217,17 @@ func ensureClaudeRemoteControl(tmux func(args ...string) *exec.Cmd, socket, sess
 	for time.Now().Before(deadline) {
 		if claudeRemoteConnected(tmux, socket, session) {
 			return nil
+		}
+		// Disconnected really means disconnected here (unlike above), so
+		// invoking /remote-control should reconnect immediately with no
+		// menu. Seeing the menu instead means the state flipped to
+		// connected in the race between our checks and the send-keys above;
+		// dismissing leaves it connected, which is what we want.
+		if dismissed, err := dismissClaudeRemoteMenuIfOpen(tmux, socket, session); err != nil {
+			return err
+		} else if dismissed {
+			time.Sleep(300 * time.Millisecond)
+			continue
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
