@@ -49,6 +49,12 @@ sudo ./agentmux daemon install   # Linux: installs a systemd unit
   Claude Code session (configurable per instance) so a long-running,
   unattended session never gets stuck behind Claude Code's own "resume from
   a huge session summary?" prompt.
+- **Proactive Discord notifications** — `agentmux notify discord setup`
+  configures a Discord webhook; every periodic tick (every 5 min) then checks
+  each Claude Code instance's OAuth token expiry (Linux only for now — see
+  [Known limitations](#known-limitations)) and posts a warning ~48h before
+  the refresh token expires, and again the moment it actually does, so you
+  find out before a session silently stops working instead of after.
 
 See [`daemon/README.md`](daemon/README.md) to build and run it, and
 [`docs/design/daemon-tui.md`](docs/design/daemon-tui.md) for the full design.
@@ -263,6 +269,17 @@ AGENTMUX_LIVE_OPENCODE=1 tests/smoke.sh
   `daemon/internal/session/agentmux.go`) avoids re-toggling a session that's
   already connected, which is a reasonable precaution regardless of whether
   the underlying cap is real.
+- **Token-expiry notifications are Linux-only.** Claude Code stores its OAuth
+  credentials in a plain `~/.claude/.credentials.json` file on Linux, which
+  `provision.CheckTokenExpiry` reads directly for the `expiresAt`/
+  `refreshTokenExpiresAt` timestamps. On macOS those same credentials live in
+  Keychain instead, and reading a specific Keychain item programmatically
+  deserves more care than a quick pass — `tokenexpiry_darwin.go` deliberately
+  reports `Supported: false` rather than guessing at a service/account name
+  untested. macOS instances get no expiry warning today; a genuinely expired
+  token there still surfaces as a normal Remote Control disconnect (or a
+  `claudeLoggedIn` failure at the next `claude update` check), just without
+  advance notice.
 
 ## Roadmap
 
