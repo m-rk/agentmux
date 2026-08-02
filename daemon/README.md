@@ -26,8 +26,10 @@ go build -o agentmux ./cmd/agentmux
 ```
 
 The module currently targets Go 1.26.5. The binary orchestrates tools already
-installed on the host, so you also need `tmux`, your chosen agent CLI, and
-Ollama for the current zero/opencode/kilo provider path.
+installed on the host, so you also need `tmux`, your chosen agent CLI, and the
+runtime, credentials, or network access required by your selected provider.
+The adapter currently included for `zero`, `opencode`, and `kilo` uses Ollama,
+but provider and model are separate provisioning fields.
 
 There's only one binary now — `agentmuxd` was folded into `agentmux daemon
 run`.

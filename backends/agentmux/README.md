@@ -3,7 +3,7 @@
 This backend installs one named agentmux instance: an agent CLI, a model
 provider, a model, a workdir, a tmux session, and host supervisor wiring.
 
-Supported combinations today:
+Provider adapters included today:
 
 | Agent CLI | Provider | Notes |
 |---|---|---|
@@ -11,9 +11,11 @@ Supported combinations today:
 | `opencode` | `ollama` | Writes `opencode.json` in the instance workdir. |
 | `kilo` | `ollama` | Writes `kilo.json` in the instance workdir (Kilo CLI is an opencode fork sharing its config schema). |
 
-The public shape is intentionally generic now, even while the provider matrix is
-small, so new provider adapters can be added without creating another
-provider-specific backend directory.
+The backend itself is not Ollama-specific. Agent CLI, provider, provider base
+URL, model, and provider readiness are separate settings. Ollama is the adapter
+implemented and exercised today, so the examples below use it as one concrete,
+known-good configuration. New provider adapters can use the same backend shape
+without creating another provider-specific directory.
 
 These manual scripts provide the basic persistent-process setup. Kilo's native
 daemon provisioner goes further by discovering and resuming its latest workdir
@@ -22,8 +24,10 @@ session and enabling the remote relay; the scripts currently launch a plain
 
 ## Prerequisites
 
-Install the agent CLI you want to run, plus `tmux` and the provider runtime.
-For Ollama Cloud:
+Install `tmux`, the agent CLI you want to run, and whatever runtime,
+credentials, or network access your selected provider requires.
+
+For the included Ollama example:
 
 ```sh
 brew install tmux ollama
@@ -35,8 +39,8 @@ npm install -g opencode-ai        # for --agent opencode
 npm install -g @kilocode/cli      # for --agent kilo
 ```
 
-On Linux, install Ollama with its systemd service and run `ollama signin` as
-the user the instance will run under.
+On Linux, this example needs Ollama installed with its systemd service and
+`ollama signin` run as the user the instance will run under.
 
 ## macOS
 

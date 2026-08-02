@@ -35,9 +35,11 @@ sudo ./agentmux daemon install   # Linux: installs a systemd unit
 ```
 
 Building currently requires Go 1.26.5. Each host also needs `tmux`, the agent
-CLI you plan to run, and Ollama when using the current `zero`, `opencode`, or
-`kilo` provider path. agentmux checks those prerequisites but leaves their
-installation and sign-in to you.
+CLI you plan to run, and whatever runtime, credentials, or network access your
+selected model provider requires. agentmux checks those prerequisites but
+leaves their installation and sign-in to you. The provider adapter included
+for `zero`, `opencode`, and `kilo` today is Ollama; provider and model remain
+separate parts of an instance rather than defining the backend itself.
 
 - **One binary, no installer scripts** — `agentmux new` provisions
   `claude-code`, `zero`, `opencode`, and `kilo` instances end to end (registry
@@ -64,11 +66,13 @@ installation and sign-in to you.
   doesn't get stuck behind Claude Code's own huge-session prompt. If the
   transcript already ends at a compact boundary, agentmux skips the redundant
   `/compact`. This is configurable per instance.
-- **Discord expiry warnings (early, Linux-only)** — `agentmux notify discord
-  setup` stores a webhook for the current OS user. Periodic Claude Code checks
-  can warn around 48 hours before a refresh token expires and again when it
-  does. Setup is also available from the wizard and the TUI's `D` key; see
-  [Known limitations](#known-limitations) for the current scope.
+- **Discord notifications (early)** — Discord is agentmux's outbound channel
+  for anything it or its managed sessions need to tell you. `agentmux notify
+  discord setup` stores a webhook for the current OS user; setup is also
+  available from the wizard and the TUI's `D` key. The first built-in messages
+  are Linux Claude Code warnings around 48 hours before a refresh token expires
+  and again when it does. See [Known limitations](#known-limitations) for the
+  current scope.
 
 ## Trust model
 
@@ -115,9 +119,9 @@ scripts below provide the same basic host-supervisor shape directly. They are
 not exact feature equivalents: in particular, the native daemon path has
 Kilo session resume and remote-relay setup that the manual scripts do not.
 
-| Installer | Agent CLIs | Provider configuration | Linux | macOS |
+| Installer | Agent CLIs | Included provider adapter | Linux | macOS |
 |---|---|---|---|---|
-| [`backends/agentmux`](backends/agentmux) | `zero`, `opencode`, `kilo` | Ollama | systemd | LaunchAgents |
+| [`backends/agentmux`](backends/agentmux) | `zero`, `opencode`, `kilo` | Ollama (today) | systemd | LaunchAgents |
 | [`backends/claude-code`](backends/claude-code) | Claude Code | Managed by Claude Code | systemd | LaunchAgents |
 
 `backends/agentmux` is the more general of the two: one named instance
@@ -125,9 +129,11 @@ combines an agent CLI, a model provider, a model, a workdir, and host
 supervisor wiring, so new agents/providers/models can be mixed without
 cloning whole directories. `backends/claude-code` is a dedicated installer
 predating that generalization, kept for its Remote Control-specific
-defaults.
+defaults. The worked commands below use Ollama because it is the provider
+adapter currently included in the repository, not because the configurable
+backend is inherently tied to it.
 
-### Quickstart (configurable backend)
+### Quickstart example: Zero + Ollama
 
 #### macOS
 
@@ -300,12 +306,14 @@ AGENTMUX_LIVE_OPENCODE=1 tests/smoke.sh
   For valuable existing context, check `agentmux resume-list` and create the
   instance with an explicit `-resume` ID rather than assuming any restart will
   infer the exact transcript you meant.
-- **Discord setup is local to one user on one host.** The webhook URL is a
-  bearer credential stored under that user's config directory, so configure it
-  separately for the run user on each Linux host and protect the file. macOS
-  token-expiry checks are not implemented because Claude Code keeps those
-  credentials in Keychain; the daemon reports them as unsupported instead of
-  guessing at a Keychain item.
+- **Discord setup is local to one user on one host.** Discord is the general
+  outbound communication channel for agentmux and its managed sessions; token
+  expiry is simply the first event wired into it. The webhook URL is a bearer
+  credential stored under that user's config directory, so configure it
+  separately for the run user on each host and protect the file. The current
+  automatic producer is Linux-only: macOS token-expiry checks are not
+  implemented because Claude Code keeps those credentials in Keychain, and the
+  daemon reports them as unsupported instead of guessing at a Keychain item.
 - **The manual Kilo backend is basic.** It writes `kilo.json`, launches the
   CLI, and maintains the process, but it doesn't yet mirror the native daemon's
   session discovery/resume or remote-relay setup.
