@@ -51,8 +51,9 @@ agentmux itself considers the live session.
 - Interactive `attach` deliberately has no headless equivalent — a real PTY
   session isn't something a non-interactive command should be driving
   unattended. If you need to hand a session to a human, tell them to run
-  `agentmux` (TUI) or `tmux -S <socket> attach-session -t <session>` (from
-  `agentmux list -json`'s `tmux_session`/host info) themselves.
+  `agentmux`, select the instance, and press `a` in the TUI. `agentmux list
+  -json` reports the host and tmux session but deliberately doesn't expose the
+  daemon's resolved socket path as a public contract.
 
 ## Developing agentmux itself
 

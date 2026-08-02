@@ -15,6 +15,11 @@ The public shape is intentionally generic now, even while the provider matrix is
 small, so new provider adapters can be added without creating another
 provider-specific backend directory.
 
+These manual scripts provide the basic persistent-process setup. Kilo's native
+daemon provisioner goes further by discovering and resuming its latest workdir
+session and enabling the remote relay; the scripts currently launch a plain
+`kilo` session and don't claim that parity.
+
 ## Prerequisites
 
 Install the agent CLI you want to run, plus `tmux` and the provider runtime.

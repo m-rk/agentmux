@@ -2,19 +2,20 @@
 
 Agents that are remote controlled, persistent, redundant and self-maintained.
 
-The idea: coding-agent CLIs (Claude Code, [opencode](https://opencode.ai),
-[Zero](https://github.com/Gitlawb/zero), and whatever comes next) are most
-useful when there's always a live session you can drop into from anywhere —
-not just while a terminal happens to be open. agentmux keeps one running per
-backend, brings it back after a reboot, and keeps the CLI itself up to date
-without you babysitting it.
+The idea: coding-agent CLIs (Claude Code, [Kilo](https://kilo.ai),
+[opencode](https://opencode.ai), [Zero](https://github.com/Gitlawb/zero), and
+whatever comes next) are most useful when there's always a live session you
+can drop into from anywhere — not just while a terminal happens to be open.
+agentmux keeps one running per instance, brings it back after a reboot, and
+keeps the CLI itself up to date without you babysitting it.
 
 ## agentmux CLI
 
-`agentmux` is a single self-contained binary: a background daemon, a TUI to
-see and control every instance across every machine you run it on, and a
-wizard for creating new ones. This is the recommended way to run agentmux —
-no bash installers to run by hand.
+`agentmux` is one Go binary: a background daemon, a TUI to see and control
+every instance across every machine you run it on, and a wizard for creating
+new ones. This is the recommended way to run agentmux — no bash installers to
+run by hand. It orchestrates `tmux` and the agent CLIs already installed on
+the host; it doesn't bundle those tools itself.
 
 <p align="center">
   <img src="docs/design/img/tui-list.png" alt="agentmux TUI: list of instances across hosts" width="49%">
@@ -33,16 +34,22 @@ sudo ./agentmux daemon install   # Linux: installs a systemd unit
 ./agentmux                       # TUI: attach, rename, restart, create — across every host
 ```
 
-- **One binary, no bash** — `agentmux new` provisions `claude-code`, `zero`,
-  and `opencode` instances end to end (registry file, systemd
-  unit/LaunchAgent, tmux session) on Linux or macOS. `agentmux new -y ...`
-  does the same non-interactively, for scripting.
+Building currently requires Go 1.26.5. Each host also needs `tmux`, the agent
+CLI you plan to run, and Ollama when using the current `zero`, `opencode`, or
+`kilo` provider path. agentmux checks those prerequisites but leaves their
+installation and sign-in to you.
+
+- **One binary, no installer scripts** — `agentmux new` provisions
+  `claude-code`, `zero`, `opencode`, and `kilo` instances end to end (registry
+  file, systemd unit/LaunchAgent, tmux session) on Linux or macOS.
+  `agentmux new -y ...` does the same non-interactively, for scripting.
 - **Multi-host** — list other machines in `~/.config/agentmux/hosts.yaml`
   (e.g. reachable over Tailscale) and the TUI dials all of them at once,
   merged into one table.
-- **Rename in place** — `agentmux rename` (or `R` in the TUI) renames an
-  instance's tmux session and/or Claude Code Remote Control display name
-  without losing the session.
+- **Rename deliberately** — `agentmux rename` (or `R` in the TUI) changes a
+  tmux session name live. Changing a Claude Code Remote Control display name
+  requires a restart; see [Known limitations](#known-limitations) if keeping
+  one exact transcript is important.
 - **Headless view/send-keys** — `agentmux view -instance NAME` prints a
   read-only snapshot of an instance's tmux pane, and
   `agentmux send-keys -instance NAME KEY...` types into it (literal text
@@ -52,20 +59,34 @@ sudo ./agentmux daemon install   # Linux: installs a systemd unit
   matters for a coding agent driving another agentmux instance.
 - **Resume lookup** — `agentmux resume-list` shows what Claude Code sessions
   are resumable for a workdir; the wizard offers the same as a picker.
-- **Compact-before-resume** — every nightly update compacts and restarts a
-  Claude Code session (configurable per instance) so a long-running,
-  unattended session never gets stuck behind Claude Code's own "resume from
-  a huge session summary?" prompt.
-- **Proactive Discord notifications** — `agentmux notify discord setup`
-  (also offered as an optional step in the `agentmux new` wizard, and
-  non-interactively via `-y -webhook-url`) configures a Discord webhook;
-  every periodic tick (every 5 min) then checks each Claude Code instance's
-  OAuth token expiry (Linux only for now — see
-  [Known limitations](#known-limitations)) and posts a warning ~48h before
-  the refresh token expires, and again the moment it actually does, so you
-  find out before a session silently stops working instead of after. The TUI
-  flags an unconfigured webhook in purple with a `D` key to set one up on the
-  spot.
+- **Compact-before-resume** — by default, nightly Claude Code maintenance
+  compacts and restarts the session so a long-running unattended session
+  doesn't get stuck behind Claude Code's own huge-session prompt. If the
+  transcript already ends at a compact boundary, agentmux skips the redundant
+  `/compact`. This is configurable per instance.
+- **Discord expiry warnings (early, Linux-only)** — `agentmux notify discord
+  setup` stores a webhook for the current OS user. Periodic Claude Code checks
+  can warn around 48 hours before a refresh token expires and again when it
+  does. Setup is also available from the wizard and the TUI's `D` key; see
+  [Known limitations](#known-limitations) for the current scope.
+
+## Trust model
+
+agentmux is currently intended for a single user, or for a host and tailnet
+where every client is trusted as an administrator. The API is not an
+authentication boundary yet:
+
+- The Linux daemon runs as root so it can manage systemd units. Native Linux
+  provisioning creates an absolute workdir *as the requested run user*; it
+  never chowns an existing caller-chosen path or creates one with root's
+  filesystem permissions.
+- The local Unix socket is currently mode `0666`, and the optional TCP listener
+  has no authentication or TLS. Anyone who can reach either endpoint can list,
+  create, control, view, attach to, and type into instances. Don't expose the
+  TCP listener beyond tightly restricted, fully trusted devices.
+
+Authentication and tighter local socket permissions are active hardening work,
+not properties the README quietly assumes already exist.
 
 See [`daemon/README.md`](daemon/README.md) to build and run it, and
 [`docs/design/daemon-tui.md`](docs/design/daemon-tui.md) for the full design.
@@ -79,7 +100,8 @@ Every backend here aims for:
 - **Remote access** — reattach from anywhere (`tmux attach`, the `agentmux`
   TUI, or a backend's own remote-control feature if it has one).
 - **Self-maintenance** — a scheduled job updates the CLI and restarts the
-  session only when needed, so it doesn't go stale.
+  session according to that backend's maintenance policy, so it doesn't go
+  stale.
 - **Redundancy** — running more than one backend side by side on the same
   box (different CLIs, different model providers) so an outage or degraded
   provider doesn't take out your only agent, and gives you a choice of
@@ -89,7 +111,9 @@ Every backend here aims for:
 
 `agentmux new` creates instances through a running agentmux daemon. If you
 only need local instances and don't want the daemon or TUI, the installer
-scripts below provide the equivalent host-supervisor setup directly.
+scripts below provide the same basic host-supervisor shape directly. They are
+not exact feature equivalents: in particular, the native daemon path has
+Kilo session resume and remote-relay setup that the manual scripts do not.
 
 | Installer | Agent CLIs | Provider configuration | Linux | macOS |
 |---|---|---|---|---|
@@ -239,7 +263,15 @@ LaunchAgent templates, and systemd unit templates.
 
 ## Tests
 
-Run the lightweight regression harness:
+Run the Go checks for the daemon and CLI:
+
+```sh
+cd daemon
+go test ./...
+go vet ./...
+```
+
+Then run the shell regression harness from the repository root:
 
 ```sh
 tests/smoke.sh
@@ -260,37 +292,33 @@ AGENTMUX_LIVE_OPENCODE=1 tests/smoke.sh
 
 ## Known limitations
 
+- **Restart identity is still being tightened.** A normal Claude Code control
+  restart uses the resume ID saved in the instance registry; an instance
+  created without one may start a fresh transcript. Nightly maintenance
+  resolves and saves the newest workdir session for later restarts, but a
+  Remote Control display-name rename can happen before that and also restarts.
+  For valuable existing context, check `agentmux resume-list` and create the
+  instance with an explicit `-resume` ID rather than assuming any restart will
+  infer the exact transcript you meant.
+- **Discord setup is local to one user on one host.** The webhook URL is a
+  bearer credential stored under that user's config directory, so configure it
+  separately for the run user on each Linux host and protect the file. macOS
+  token-expiry checks are not implemented because Claude Code keeps those
+  credentials in Keychain; the daemon reports them as unsupported instead of
+  guessing at a Keychain item.
+- **The manual Kilo backend is basic.** It writes `kilo.json`, launches the
+  CLI, and maintains the process, but it doesn't yet mirror the native daemon's
+  session discovery/resume or remote-relay setup.
 - **Kilo's remote relay may allow only one connected CLI session per account
-  — unconfirmed in practice.** Kilo's own client source treats certain close
-  codes as permanent (non-retrying):
+  — unconfirmed in practice.** Kilo's client treats close code `4409` as a
+  permanent conflict:
   [`remote-ws.ts`](https://github.com/Kilo-Org/kilocode/blob/main/packages/opencode/src/kilo-sessions/remote-ws.ts)
-  lists `4401`/`4403`/`4409` as the only such codes, and
+  and
   [`remote-ws.test.ts`](https://github.com/Kilo-Org/kilocode/blob/main/packages/opencode/test/kilocode/sessions/remote-ws.test.ts)
-  tests `4409` explicitly as a conflict code — which reads like a
-  one-connection-per-account cap. In practice this hasn't reproduced: on one
-  machine running 3+ `kilo` instances under the same account concurrently for
-  hours, none of the observed disconnects used those codes (only `1000`,
-  `4000`, `1006`), all of which auto-reconnected, and all instances stayed
-  simultaneously reachable. So either the server doesn't enforce the cap the
-  client code implies, it's gated on something narrower than "same account"
-  (e.g. a specific token/identity rather than the CLI instance), or it's real
-  but timing-dependent (e.g. triggered by near-simultaneous reconnects rather
-  than steady-state concurrent connections) and hasn't been hit yet.
-  `agentmux`'s own kilo provisioning (`enableKiloRemote` in
-  `daemon/internal/session/agentmux.go`) avoids re-toggling a session that's
-  already connected, which is a reasonable precaution regardless of whether
-  the underlying cap is real.
-- **Token-expiry notifications are Linux-only.** Claude Code stores its OAuth
-  credentials in a plain `~/.claude/.credentials.json` file on Linux, which
-  `provision.CheckTokenExpiry` reads directly for the `expiresAt`/
-  `refreshTokenExpiresAt` timestamps. On macOS those same credentials live in
-  Keychain instead, and reading a specific Keychain item programmatically
-  deserves more care than a quick pass — `tokenexpiry_darwin.go` deliberately
-  reports `Supported: false` rather than guessing at a service/account name
-  untested. macOS instances get no expiry warning today; a genuinely expired
-  token there still surfaces as a normal Remote Control disconnect (or a
-  `claudeLoggedIn` failure at the next `claude update` check), just without
-  advance notice.
+  exercises that case, which suggests a one-connection limit. It hasn't
+  reproduced in several concurrent long-running local instances, so the exact
+  server-side rule remains unclear. Native Kilo sessions avoid re-toggling a
+  relay that's already connected, which is a reasonable precaution either way.
 
 ## Roadmap
 
@@ -298,5 +326,5 @@ AGENTMUX_LIVE_OPENCODE=1 tests/smoke.sh
   running side by side adds to the redundancy/variety this repo is going
   for
 - Health-check / notification on failed updates instead of just journal logs
-- TLS/auth for the daemon's TCP listener, instead of relying solely on
-  tailnet ACLs
+- Authentication for the daemon API, tighter local socket permissions, and
+  TLS for TCP instead of relying solely on tailnet ACLs

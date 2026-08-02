@@ -133,6 +133,14 @@ type kv struct{ key, value string }
 // matching the bash installers' own cat > file <<EOF field order, so
 // output is diffable against them.
 func writeRegistry(name string, fields []kv) (string, error) {
+	for _, f := range fields {
+		if f.key == "" || strings.ContainsAny(f.key, "=\r\n\x00") {
+			return "", fmt.Errorf("invalid registry key %q", f.key)
+		}
+		if strings.ContainsAny(f.value, "\r\n\x00") {
+			return "", fmt.Errorf("registry value for %s contains a line break or NUL byte", f.key)
+		}
+	}
 	if err := os.MkdirAll(discovery.EnvDir, 0o755); err != nil {
 		return "", fmt.Errorf("creating %s: %w", discovery.EnvDir, err)
 	}

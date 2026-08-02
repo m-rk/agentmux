@@ -196,6 +196,26 @@ func TestWriteRegistryRoundTrip(t *testing.T) {
 	}
 }
 
+func TestWriteRegistryRejectsInjectedFields(t *testing.T) {
+	withEnvDir(t)
+
+	tests := []struct {
+		name   string
+		fields []kv
+	}{
+		{"newline in value", []kv{{"AGENTMUX_WORKDIR", "/tmp/safe\nAGENTMUX_SERVICE_NAME=ssh.service"}}},
+		{"carriage return in value", []kv{{"AGENTMUX_MODEL", "safe\rAGENTMUX_AGENT=claude-code"}}},
+		{"separator in key", []kv{{"AGENTMUX_MODEL=unsafe", "value"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := writeRegistry("probe", tt.fields); err == nil {
+				t.Fatal("expected unsafe registry field to be rejected")
+			}
+		})
+	}
+}
+
 func write(t *testing.T, dir, name, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {

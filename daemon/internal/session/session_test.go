@@ -110,3 +110,23 @@ func TestRegistry(t *testing.T) {
 		t.Errorf("fields = %v, want exactly 2 entries (comment/blank line should be skipped)", fields)
 	}
 }
+
+func TestSetRegistryFieldRejectsInjectedValue(t *testing.T) {
+	dir := withEnvDir(t)
+	path := filepath.Join(dir, "probe.env")
+	const original = "AGENTMUX_RESUME=safe\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SetRegistryField("probe", "AGENTMUX_RESUME", "safe\nAGENTMUX_SERVICE_NAME=ssh.service"); err == nil {
+		t.Fatal("expected unsafe registry value to be rejected")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != original {
+		t.Fatalf("registry changed after rejected update: %q", data)
+	}
+}
