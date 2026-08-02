@@ -31,6 +31,10 @@ func main() {
 		runListCmd(args[1:])
 	case "control":
 		runControlCmd(args[1:])
+	case "view":
+		runViewCmd(args[1:])
+	case "send-keys":
+		runSendKeysCmd(args[1:])
 	case "notify":
 		runNotifyCmd(args[1:])
 	case "-h", "--help", "help":
@@ -57,6 +61,8 @@ Usage:
   agentmux resume-list ...     list resumable Claude Code sessions for a workdir
   agentmux list                headless instance status (name/agent/model/status/workdir); add -json for scripts
   agentmux control ...         start/stop/restart an instance without an attached terminal
+  agentmux view -instance NAME        headless read-only snapshot of an instance's tmux pane
+  agentmux send-keys -instance NAME KEY...   headless equivalent of typing into an instance's pane
   agentmux notify discord setup    configure the Discord webhook agentmux notifies on (e.g. expiring auth)
   agentmux notify discord setup -y -webhook-url URL   same, non-interactively
   agentmux notify discord test     resend a test message using the saved webhook

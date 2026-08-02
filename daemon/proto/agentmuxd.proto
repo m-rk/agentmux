@@ -37,6 +37,18 @@ service AgentmuxDaemon {
   // itself, not the caller — see daemonserver's implementation for why that
   // distinction matters for an instance renaming its own hosting session.
   rpc RenameInstance(RenameInstanceRequest) returns (RenameInstanceResponse);
+
+  // Headless snapshot of an instance's tmux pane — what Attach would show
+  // if you attached and looked, without opening an interactive session.
+  // Read-only; safe to call at any time.
+  rpc ViewPane(ViewPaneRequest) returns (ViewPaneResponse);
+
+  // Headless equivalent of typing into an instance's pane — what Attach
+  // would send as stdin, without opening an interactive session. Scriptable
+  // access to the same capability Attach already grants interactively, so
+  // it carries the same trust assumption: anyone who can call this can type
+  // into the target session.
+  rpc SendKeys(SendKeysRequest) returns (SendKeysResponse);
 }
 
 enum Status {
@@ -159,6 +171,31 @@ message RenameInstanceRequest {
 }
 
 message RenameInstanceResponse {
+  bool ok = 1;
+  string message = 2;
+}
+
+message ViewPaneRequest {
+  string instance = 1;
+  // Trailing lines of scrollback to include ahead of the visible pane; 0
+  // (the common case) returns just the currently visible pane, matching
+  // what capture-pane -p returns with no -S.
+  int32 scrollback_lines = 2;
+}
+
+message ViewPaneResponse {
+  string content = 1;
+}
+
+message SendKeysRequest {
+  string instance = 1;
+  // Passed through verbatim as tmux send-keys arguments: literal text
+  // and/or key names ("Escape", "Enter", "C-c", ...), one per element —
+  // same semantics as `tmux send-keys -t <session> <keys...>`.
+  repeated string keys = 2;
+}
+
+message SendKeysResponse {
   bool ok = 1;
   string message = 2;
 }

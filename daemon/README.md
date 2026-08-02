@@ -92,6 +92,8 @@ predate the registry file this wizard reads/writes.
 ./agentmux resume-list -workdir /path/to/project -run-user ubuntu
 ./agentmux list -json
 ./agentmux control -instance myinstance -action restart
+./agentmux view -instance myinstance -lines 50
+./agentmux send-keys -instance myinstance Escape
 ```
 
 `new -y` skips the interactive form and creates directly from flags — same
@@ -107,8 +109,16 @@ every device from `hosts.yaml` into one list. `control` is the CLI
 counterpart to the TUI's start/stop/restart keybindings — drive the same
 action without attaching a terminal, e.g. after editing an instance's
 `AGENTMUX_MODEL` and needing the running session to actually pick it up.
-All five take `-host` (default `local`, or `all` for `list`) to target any
-device from `hosts.yaml`.
+`view`/`send-keys` are the headless counterpart to the TUI's `a` (attach):
+`view` prints a read-only snapshot of an instance's tmux pane (`-lines N`
+for trailing scrollback), `send-keys` types into it — trailing args are
+passed straight through as tmux `send-keys` arguments (literal text and/or
+key names like `Escape`, `Enter`, `C-c`). Both resolve the instance's
+socket/session the same way Attach does, rather than assuming a socket
+naming convention — useful for a script or another agent checking on/
+unwedging a session without an interactive terminal. All seven take
+`-host` (default `local`, or `all` for `list`) to target any device from
+`hosts.yaml`.
 
 ## Multiple hosts over Tailscale
 

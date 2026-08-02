@@ -43,6 +43,13 @@ sudo ./agentmux daemon install   # Linux: installs a systemd unit
 - **Rename in place** — `agentmux rename` (or `R` in the TUI) renames an
   instance's tmux session and/or Claude Code Remote Control display name
   without losing the session.
+- **Headless view/send-keys** — `agentmux view -instance NAME` prints a
+  read-only snapshot of an instance's tmux pane, and
+  `agentmux send-keys -instance NAME KEY...` types into it (literal text
+  and/or key names like `Escape`, `Enter`, `C-c`) — both without opening an
+  interactive Attach session. This is the headless counterpart to attaching
+  just to look or type a command; see [AGENTS.md](AGENTS.md) for why this
+  matters for a coding agent driving another agentmux instance.
 - **Resume lookup** — `agentmux resume-list` shows what Claude Code sessions
   are resumable for a workdir; the wizard offers the same as a picker.
 - **Compact-before-resume** — every nightly update compacts and restarts a

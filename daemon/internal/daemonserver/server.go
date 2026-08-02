@@ -163,24 +163,9 @@ func (s *Server) Attach(stream pb.AgentmuxDaemon_AttachServer) error {
 		return errors.New("first message must be an AttachRequest")
 	}
 
-	instances, err := discovery.List()
+	socket, session, err := resolveTmuxTarget(attach.Instance)
 	if err != nil {
 		return err
-	}
-	var session, socket string
-	found := false
-	for _, inst := range instances {
-		if inst.Name == attach.Instance {
-			session, socket = inst.TmuxSession, inst.TmuxSocket
-			found = true
-			break
-		}
-	}
-	if !found {
-		return fmt.Errorf("unknown instance %q", attach.Instance)
-	}
-	if socket == "" {
-		return fmt.Errorf("instance %q has no live tmux session to attach to", attach.Instance)
 	}
 
 	cmd := runas.CurrentUserCommand("tmux", "-S", socket, "attach-session", "-t", session)
@@ -245,6 +230,57 @@ func (s *Server) Attach(stream pb.AgentmuxDaemon_AttachServer) error {
 		log.Printf("attach %s: %v", attach.Instance, err)
 	}
 	return nil
+}
+
+func (s *Server) ViewPane(ctx context.Context, req *pb.ViewPaneRequest) (*pb.ViewPaneResponse, error) {
+	socket, session, err := resolveTmuxTarget(req.Instance)
+	if err != nil {
+		return nil, err
+	}
+	args := []string{"-S", socket, "capture-pane", "-p", "-t", session}
+	if req.ScrollbackLines > 0 {
+		args = append(args, "-S", fmt.Sprintf("-%d", req.ScrollbackLines))
+	}
+	out, err := runas.CurrentUserCommand("tmux", args...).Output()
+	if err != nil {
+		return nil, fmt.Errorf("capturing pane for %q: %w", req.Instance, err)
+	}
+	return &pb.ViewPaneResponse{Content: string(out)}, nil
+}
+
+func (s *Server) SendKeys(ctx context.Context, req *pb.SendKeysRequest) (*pb.SendKeysResponse, error) {
+	if len(req.Keys) == 0 {
+		return &pb.SendKeysResponse{Ok: false, Message: "no keys given"}, nil
+	}
+	socket, session, err := resolveTmuxTarget(req.Instance)
+	if err != nil {
+		return &pb.SendKeysResponse{Ok: false, Message: err.Error()}, nil
+	}
+	args := append([]string{"-S", socket, "send-keys", "-t", session}, req.Keys...)
+	if out, err := runas.CurrentUserCommand("tmux", args...).CombinedOutput(); err != nil {
+		return &pb.SendKeysResponse{Ok: false, Message: fmt.Sprintf("sending keys to %s: %v: %s", req.Instance, err, out)}, nil
+	}
+	return &pb.SendKeysResponse{Ok: true}, nil
+}
+
+// resolveTmuxTarget looks up instance's live tmux session/socket the same
+// way Attach does, so ViewPane/SendKeys fail with the same "unknown
+// instance" / "no live tmux session" errors instead of guessing at socket
+// naming conventions themselves.
+func resolveTmuxTarget(instance string) (socket, session string, err error) {
+	instances, err := discovery.List()
+	if err != nil {
+		return "", "", err
+	}
+	for _, inst := range instances {
+		if inst.Name == instance {
+			if inst.TmuxSocket == "" {
+				return "", "", fmt.Errorf("instance %q has no live tmux session", instance)
+			}
+			return inst.TmuxSocket, inst.TmuxSession, nil
+		}
+	}
+	return "", "", fmt.Errorf("unknown instance %q", instance)
 }
 
 func toProto(inst discovery.Instance) *pb.Instance {

@@ -110,6 +110,14 @@ func (c *Client) RenameInstance(ctx context.Context, req *pb.RenameInstanceReque
 	return c.api.RenameInstance(ctx, req)
 }
 
+func (c *Client) ViewPane(ctx context.Context, req *pb.ViewPaneRequest) (*pb.ViewPaneResponse, error) {
+	return c.api.ViewPane(ctx, req)
+}
+
+func (c *Client) SendKeys(ctx context.Context, req *pb.SendKeysRequest) (*pb.SendKeysResponse, error) {
+	return c.api.SendKeys(ctx, req)
+}
+
 // PeekAttach attaches to an instance and reports PTY output for dur without
 // ever writing to stdin, so it's safe to use against a live session purely
 // to verify the pipe works (used by smoke tests, not the TUI itself).
