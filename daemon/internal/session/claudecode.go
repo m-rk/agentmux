@@ -84,8 +84,9 @@ func RunClaudeCode(name string) error {
 		return fmt.Errorf("creating workdir %s: %w", workdir, err)
 	}
 
+	tmux := func(args ...string) *exec.Cmd { return withPath("tmux", args...) }
+
 	if hasSession(socket, session) {
-		tmux := func(args ...string) *exec.Cmd { return withPath("tmux", args...) }
 		ensureClaudeAuthNotified(name, fields["AGENTMUX_RUN_USER"], display)
 		return ensureClaudeRemoteControl(tmux, socket, session)
 	}
@@ -101,7 +102,14 @@ func RunClaudeCode(name string) error {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("starting tmux session %s: %w: %s", session, err, out)
 	}
-	return nil
+	// A fresh --resume can itself land on Claude Code's own Remote Control
+	// confirmation menu (see ensureClaudeRemoteControl's doc comment) with no
+	// self-recovery of its own, and the periodic tick that would otherwise
+	// catch it may be minutes away. Give it one immediate chance here too —
+	// ensureClaudeRemoteControl already defers harmlessly (returns nil) if
+	// the pane is still busy replaying a large transcript, in which case the
+	// next tick covers it exactly as before.
+	return ensureClaudeRemoteControl(tmux, socket, session)
 }
 
 // StopClaudeCode is the instance unit's ExecStop.
