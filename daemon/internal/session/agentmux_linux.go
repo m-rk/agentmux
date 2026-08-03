@@ -3,6 +3,7 @@ package session
 import (
 	"fmt"
 	"os/exec"
+	"os/user"
 )
 
 // updateAgentmux runs as root (it needs to call systemctl), dropping to the
@@ -20,12 +21,16 @@ func updateAgentmux(name string) error {
 	}
 	session := sessionNameOf(fields, name)
 	socket := tmuxSocket(name)
+	agentEnv, err := agentUpdateEnv(name, runUser, agent)
+	if err != nil {
+		return err
+	}
 
-	before, _ := agentVersion(runUser, agent)
-	if err := updateAgent(runUser, agent); err != nil {
+	before, _ := agentVersion(runUser, agent, agentEnv)
+	if err := updateAgent(runUser, agent, agentEnv); err != nil {
 		return fmt.Errorf("%s update/check failed, leaving existing session running untouched: %w", agent, err)
 	}
-	after, _ := agentVersion(runUser, agent)
+	after, _ := agentVersion(runUser, agent, agentEnv)
 
 	if before == after && hasSessionAs(runUser, socket, session) {
 		return nil // no version change, session already running
@@ -36,20 +41,40 @@ func updateAgentmux(name string) error {
 	return nil
 }
 
-func agentVersion(runUser, agent string) (string, error) {
-	out, err := runAs(runUser, agent, "--version").CombinedOutput()
+func agentUpdateEnv(name, runUser, agent string) ([]string, error) {
+	if agent != "kilo" {
+		return nil, nil
+	}
+	u, err := user.Lookup(runUser)
+	if err != nil {
+		return nil, fmt.Errorf("looking up run user %q for kilo isolation: %w", runUser, err)
+	}
+	env, err := kiloInstanceXDGEnvForHome(name, u.HomeDir)
+	if err != nil {
+		return nil, fmt.Errorf("preparing isolated kilo data for %s: %w", name, err)
+	}
+	return env, nil
+}
+
+func agentVersion(runUser, agent string, env []string) (string, error) {
+	cmd := runAs(runUser, agent, "--version")
+	cmd.Env = append(cmd.Env, env...)
+	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 
-func updateAgent(runUser, agent string) error {
+func updateAgent(runUser, agent string, env []string) error {
+	var cmd *exec.Cmd
 	switch agent {
 	case "zero":
-		return runAs(runUser, "zero", "update", "--check").Run()
+		cmd = runAs(runUser, "zero", "update", "--check")
 	case "opencode":
-		return runAs(runUser, "opencode", "upgrade", "--method", "npm").Run()
+		cmd = runAs(runUser, "opencode", "upgrade", "--method", "npm")
 	case "kilo":
-		return runAs(runUser, "kilo", "upgrade").Run()
+		cmd = runAs(runUser, "kilo", "upgrade")
 	default:
 		return fmt.Errorf("unsupported agent: %s", agent)
 	}
+	cmd.Env = append(cmd.Env, env...)
+	return cmd.Run()
 }

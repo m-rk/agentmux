@@ -61,6 +61,12 @@ separate parts of an instance rather than defining the backend itself.
   matters for a coding agent driving another agentmux instance.
 - **Resume lookup** — `agentmux resume-list` shows what Claude Code sessions
   are resumable for a workdir; the wizard offers the same as a picker.
+- **Per-instance Kilo state** — prepared Kilo instances can keep their SQLite
+  session database and process state under their own private agentmux
+  directory while continuing to share global config and cache. Existing
+  instances stay on their legacy shared paths until their migration is marked
+  ready, so installing a new binary cannot silently log them out. See the
+  [Kilo isolation runbook](docs/kilo-xdg-isolation.md).
 - **Compact-before-resume** — by default, nightly Claude Code maintenance
   compacts and restarts the session so a long-running unattended session
   doesn't get stuck behind Claude Code's own huge-session prompt. If the
@@ -316,7 +322,8 @@ AGENTMUX_LIVE_OPENCODE=1 tests/smoke.sh
   daemon reports them as unsupported instead of guessing at a Keychain item.
 - **The manual Kilo backend is basic.** It writes `kilo.json`, launches the
   CLI, and maintains the process, but it doesn't yet mirror the native daemon's
-  session discovery/resume or remote-relay setup.
+  session discovery/resume, remote-relay setup, or migration-gated XDG data
+  and state isolation.
 - **Kilo's remote relay may allow only one connected CLI session per account
   — unconfirmed in practice.** Kilo's client treats close code `4409` as a
   permanent conflict:

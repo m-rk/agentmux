@@ -1,6 +1,9 @@
 package session
 
-import "fmt"
+import (
+	"fmt"
+	"os/exec"
+)
 
 // updateAgentmux runs as the instance's own user already (macOS
 // LaunchAgents are per-user; no privilege drop needed) and restarts by
@@ -16,12 +19,16 @@ func updateAgentmux(name string) error {
 	agent := fields["AGENTMUX_AGENT"]
 	session := sessionNameOf(fields, name)
 	socket := tmuxSocket(name)
+	agentEnv, err := agentUpdateEnv(name, agent)
+	if err != nil {
+		return err
+	}
 
-	before, _ := agentVersion(agent)
-	if err := updateAgent(agent); err != nil {
+	before, _ := agentVersion(agent, agentEnv)
+	if err := updateAgent(agent, agentEnv); err != nil {
 		return fmt.Errorf("%s update/check failed, leaving existing session running untouched: %w", agent, err)
 	}
-	after, _ := agentVersion(agent)
+	after, _ := agentVersion(agent, agentEnv)
 
 	if before == after && hasSession(socket, session) {
 		return nil // no version change, session already running
@@ -32,20 +39,36 @@ func updateAgentmux(name string) error {
 	return RunAgentmux(name)
 }
 
-func agentVersion(agent string) (string, error) {
-	out, err := withPath(agent, "--version").CombinedOutput()
+func agentUpdateEnv(name, agent string) ([]string, error) {
+	if agent != "kilo" {
+		return nil, nil
+	}
+	env, err := kiloInstanceXDGEnv(name)
+	if err != nil {
+		return nil, fmt.Errorf("preparing isolated kilo data for %s: %w", name, err)
+	}
+	return env, nil
+}
+
+func agentVersion(agent string, env []string) (string, error) {
+	cmd := withPath(agent, "--version")
+	cmd.Env = append(cmd.Env, env...)
+	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 
-func updateAgent(agent string) error {
+func updateAgent(agent string, env []string) error {
+	var cmd *exec.Cmd
 	switch agent {
 	case "zero":
-		return withPath("zero", "update", "--check").Run()
+		cmd = withPath("zero", "update", "--check")
 	case "opencode":
-		return withPath("opencode", "upgrade", "--method", "npm").Run()
+		cmd = withPath("opencode", "upgrade", "--method", "npm")
 	case "kilo":
-		return withPath("kilo", "upgrade").Run()
+		cmd = withPath("kilo", "upgrade")
 	default:
 		return fmt.Errorf("unsupported agent: %s", agent)
 	}
+	cmd.Env = append(cmd.Env, env...)
+	return cmd.Run()
 }
