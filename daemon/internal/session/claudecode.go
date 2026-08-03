@@ -44,6 +44,13 @@ const (
 // "Disconnect Remote Control" while a session is connected.
 const claudeRemoteIndicator = "/rc"
 
+// claudeFooterScanLines bounds Remote Control status/menu detection to the
+// bottom of Claude Code's TUI. The status area is not a single fixed row: mode,
+// model, effort, and keyboard-hint rows can render below /rc or the menu prompt.
+// Six rows covers the observed variants while staying well clear of the
+// welcome box, where workdir text must not be mistaken for connection state.
+const claudeFooterScanLines = 6
+
 // compactOnUpdateEnabled reports whether the nightly update should compact
 // and always restart (true, the default — preserves behavior for any
 // instance that doesn't set this field, including everything provisioned
@@ -135,13 +142,18 @@ func UpdateClaudeCode(name string) error {
 	return updateClaudeCode(name)
 }
 
-// claudeRemoteConnected checks only the pane's last line, matching where
-// Claude Code renders the indicator (confirmed live). Checking the whole
-// pane is unsafe: a workdir path containing "rc" (e.g. a directory ending in
-// "-rc" or "/src") renders in the welcome box and false-positives a plain
-// substring search over the full capture.
+// claudeRemoteConnected checks a bounded footer window for /rc as an exact
+// whitespace-delimited token. Checking the whole pane is unsafe: workdir text
+// renders in the welcome box and can contain lookalike "rc" strings. Claude's
+// status area can span several rows, though, so checking only the literal last
+// row misses a real /rc whenever a mode/model hint renders beneath it.
 func claudeRemoteConnected(tmux func(args ...string) *exec.Cmd, socket, session string) bool {
-	return strings.Contains(lastPaneLine(tmux, socket, session), claudeRemoteIndicator)
+	for _, field := range strings.Fields(lastPaneLines(tmux, socket, session, claudeFooterScanLines)) {
+		if field == claudeRemoteIndicator {
+			return true
+		}
+	}
+	return false
 }
 
 // claudeRemoteMenuFooter is the prompt on Claude Code's Remote Control
@@ -150,12 +162,12 @@ func claudeRemoteConnected(tmux func(args ...string) *exec.Cmd, socket, session 
 // (confirmed live against v2.1.220 — this is not the same as the plain
 // connect/disconnect toggle applied when currently disconnected, which takes
 // effect immediately with no menu). While this menu is up it covers the
-// footer claudeRemoteConnected reads, so a disconnected-looking pane may
-// really just be this menu sitting on top of a still-live connection.
+// footer window claudeRemoteConnected reads, so a disconnected-looking pane
+// may really just be this menu sitting on top of a still-live connection.
 const claudeRemoteMenuFooter = "Esc to continue"
 
 func claudeRemoteMenuOpen(tmux func(args ...string) *exec.Cmd, socket, session string) bool {
-	return strings.Contains(lastPaneLine(tmux, socket, session), claudeRemoteMenuFooter)
+	return strings.Contains(lastPaneLines(tmux, socket, session, claudeFooterScanLines), claudeRemoteMenuFooter)
 }
 
 // dismissClaudeRemoteMenuIfOpen closes the Remote Control menu via Escape —
@@ -173,7 +185,10 @@ func dismissClaudeRemoteMenuIfOpen(tmux func(args ...string) *exec.Cmd, socket, 
 	return true, nil
 }
 
-func lastPaneLine(tmux func(args ...string) *exec.Cmd, socket, session string) string {
+func lastPaneLines(tmux func(args ...string) *exec.Cmd, socket, session string, count int) string {
+	if count <= 0 {
+		return ""
+	}
 	out, err := tmux("-L", socket, "capture-pane", "-p", "-t", session).Output()
 	if err != nil {
 		return ""
@@ -182,7 +197,11 @@ func lastPaneLine(tmux func(args ...string) *exec.Cmd, socket, session string) s
 	if len(lines) == 0 {
 		return ""
 	}
-	return lines[len(lines)-1]
+	start := len(lines) - count
+	if start < 0 {
+		start = 0
+	}
+	return strings.Join(lines[start:], "\n")
 }
 
 // ensureClaudeRemoteControl works around Claude Code's own Remote Control
