@@ -13,10 +13,10 @@ func updateAgentmux(name string) error {
 		return err
 	}
 	runUser := fields["AGENTMUX_RUN_USER"]
-	serviceName := fields["AGENTMUX_SERVICE_NAME"]
+	serviceName := "agentmux-" + name + ".service"
 	agent := fields["AGENTMUX_AGENT"]
-	if runUser == "" || serviceName == "" {
-		return fmt.Errorf("registry for %s is missing AGENTMUX_RUN_USER/AGENTMUX_SERVICE_NAME", name)
+	if runUser == "" {
+		return fmt.Errorf("registry for %s is missing AGENTMUX_RUN_USER", name)
 	}
 	session := sessionNameOf(fields, name)
 	socket := tmuxSocket(name)

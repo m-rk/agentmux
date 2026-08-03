@@ -47,6 +47,12 @@ func registry(name string) (map[string]string, error) {
 // field is otherwise only ever set once, at creation time (and usually
 // isn't set at all, unless the wizard's resume picker was used).
 func SetRegistryField(name, key, value string) error {
+	if key == "" || strings.ContainsAny(key, "=\r\n\x00") {
+		return fmt.Errorf("invalid registry key %q", key)
+	}
+	if strings.ContainsAny(value, "\r\n\x00") {
+		return fmt.Errorf("registry value for %s contains a line break or NUL byte", key)
+	}
 	path := filepath.Join(discovery.EnvDir, name+".env")
 	data, err := os.ReadFile(path)
 	if err != nil {

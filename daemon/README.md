@@ -16,14 +16,20 @@ Tailscale IP), and the TUI can connect to several hosts at once via
 `~/.config/agentmux/hosts.yaml`. `agentmux new` — a wizard that creates a
 real instance (registry file + systemd unit/LaunchAgent + tmux session) on
 any configured device — is native Go end to end (no bash) for every
-agent/platform combination this repo supports: `claude-code`, `zero`, and
-`opencode`, on both Linux and macOS.
+agent/platform combination this repo supports: `claude-code`, `zero`,
+`opencode`, and `kilo`, on both Linux and macOS.
 
 ## Build
 
 ```sh
 go build -o agentmux ./cmd/agentmux
 ```
+
+The module currently targets Go 1.26.5. The binary orchestrates tools already
+installed on the host, so you also need `tmux`, your chosen agent CLI, and the
+runtime, credentials, or network access required by your selected provider.
+The adapter currently included for `zero`, `opencode`, and `kilo` uses Ollama,
+but provider and model are separate provisioning fields.
 
 There's only one binary now — `agentmuxd` was folded into `agentmux daemon
 run`.
@@ -46,11 +52,10 @@ sudo ./agentmux daemon install     # Linux: root required, installs a systemd un
 This copies the running binary to a stable path (`/usr/local/bin/agentmux`
 on Linux, `~/.agentmux/bin/agentmux` on macOS), installs the unit/plist
 pointing at `agentmux daemon run`, and starts it. `agentmux daemon status`
-/ `agentmux daemon uninstall` check/remove it. Re-running `install` after
-rebuilding the binary does *not* restart an already-running daemon (systemd
-`enable --now` is a no-op if it's already active) — `sudo systemctl restart
-agentmuxd` (Linux) or `launchctl kickstart -k gui/$(id -u)/com.agentmux.daemon`
-(macOS) to pick up a new build.
+/ `agentmux daemon uninstall` check/remove it. On macOS, re-running `install`
+reloads the LaunchAgent and picks up the new binary immediately. On Linux,
+systemd's `enable --now` leaves an already-running daemon alone, so follow a
+reinstall with `sudo systemctl restart agentmuxd`.
 
 Then, from the same host:
 
@@ -58,9 +63,9 @@ Then, from the same host:
 ./agentmux
 ```
 
-Keys: `↑`/`↓` navigate, `a` attach (detach with `ctrl-\`), `n` create a new
-instance, `r`/`s`/`x` restart/stop/start (asks for `y` confirmation), `q`
-quit.
+Keys: `↑`/`↓` or `j`/`k` navigate, `a` attaches (detach with `ctrl-\`), `n`
+creates an instance, `R` renames, `r`/`s`/`x` restart/stop/start (with `y`
+confirmation), `D` configures Discord notifications, and `q` quits.
 
 ## Create a new instance
 
@@ -84,7 +89,12 @@ refused rather than silently overwritten — this also catches the case of
 an instance installed by the older `backends/*/install.sh` scripts, which
 predate the registry file this wizard reads/writes.
 
-### Scripting: non-interactive create, rename, resume lookup, status, and control
+On Linux, the workdir must be absolute. The root daemon creates it using the
+requested run user's credentials, so normal filesystem permissions decide
+where it can live; agentmux does not chown an existing path or create a path
+with root's access.
+
+### Scripting: non-interactive create, rename, resume lookup, status, view, and control
 
 ```sh
 ./agentmux new -y -instance myinstance -agent claude-code -run-user ubuntu
@@ -100,7 +110,9 @@ predate the registry file this wizard reads/writes.
 fields as the form, run `agentmux new -h` for the full list. `rename` is
 the CLI counterpart to the TUI's `R` keybinding: a tmux session rename
 applies live, a display name change (claude-code only) restarts the
-session. `resume-list` is the standalone form of the wizard's resume
+session. That restart uses the resume ID currently saved in the registry, so
+use an explicit `new -y -resume ID` when preserving one exact transcript
+matters. `resume-list` is the standalone form of the wizard's resume
 picker, useful for checking what's resumable before deciding what (if
 anything) to pass to `new -y -resume`. `list` is the headless counterpart
 to the TUI's instance table (name/agent/model/status/workdir); `-json`
@@ -133,16 +145,20 @@ sudo ./agentmux daemon run -listen 100.x.y.z:4287
 `daemon install` — there's no flag for it yet, so edit
 `/etc/systemd/system/agentmuxd.service` and `daemon-reload` for now.)
 
-There's no TLS or auth on that TCP listener — it relies entirely on the
-tailnet's ACLs to keep it reachable only by your own devices. Restrict the
-port to your devices in your Tailscale ACL policy before exposing it.
+There's no TLS or authentication on the daemon API yet. The TCP listener
+relies entirely on tailnet ACLs, and the local Unix socket is currently mode
+`0666`. Any client that can reach either endpoint can list and create
+instances, control their lifecycle, read their pane contents, attach, and send
+keys. Treat the daemon as a single-user/trusted-admin tool: restrict the TCP
+port to fully trusted devices in your Tailscale ACL policy before exposing it,
+and don't use the current Linux socket on an untrusted multi-user host.
 
 On the device you run the TUI from, list every host you want to see in
 `~/.config/agentmux/hosts.yaml`:
 
 ```yaml
 hosts:
-  - name: laptop
+  - name: local
     address: "unix:///run/agentmux/agentmuxd.sock"
   - name: homelab
     address: "tcp://100.x.y.z:4287"
@@ -154,3 +170,13 @@ dials every host concurrently and merges them into one table tagged by
 host. If a host is unreachable, its row shows an inline error and the TUI
 keeps retrying in the background rather than blocking the rest of the
 table.
+
+## Checks
+
+```sh
+go test ./...
+go vet ./...
+```
+
+The repository-level `tests/smoke.sh` exercises the installer and session
+scripts with fake local tools by default.

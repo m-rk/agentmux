@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
-	"strconv"
 
 	"github.com/m-rk/agentmux/daemon/internal/runas"
 )
@@ -111,8 +110,6 @@ func createAgentmux(opts Options) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("looking up user %q: %w", runUser, err)
 	}
-	uid, _ := strconv.Atoi(u.Uid)
-	gid, _ := strconv.Atoi(u.Gid)
 
 	workdir := opts.Workdir
 	if workdir == "" {
@@ -130,11 +127,8 @@ func createAgentmux(opts Options) (string, error) {
 		}
 	}
 
-	if err := os.MkdirAll(workdir, 0o755); err != nil {
-		return "", fmt.Errorf("creating workdir %s: %w", workdir, err)
-	}
-	if err := os.Chown(workdir, uid, gid); err != nil {
-		return "", fmt.Errorf("chown workdir: %w", err)
+	if err := ensureWorkdirForUser(workdir, u); err != nil {
+		return "", err
 	}
 
 	serviceName := "agentmux-" + name + ".service"

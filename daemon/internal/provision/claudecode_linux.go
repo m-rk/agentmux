@@ -137,11 +137,8 @@ func createClaudeCode(opts Options) (string, error) {
 		return "", fmt.Errorf("Claude Code does not appear to be logged in for user %q; run 'claude' once as %s to log in, then retry", runUser, runUser)
 	}
 
-	if err := os.MkdirAll(workdir, 0o755); err != nil {
-		return "", fmt.Errorf("creating workdir %s: %w", workdir, err)
-	}
-	if err := os.Chown(workdir, uid, gid); err != nil {
-		return "", fmt.Errorf("chown workdir: %w", err)
+	if err := ensureWorkdirForUser(workdir, u); err != nil {
+		return "", err
 	}
 
 	chown := func(path string) error { return os.Chown(path, uid, gid) }
