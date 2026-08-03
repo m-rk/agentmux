@@ -36,14 +36,35 @@ func contains(args []string, want string) bool {
 }
 
 func TestClaudeRemoteConnected(t *testing.T) {
+	const connectedWithModeHint = `  /remote-control is active · Continue here, on your phone, or at
+  https://claude.ai/code/session_example
+                                                               ● high · /effort
+────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────
+  user ⚠ git:(main) ↑12  ✏️  +0/-0                                           /rc
+  🤖 Sonnet 5  🪟  5%
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+`
+	const indicatorOutsideFooter = `/rc
+footer one
+footer two
+footer three
+footer four
+footer five
+footer six
+`
 	cases := []struct {
 		name string
 		pane string
 		want bool
 	}{
 		{"connected footer", "some output\n  workdir  \U0001F4DD +0/-0                                                 /rc\n", true},
+		{"connected above mode hint", connectedWithModeHint, true},
 		{"disconnected, no indicator", "some output\n❯ \n", false},
 		{"menu open hides the footer", "   Enter to select · Esc to continue\n", false},
+		{"indicator outside footer window", indicatorOutsideFooter, false},
+		{"lookalike footer text", "status /rc-old\nmodel\nauto mode\n", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -56,14 +77,23 @@ func TestClaudeRemoteConnected(t *testing.T) {
 }
 
 func TestClaudeRemoteMenuOpen(t *testing.T) {
+	const menuAboveHint = `Disconnect this session
+Show QR code
+Continue
+Enter to select · Esc to continue
+model hint
+auto mode hint
+`
 	cases := []struct {
 		name string
 		pane string
 		want bool
 	}{
 		{"menu open", "   Enter to select · Esc to continue\n", true},
+		{"menu above mode hints", menuAboveHint, true},
 		{"connected, no menu", "workdir /rc\n", false},
 		{"disconnected, no menu", "❯ \n", false},
+		{"menu text outside footer window", "Esc to continue\n1\n2\n3\n4\n5\n6\n", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
