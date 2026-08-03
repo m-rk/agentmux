@@ -104,8 +104,17 @@ func RunAgentmux(name string) error {
 			return fmt.Errorf("reading local kilo env overlay: %w", err)
 		}
 		kiloEnv = env
+		isolatedEnv, err := kiloInstanceXDGEnv(name)
+		if err != nil {
+			return fmt.Errorf("preparing isolated kilo data for %s: %w", name, err)
+		}
+		// Keep these entries last so a shared XDG_DATA_HOME/XDG_STATE_HOME in
+		// kilo-env cannot accidentally collapse prepared instances back onto
+		// the same database and state directory. Config and cache remain
+		// untouched and can still be shared deliberately.
+		kiloEnv = append(kiloEnv, isolatedEnv...)
 
-		id, err := latestKiloSessionID(workdir)
+		id, err := latestKiloSessionID(workdir, kiloEnv)
 		if err != nil {
 			return fmt.Errorf("checking for an existing kilo session in %s: %w", workdir, err)
 		}
@@ -240,9 +249,10 @@ func enableKiloRemote(socket, session string) error {
 // combined with a directory that has no sessions of its own yet, which is
 // exactly the first-ever-launch case this function most needs to handle
 // correctly.
-func latestKiloSessionID(workdir string) (string, error) {
+func latestKiloSessionID(workdir string, env []string) (string, error) {
 	cmd := withPath("kilo", "session", "list", "--format", "json")
 	cmd.Dir = workdir
+	cmd.Env = append(cmd.Env, env...)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("listing kilo sessions: %w", err)
@@ -344,7 +354,7 @@ func seedKiloSession(workdir string, env []string, title string) (string, error)
 	// flow) — poll briefly rather than failing on the first empty check.
 	seedDeadline := time.Now().Add(10 * time.Second)
 	for {
-		id, err := latestKiloSessionID(workdir)
+		id, err := latestKiloSessionID(workdir, env)
 		if err != nil {
 			return "", err
 		}
@@ -551,6 +561,82 @@ func readKiloExtraEnv() ([]string, error) {
 		env = append(env, name+"="+value)
 	}
 	return env, nil
+}
+
+const kiloXDGIsolationReadyFile = ".xdg-isolation-ready"
+
+// kiloInstanceXDGEnv returns per-instance data and state roots after an
+// operator has explicitly marked the instance ready for cutover. Existing
+// Kilo installations share credentials and session history in the default
+// XDG directories, so enabling isolation merely because a new agentmux binary
+// was installed would make the next unattended restart look like an empty,
+// logged-out installation. The marker keeps deployment and data migration as
+// separate operations: no marker means preserve the legacy environment.
+//
+// The isolation root is derived from agentmux's instance identity rather than
+// a caller-selected workdir. Custom workdirs may be arbitrary source
+// checkouts; putting OAuth material and a live SQLite database inside one
+// would expose secrets to project tooling and make accidental commits much
+// too easy.
+func kiloInstanceXDGEnv(instance string) ([]string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	return kiloInstanceXDGEnvForHome(instance, home)
+}
+
+func kiloInstanceXDGEnvForHome(instance, home string) ([]string, error) {
+	if instance == "" || instance == "." || instance == ".." || filepath.Base(instance) != instance {
+		return nil, fmt.Errorf("invalid instance name %q for kilo isolation", instance)
+	}
+	root := filepath.Join(home, ".agentmux", instance, ".kilo-home")
+	marker := filepath.Join(root, kiloXDGIsolationReadyFile)
+	markerInfo, err := os.Lstat(marker)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if !markerInfo.Mode().IsRegular() {
+		return nil, fmt.Errorf("readiness marker %s must be a regular file", marker)
+	}
+
+	dataDir := filepath.Join(root, "data")
+	stateDir := filepath.Join(root, "state")
+	for _, dir := range []string{root, dataDir, stateDir} {
+		if err := ensurePrivateKiloDir(dir); err != nil {
+			return nil, err
+		}
+	}
+	return []string{
+		"XDG_DATA_HOME=" + dataDir,
+		"XDG_STATE_HOME=" + stateDir,
+	}, nil
+}
+
+func ensurePrivateKiloDir(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			return err
+		}
+		info, err = os.Lstat(path)
+		if err != nil {
+			return err
+		}
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("isolated kilo path %s must be a directory", path)
+	}
+	if err := os.Chmod(path, 0o700); err != nil {
+		return err
+	}
+	return nil
 }
 
 func writeJSONAtomic(path string, doc any) error {

@@ -94,6 +94,12 @@ requested run user's credentials, so normal filesystem permissions decide
 where it can live; agentmux does not chown an existing path or create a path
 with root's access.
 
+Kilo instances can use private per-instance data and state directories while
+keeping global config and cache shared. Existing instances retain Kilo's legacy
+shared paths until their credentials and sessions have been migrated and the
+cutover is explicitly marked ready; follow the
+[Kilo isolation runbook](../docs/kilo-xdg-isolation.md).
+
 ### Scripting: non-interactive create, rename, resume lookup, status, view, and control
 
 ```sh

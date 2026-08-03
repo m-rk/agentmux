@@ -82,3 +82,9 @@ agentmux itself considers the live session.
   `systemctl show agentmuxd.service -p KillMode,Type` — expect
   `Type=simple`, `KillMode=control-group` — and `ps --ppid <daemon-pid>`
   showing no children, if in doubt).
+- Kilo instances can isolate their data and state directories, but existing
+  instances require an explicit, one-at-a-time migration. Follow
+  [`docs/kilo-xdg-isolation.md`](docs/kilo-xdg-isolation.md); never create the
+  readiness marker or restart a live instance until its isolated login and
+  session history have been verified and the operator has approved the
+  cutover.
