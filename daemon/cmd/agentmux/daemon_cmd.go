@@ -23,7 +23,10 @@ func runDaemonCmd(args []string) {
 	}
 	switch args[0] {
 	case "install":
-		if err := daemoninstall.Install(); err != nil {
+		fs := flag.NewFlagSet("daemon install", flag.ExitOnError)
+		doctorTime := fs.String("doctor-time", daemoninstall.DefaultDoctorTime, "daily doctor time in HH:MM (after the refresh window)")
+		fs.Parse(args[1:])
+		if err := daemoninstall.Install(*doctorTime); err != nil {
 			log.Fatalf("daemon install: %v", err)
 		}
 	case "uninstall":

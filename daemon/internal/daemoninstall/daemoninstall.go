@@ -11,8 +11,30 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
+
+const DefaultDoctorTime = "03:30"
+
+func ParseDoctorTime(value string) (hour, minute int, err error) {
+	if len(value) != len("HH:MM") || value[2] != ':' {
+		return 0, 0, fmt.Errorf("invalid doctor time %q (want HH:MM)", value)
+	}
+	parts := strings.Split(value, ":")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("invalid doctor time %q (want HH:MM)", value)
+	}
+	hour, err = strconv.Atoi(parts[0])
+	if err != nil || hour < 0 || hour > 23 {
+		return 0, 0, fmt.Errorf("invalid doctor hour in %q", value)
+	}
+	minute, err = strconv.Atoi(parts[1])
+	if err != nil || minute < 0 || minute > 59 {
+		return 0, 0, fmt.Errorf("invalid doctor minute in %q", value)
+	}
+	return hour, minute, nil
+}
 
 // installSelf copies the currently running executable to dst (atomically,
 // via a temp file + rename), unless it's already running from there. Used

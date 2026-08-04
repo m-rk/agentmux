@@ -27,8 +27,8 @@ git clone https://github.com/m-rk/agentmux.git
 cd agentmux/daemon
 go build -o agentmux ./cmd/agentmux
 
-sudo ./agentmux daemon install   # Linux: installs a systemd unit
-./agentmux daemon install        # macOS: installs a per-user LaunchAgent, no sudo
+sudo ./agentmux daemon install   # Linux: daemon + doctor systemd timer
+./agentmux daemon install        # macOS: daemon + doctor LaunchAgent, no sudo
 
 ./agentmux new                   # wizard: pick device, agent, model, workdir
 ./agentmux                       # TUI: attach, rename, restart, create — across every host
@@ -72,13 +72,65 @@ separate parts of an instance rather than defining the backend itself.
   doesn't get stuck behind Claude Code's own huge-session prompt. If the
   transcript already ends at a compact boundary, agentmux skips the redundant
   `/compact`. This is configurable per instance.
+- **A doctor after refresh** — at 03:30, shortly after the default 03:00
+  refresh, one host-wide doctor checks each service, tmux process, session
+  identity, refresh result, pane readiness, and backend remote-control state.
+  Healthy runs stop there. Problems escalate to Claude for a bounded repair
+  plan, which agentmux validates and verifies before reporting the result.
 - **Discord notifications (early)** — Discord is agentmux's outbound channel
   for anything it or its managed sessions need to tell you. `agentmux notify
   discord setup` stores a webhook for the current OS user; setup is also
-  available from the wizard and the TUI's `D` key. The first built-in messages
-  are Linux Claude Code warnings around 48 hours before a refresh token expires
-  and again when it does. See [Known limitations](#known-limitations) for the
-  current scope.
+  available from the wizard and the TUI's `D` key. Built-in messages now cover
+  notable doctor findings and repairs, plus Linux Claude Code warnings
+  around 48 hours before a refresh token expires and again when it does. See
+  [Known limitations](#known-limitations) for the current scope.
+
+### Session doctor
+
+`agentmux daemon install` also installs one daily doctor for the host: a
+systemd timer on Linux and a per-user LaunchAgent on macOS. It runs at 03:30
+(Australia/Perth on Linux, local time on macOS), giving the default 03:00
+per-instance refresh half an hour to finish. Choose another post-refresh time
+when installing with `agentmux daemon install -doctor-time HH:MM`. Run the
+same pass whenever you want with:
+
+```sh
+agentmux doctor -dry-run   # preview locally; no repair or Discord post
+agentmux doctor            # diagnose, recover safely, and verify
+```
+
+The first stage is deterministic and backend-aware: it checks the service
+manager, tmux/process identity, the latest refresh result, whether the pane is
+interactive, and Claude/Kilo remote-control indicators where applicable. If
+those checks are healthy, no model is called and no pane content leaves the
+host.
+
+When the first stage finds trouble, Claude Code is the escalation agent by
+default and uses the existing Claude login for the session owner; `-model` can
+pin a model when that is useful. On Linux, agentmux drops privileges before
+launching Claude and normally chooses the owner of the first Claude Code
+instance. `-run-user USER` makes that explicit on an unusual multi-user host.
+
+Claude gets no tools and never types into a session itself. It receives only
+the affected sessions' structured findings and capped pane snapshots, then
+returns JSON for agentmux to validate. A dead session may be started; Escape
+may be sent only when the visible pane advertises an Escape action; an idle
+session may be restarted only with a verbatim pane excerpt as evidence. A
+running session cannot be restarted, and no lifecycle repair runs while the
+daily refresh is still active. agentmux refreshes the affected session's state
+immediately before acting, then probes again afterward rather than treating a
+successful command as proof of recovery. Pane text is still session content,
+so use an account you trust with that small excerpt.
+
+No Discord message is sent for an uneventful pass. Repairs, meaningful
+observations, escalation failures, and inspection failures go to the webhook
+configured for the same OS user with `agentmux notify discord setup`. Each
+message includes the before/after state, including successful auto-recovery.
+An unchanged unresolved incident is debounced; recovery or a changed/new
+incident produces a fresh message. If the same repair leaves exactly the same
+problem behind twice, later attempts are suppressed until the session state
+changes, and that suppression is reported once rather than causing silent
+daily restart churn.
 
 ## Trust model
 
@@ -316,9 +368,9 @@ AGENTMUX_LIVE_OPENCODE=1 tests/smoke.sh
   outbound communication channel for agentmux and its managed sessions; token
   expiry is simply the first event wired into it. The webhook URL is a bearer
   credential stored under that user's config directory, so configure it
-  separately for the run user on each host and protect the file. The current
-  automatic producer is Linux-only: macOS token-expiry checks are not
-  implemented because Claude Code keeps those credentials in Keychain, and the
+  separately for the run user on each host and protect the file. The doctor
+  reports on both Linux and macOS. Token-expiry warnings remain
+  Linux-only because Claude Code keeps macOS credentials in Keychain, and the
   daemon reports them as unsupported instead of guessing at a Keychain item.
 - **The manual Kilo backend is basic.** It writes `kilo.json`, launches the
   CLI, and maintains the process, but it doesn't yet mirror the native daemon's
@@ -340,6 +392,6 @@ AGENTMUX_LIVE_OPENCODE=1 tests/smoke.sh
 - More backends (Codex CLI, Gemini CLI, whatever comes next) — each one
   running side by side adds to the redundancy/variety this repo is going
   for
-- Health-check / notification on failed updates instead of just journal logs
+- Add richer refresh diagnostics to the doctor beyond service exit state
 - Authentication for the daemon API, tighter local socket permissions, and
   TLS for TCP instead of relying solely on tailnet ACLs

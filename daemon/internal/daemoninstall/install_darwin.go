@@ -7,7 +7,12 @@ import (
 	"strconv"
 )
 
-const label = "com.agentmux.daemon"
+const (
+	label = "com.agentmux.daemon"
+	// Instance labels occupy com.agentmux.<name>; keep the host doctor out of
+	// that namespace so an instance named "doctor" cannot collide with it.
+	doctorLabel = "com.m-rk.agentmux.doctor"
+)
 
 const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -31,6 +36,34 @@ const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
     <string>%s/agentmuxd.log</string>
     <key>StandardErrorPath</key>
     <string>%s/agentmuxd.err.log</string>
+</dict>
+</plist>
+`
+
+const doctorPlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>%s</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>%s</string>
+        <string>doctor</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>%d</integer>
+        <key>Minute</key>
+        <integer>%d</integer>
+    </dict>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>%s/doctor.log</string>
+    <key>StandardErrorPath</key>
+    <string>%s/doctor.err.log</string>
 </dict>
 </plist>
 `
@@ -60,11 +93,19 @@ func SocketPath() string {
 }
 
 func plistPath() (string, error) {
+	return launchAgentPath(label)
+}
+
+func doctorPlistPath() (string, error) {
+	return launchAgentPath(doctorLabel)
+}
+
+func launchAgentPath(agentLabel string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, "Library", "LaunchAgents", label+".plist"), nil
+	return filepath.Join(home, "Library", "LaunchAgents", agentLabel+".plist"), nil
 }
 
 // Install renders and loads a per-user LaunchAgent, pointing it at a stable
@@ -73,12 +114,16 @@ func plistPath() (string, error) {
 // backends/*/install-macos.sh, which explicitly refuse sudo), so agentmuxd
 // itself stays in the same unprivileged, per-user world — no root needed
 // anywhere in the macOS path.
-func Install() error {
+func Install(doctorTime string) error {
 	if os.Geteuid() == 0 {
 		return fmt.Errorf("must not be run as root/sudo on macOS; run as your normal user")
 	}
 
 	dir, err := agentmuxDir()
+	if err != nil {
+		return err
+	}
+	doctorHour, doctorMinute, err := ParseDoctorTime(doctorTime)
 	if err != nil {
 		return err
 	}
@@ -103,6 +148,14 @@ func Install() error {
 	if err := os.WriteFile(plist, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("writing %s: %w", plist, err)
 	}
+	doctorPlist, err := doctorPlistPath()
+	if err != nil {
+		return err
+	}
+	doctorContent := fmt.Sprintf(doctorPlistTemplate, doctorLabel, bin, doctorHour, doctorMinute, logDir, logDir)
+	if err := os.WriteFile(doctorPlist, []byte(doctorContent), 0o644); err != nil {
+		return fmt.Errorf("writing %s: %w", doctorPlist, err)
+	}
 
 	domain := "gui/" + strconv.Itoa(os.Getuid())
 	_ = runCmd("launchctl", "bootout", domain, plist) // ignore error: may not be loaded yet
@@ -112,8 +165,12 @@ func Install() error {
 	if err := runCmd("launchctl", "kickstart", "-k", domain+"/"+label); err != nil {
 		return err
 	}
+	_ = runCmd("launchctl", "bootout", domain, doctorPlist)
+	if err := runCmd("launchctl", "bootstrap", domain, doctorPlist); err != nil {
+		return err
+	}
 
-	fmt.Printf("Installed and started %s (binary: %s, socket: %s)\n", label, bin, sock)
+	fmt.Printf("Installed and started %s plus %s at %s local time (binary: %s, socket: %s)\n", label, doctorLabel, doctorTime, bin, sock)
 	return nil
 }
 
@@ -123,9 +180,16 @@ func Uninstall() error {
 		return err
 	}
 	domain := "gui/" + strconv.Itoa(os.Getuid())
+	doctorPlist, doctorErr := doctorPlistPath()
+	if doctorErr != nil {
+		return doctorErr
+	}
+	_ = runCmd("launchctl", "bootout", domain, doctorPlist)
 	_ = runCmd("launchctl", "bootout", domain, plist)
-	if err := os.Remove(plist); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("removing %s: %w", plist, err)
+	for _, path := range []string{doctorPlist, plist} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("removing %s: %w", path, err)
+		}
 	}
 	fmt.Printf("Removed %s\n", label)
 	return nil
@@ -143,5 +207,7 @@ func Status() (string, error) {
 	sock := filepath.Join(dir, "run", "agentmuxd.sock")
 	domain := "gui/" + strconv.Itoa(os.Getuid())
 	out := captureCmd("launchctl", "print", domain+"/"+label)
-	return fmt.Sprintf("plist: %s\nsocket: %s\n\n%s", plist, sock, out), nil
+	doctorPlist, _ := doctorPlistPath()
+	doctorOut := captureCmd("launchctl", "print", domain+"/"+doctorLabel)
+	return fmt.Sprintf("plist: %s\nsocket: %s\n\n%s\n\ndoctor plist: %s\n%s", plist, sock, out, doctorPlist, doctorOut), nil
 }

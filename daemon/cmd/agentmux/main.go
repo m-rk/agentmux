@@ -35,6 +35,8 @@ func main() {
 		runViewCmd(args[1:])
 	case "send-keys":
 		runSendKeysCmd(args[1:])
+	case "doctor":
+		runDoctorCmd(args[1:])
 	case "notify":
 		runNotifyCmd(args[1:])
 	case "-h", "--help", "help":
@@ -51,7 +53,7 @@ func printUsage() {
 
 Usage:
   agentmux                    launch the TUI (default)
-  agentmux daemon install     install and start the agentmuxd daemon on this host
+  agentmux daemon install [-doctor-time HH:MM]   install the daemon and post-refresh doctor
   agentmux daemon uninstall   remove the daemon
   agentmux daemon status      check whether the daemon is installed/running
   agentmux daemon run         run the daemon in the foreground (used by the installed unit)
@@ -63,6 +65,7 @@ Usage:
   agentmux control ...         start/stop/restart an instance without an attached terminal
   agentmux view -instance NAME        headless read-only snapshot of an instance's tmux pane
   agentmux send-keys -instance NAME KEY...   headless equivalent of typing into an instance's pane
+  agentmux doctor              diagnose local sessions and safely recover notable problems
   agentmux notify discord setup    configure the Discord webhook agentmux notifies on (e.g. expiring auth)
   agentmux notify discord setup -y -webhook-url URL   same, non-interactively
   agentmux notify discord test     resend a test message using the saved webhook

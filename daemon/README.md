@@ -45,15 +45,17 @@ protoc --go_out=internal/pb --go_opt=paths=source_relative \
 ## Install the daemon
 
 ```sh
-sudo ./agentmux daemon install     # Linux: root required, installs a systemd unit
-./agentmux daemon install          # macOS: do NOT use sudo, installs a per-user LaunchAgent
+sudo ./agentmux daemon install     # Linux: root required; daemon + doctor timer
+./agentmux daemon install          # macOS: no sudo; daemon + doctor LaunchAgent
 ```
 
 This copies the running binary to a stable path (`/usr/local/bin/agentmux`
 on Linux, `~/.agentmux/bin/agentmux` on macOS), installs the unit/plist
-pointing at `agentmux daemon run`, and starts it. `agentmux daemon status`
-/ `agentmux daemon uninstall` check/remove it. On macOS, re-running `install`
-reloads the LaunchAgent and picks up the new binary immediately. On Linux,
+pointing at `agentmux daemon run`, starts it, and schedules `agentmux doctor`
+at 03:30 shortly after the default 03:00 session refresh.
+`agentmux daemon status` and `agentmux daemon uninstall` check/remove both
+jobs. On macOS, re-running `install` reloads the LaunchAgent and picks up the
+new binary immediately. On Linux,
 systemd's `enable --now` leaves an already-running daemon alone, so follow a
 reinstall with `sudo systemctl restart agentmuxd`.
 
@@ -66,6 +68,21 @@ Then, from the same host:
 Keys: `↑`/`↓` or `j`/`k` navigate, `a` attaches (detach with `ctrl-\`), `n`
 creates an instance, `R` renames, `r`/`s`/`x` restart/stop/start (with `y`
 confirmation), `D` configures Discord notifications, and `q` quits.
+
+The doctor first checks service, process, refresh, pane, and backend remote
+state without an LLM. Only unhealthy sessions escalate to Claude Code, which
+receives capped snapshots and returns a repair plan for agentmux to validate,
+re-check immediately before applying, and verify afterward. Repairs are held
+while refresh is still running, and the same ineffective repair is suppressed
+after two unchanged attempts. Discord gets one debounced before/after incident
+summary, including successful recovery. Run it with `./agentmux doctor`,
+preview it with `./agentmux doctor -dry-run`, and use `./agentmux doctor -h`
+for model, run-user, timeout, and snapshot controls. Set a different schedule
+with `agentmux daemon install -doctor-time HH:MM`. On Linux the root-owned
+timer launches Claude as the owner of the first Claude Code instance (or the
+explicit `-run-user`), so Claude credentials and the Discord webhook are
+never read from root's home; user lookup and credential setup fail closed
+rather than falling back to root.
 
 ## Create a new instance
 

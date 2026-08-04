@@ -148,7 +148,19 @@ func UpdateClaudeCode(name string) error {
 // status area can span several rows, though, so checking only the literal last
 // row misses a real /rc whenever a mode/model hint renders beneath it.
 func claudeRemoteConnected(tmux func(args ...string) *exec.Cmd, socket, session string) bool {
-	for _, field := range strings.Fields(lastPaneLines(tmux, socket, session, claudeFooterScanLines)) {
+	return ClaudePaneRemoteConnected(lastPaneLines(tmux, socket, session, claudeFooterScanLines))
+}
+
+// ClaudePaneRemoteConnected reports whether a captured Claude Code pane shows
+// Remote Control as connected in its bounded footer. It is exported for the
+// host-wide doctor so health checks and the per-instance self-heal use exactly
+// the same detection rule.
+func ClaudePaneRemoteConnected(pane string) bool {
+	lines := strings.Split(strings.TrimRight(pane, "\n"), "\n")
+	if len(lines) > claudeFooterScanLines {
+		lines = lines[len(lines)-claudeFooterScanLines:]
+	}
+	for _, field := range strings.Fields(strings.Join(lines, "\n")) {
 		if field == claudeRemoteIndicator {
 			return true
 		}
@@ -167,7 +179,13 @@ func claudeRemoteConnected(tmux func(args ...string) *exec.Cmd, socket, session 
 const claudeRemoteMenuFooter = "Esc to continue"
 
 func claudeRemoteMenuOpen(tmux func(args ...string) *exec.Cmd, socket, session string) bool {
-	return strings.Contains(lastPaneLines(tmux, socket, session, claudeFooterScanLines), claudeRemoteMenuFooter)
+	return ClaudePaneRemoteMenuOpen(lastPaneLines(tmux, socket, session, claudeFooterScanLines))
+}
+
+// ClaudePaneRemoteMenuOpen reports the known Remote Control confirmation menu
+// that safely closes with Escape.
+func ClaudePaneRemoteMenuOpen(pane string) bool {
+	return strings.Contains(pane, claudeRemoteMenuFooter)
 }
 
 // dismissClaudeRemoteMenuIfOpen closes the Remote Control menu via Escape —

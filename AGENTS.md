@@ -23,6 +23,7 @@ headless CLI equivalent:
 | (list) | `agentmux list` (`-json` for scripts) |
 | — | `agentmux view -instance NAME` — read-only pane snapshot |
 | — | `agentmux send-keys -instance NAME KEY...` — type into a pane |
+| — | `agentmux doctor -dry-run` — preview the host-wide health/recovery pass |
 
 **Do not shell out to raw `tmux -L`/`-S ...` commands against agentmux-managed
 sessions.** It's tempting — every instance's tmux session is easy to find by

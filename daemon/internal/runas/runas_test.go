@@ -1,10 +1,68 @@
 package runas
 
 import (
+	"context"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestCurrentUserCommandContextHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := CurrentUserCommandContext(ctx, "sh", "-c", "exit 0").Run(); err == nil {
+		t.Fatal("cancelled command unexpectedly ran")
+	}
+}
+
+func TestCommandFailsClosedWhenRunUserIsMissing(t *testing.T) {
+	cmd := Command("agentmux-user-that-cannot-exist-7f64d8", "sh", "-c", "exit 0")
+	if cmd.Err == nil || !strings.Contains(cmd.Err.Error(), "looking up run user") {
+		t.Fatalf("cmd.Err = %v", cmd.Err)
+	}
+	if err := cmd.Run(); err == nil {
+		t.Fatal("missing run user unexpectedly executed the command")
+	}
+}
+
+func TestCommandForCurrentUserPreservesExistingCredentials(t *testing.T) {
+	u, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := Command(u.Username, "sh", "-c", "exit 0")
+	if cmd.Err != nil {
+		t.Fatalf("Command: %v", cmd.Err)
+	}
+	if cmd.SysProcAttr != nil && cmd.SysProcAttr.Credential != nil {
+		t.Fatal("same-user command should preserve the process's credentials and supplementary groups")
+	}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("same-user command failed: %v", err)
+	}
+}
+
+func TestCredentialForRejectsInvalidIDs(t *testing.T) {
+	if _, err := credentialFor(&user.User{Username: "broken", Uid: "not-a-uid", Gid: "1"}); err == nil {
+		t.Fatal("invalid UID unexpectedly accepted")
+	}
+	if _, err := credentialFor(&user.User{Username: "broken", Uid: "1", Gid: "not-a-gid"}); err == nil {
+		t.Fatal("invalid GID unexpectedly accepted")
+	}
+}
+
+func TestCommandRejectsBinaryOutsideRunUserPath(t *testing.T) {
+	u, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := Command(u.Username, "agentmux-command-that-cannot-exist-3d18b7")
+	if cmd.Err == nil || !strings.Contains(cmd.Err.Error(), "not found") {
+		t.Fatalf("cmd.Err = %v", cmd.Err)
+	}
+}
 
 // makeExecutable creates dir/name as an executable file, returning its
 // full path.
