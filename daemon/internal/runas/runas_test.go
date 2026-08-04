@@ -1,10 +1,19 @@
 package runas
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestCurrentUserCommandContextHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := CurrentUserCommandContext(ctx, "sh", "-c", "exit 0").Run(); err == nil {
+		t.Fatal("cancelled command unexpectedly ran")
+	}
+}
 
 // makeExecutable creates dir/name as an executable file, returning its
 // full path.

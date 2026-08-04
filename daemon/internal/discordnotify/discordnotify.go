@@ -27,6 +27,14 @@ func DefaultPath() string {
 	if err != nil {
 		return ""
 	}
+	return PathForHome(home)
+}
+
+// PathForHome returns the Discord config path for a particular user's home.
+// The Linux doctor runs from the root daemon's systemd unit but invokes
+// Claude as an instance owner, so it also needs to load that owner's webhook
+// rather than root's unrelated configuration.
+func PathForHome(home string) string {
 	return filepath.Join(home, ".config", "agentmux", "discord.yaml")
 }
 

@@ -38,6 +38,7 @@ const (
 type Instance struct {
 	Name         string
 	Agent        string
+	RunUser      string // local OS account that owns the agent/tmux process
 	Provider     string
 	Model        string
 	Workdir      string
@@ -115,6 +116,7 @@ func instanceFromEnv(filename string, fields map[string]string, panes map[string
 	inst := Instance{
 		Name:        name,
 		Agent:       agent,
+		RunUser:     fields["AGENTMUX_RUN_USER"],
 		Provider:    fields["AGENTMUX_PROVIDER"],
 		Model:       fields["AGENTMUX_MODEL"],
 		Workdir:     fields["AGENTMUX_WORKDIR"],

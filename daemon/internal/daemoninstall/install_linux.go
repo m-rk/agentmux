@@ -6,11 +6,17 @@ import (
 )
 
 const (
-	binPath      = "/usr/local/bin/agentmux"
-	unitPath     = "/etc/systemd/system/agentmuxd.service"
-	daemonSocket = "/run/agentmux/agentmuxd.sock"
-	unitName     = "agentmuxd.service"
-	unitTemplate = `[Unit]
+	binPath         = "/usr/local/bin/agentmux"
+	unitPath        = "/etc/systemd/system/agentmuxd.service"
+	doctorUnitPath  = "/etc/systemd/system/agentmuxd-doctor.service"
+	doctorTimerPath = "/etc/systemd/system/agentmuxd-doctor.timer"
+	daemonSocket    = "/run/agentmux/agentmuxd.sock"
+	unitName        = "agentmuxd.service"
+	// Use agentmuxd-* rather than agentmux-* so these host jobs cannot
+	// collide with the unit for an ordinary instance named "doctor".
+	doctorUnitName  = "agentmuxd-doctor.service"
+	doctorTimerName = "agentmuxd-doctor.timer"
+	unitTemplate    = `[Unit]
 Description=agentmux daemon
 After=network-online.target
 Wants=network-online.target
@@ -25,6 +31,27 @@ RuntimeDirectoryMode=0755
 [Install]
 WantedBy=multi-user.target
 `
+	doctorUnitTemplate = `[Unit]
+Description=agentmux session doctor
+After=agentmuxd.service network-online.target
+Wants=network-online.target
+Requires=agentmuxd.service
+
+[Service]
+Type=oneshot
+ExecStart=%s doctor
+TimeoutStartSec=15min
+`
+	doctorTimerTemplate = `[Unit]
+Description=Run agentmux doctor after the daily refresh window
+
+[Timer]
+OnCalendar=*-*-* %s:00 Australia/Perth
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+`
 )
 
 // SocketPath returns the Unix socket the installed daemon listens on,
@@ -38,9 +65,12 @@ func SocketPath() string {
 // copy of the current binary under /usr/local/bin. Requires root, since the
 // unit (and the agentmux-<instance>.service units it will manage) are
 // system-scoped, matching backends/*/install.sh's existing root requirement.
-func Install() error {
+func Install(doctorTime string) error {
 	if os.Geteuid() != 0 {
 		return fmt.Errorf("must be run as root; try: sudo agentmux daemon install")
+	}
+	if _, _, err := ParseDoctorTime(doctorTime); err != nil {
+		return err
 	}
 
 	if err := installSelf(binPath); err != nil {
@@ -51,6 +81,14 @@ func Install() error {
 	if err := os.WriteFile(unitPath, []byte(unit), 0o644); err != nil {
 		return fmt.Errorf("writing %s: %w", unitPath, err)
 	}
+	doctorUnit := fmt.Sprintf(doctorUnitTemplate, binPath)
+	if err := os.WriteFile(doctorUnitPath, []byte(doctorUnit), 0o644); err != nil {
+		return fmt.Errorf("writing %s: %w", doctorUnitPath, err)
+	}
+	doctorTimer := fmt.Sprintf(doctorTimerTemplate, doctorTime)
+	if err := os.WriteFile(doctorTimerPath, []byte(doctorTimer), 0o644); err != nil {
+		return fmt.Errorf("writing %s: %w", doctorTimerPath, err)
+	}
 
 	if err := runCmd("systemctl", "daemon-reload"); err != nil {
 		return err
@@ -58,8 +96,11 @@ func Install() error {
 	if err := runCmd("systemctl", "enable", "--now", unitName); err != nil {
 		return err
 	}
+	if err := runCmd("systemctl", "enable", "--now", doctorTimerName); err != nil {
+		return err
+	}
 
-	fmt.Printf("Installed and started %s (binary: %s, socket: %s)\n", unitName, binPath, daemonSocket)
+	fmt.Printf("Installed and started %s plus %s at %s Australia/Perth (binary: %s, socket: %s)\n", unitName, doctorTimerName, doctorTime, binPath, daemonSocket)
 	return nil
 }
 
@@ -69,9 +110,12 @@ func Uninstall() error {
 	if os.Geteuid() != 0 {
 		return fmt.Errorf("must be run as root; try: sudo agentmux daemon uninstall")
 	}
+	_ = runCmd("systemctl", "disable", "--now", doctorTimerName)
 	_ = runCmd("systemctl", "disable", "--now", unitName)
-	if err := os.Remove(unitPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("removing %s: %w", unitPath, err)
+	for _, path := range []string{doctorTimerPath, doctorUnitPath, unitPath} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("removing %s: %w", path, err)
+		}
 	}
 	if err := runCmd("systemctl", "daemon-reload"); err != nil {
 		return err
@@ -86,5 +130,7 @@ func Status() (string, error) {
 	}
 	active := captureCmd("systemctl", "is-active", unitName)
 	enabled := captureCmd("systemctl", "is-enabled", unitName)
-	return fmt.Sprintf("unit: %s\nactive: %s\nenabled: %s\nsocket: %s", unitPath, active, enabled, daemonSocket), nil
+	doctorActive := captureCmd("systemctl", "is-active", doctorTimerName)
+	doctorEnabled := captureCmd("systemctl", "is-enabled", doctorTimerName)
+	return fmt.Sprintf("unit: %s\nactive: %s\nenabled: %s\nsocket: %s\n\ndoctor timer: %s\nactive: %s\nenabled: %s", unitPath, active, enabled, daemonSocket, doctorTimerPath, doctorActive, doctorEnabled), nil
 }

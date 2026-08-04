@@ -180,6 +180,17 @@ const kiloRemoteIndicator = "◆ Remote"
 // selection settled.
 const kiloRemoteEntryMarker = "Enable or disable remote session relay"
 
+// KiloPaneReady and KiloPaneRemoteConnected expose the same stable footer
+// markers used during startup so the host-wide doctor does not invent a
+// second, subtly different definition of Kilo health.
+func KiloPaneReady(pane string) bool {
+	return strings.Contains(pane, kiloReadyMarker)
+}
+
+func KiloPaneRemoteConnected(pane string) bool {
+	return strings.Contains(pane, kiloRemoteIndicator)
+}
+
 // enableKiloRemote ensures session ends up connected to kilo's remote
 // relay — kilo's own equivalent of Claude Code's --remote-control launch
 // flag, except it has no such flag; /remote is a runtime-only toggle.

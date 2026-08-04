@@ -5,6 +5,7 @@
 package runas
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -25,9 +26,20 @@ import (
 // run from a root daemon with a minimal PATH would silently fail to find a
 // user-installed binary like claude even with cmd.Env set correctly.
 func Command(runUser, name string, args ...string) *exec.Cmd {
+	return command(nil, runUser, name, args...)
+}
+
+// CommandContext is Command with cancellation support. It is useful for
+// bounded one-shot jobs such as the session doctor, where a provider CLI
+// must not be allowed to keep a systemd/launchd job alive indefinitely.
+func CommandContext(ctx context.Context, runUser, name string, args ...string) *exec.Cmd {
+	return command(ctx, runUser, name, args...)
+}
+
+func command(ctx context.Context, runUser, name string, args ...string) *exec.Cmd {
 	u, err := user.Lookup(runUser)
 	if err != nil {
-		return exec.Command(name, args...)
+		return execCommand(ctx, name, args...)
 	}
 	path := pathFor(u)
 
@@ -40,7 +52,7 @@ func Command(runUser, name string, args ...string) *exec.Cmd {
 
 	uid, _ := strconv.Atoi(u.Uid)
 	gid, _ := strconv.Atoi(u.Gid)
-	cmd := exec.Command(resolved, args...)
+	cmd := execCommand(ctx, resolved, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}}
 	cmd.Env = append(os.Environ(), "HOME="+u.HomeDir, "PATH="+path)
 	return cmd
@@ -59,6 +71,15 @@ func Command(runUser, name string, args ...string) *exec.Cmd {
 // (e.g. TERM for an interactive attach) should append to cmd.Env after
 // calling this, not replace it.
 func CurrentUserCommand(name string, args ...string) *exec.Cmd {
+	return currentUserCommand(nil, name, args...)
+}
+
+// CurrentUserCommandContext is CurrentUserCommand with cancellation support.
+func CurrentUserCommandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
+	return currentUserCommand(ctx, name, args...)
+}
+
+func currentUserCommand(ctx context.Context, name string, args ...string) *exec.Cmd {
 	home, path := currentUserPath()
 
 	resolved := name
@@ -68,9 +89,16 @@ func CurrentUserCommand(name string, args ...string) *exec.Cmd {
 		}
 	}
 
-	cmd := exec.Command(resolved, args...)
+	cmd := execCommand(ctx, resolved, args...)
 	cmd.Env = append(os.Environ(), "HOME="+home, "PATH="+path)
 	return cmd
+}
+
+func execCommand(ctx context.Context, name string, args ...string) *exec.Cmd {
+	if ctx == nil {
+		return exec.Command(name, args...)
+	}
+	return exec.CommandContext(ctx, name, args...)
 }
 
 // CurrentUserLookPath searches the calling process's own fixed-up PATH (the
