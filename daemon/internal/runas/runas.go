@@ -39,22 +39,70 @@ func CommandContext(ctx context.Context, runUser, name string, args ...string) *
 func command(ctx context.Context, runUser, name string, args ...string) *exec.Cmd {
 	u, err := user.Lookup(runUser)
 	if err != nil {
-		return execCommand(ctx, name, args...)
+		return failedCommand(ctx, name, args, fmt.Errorf("looking up run user %q: %w", runUser, err))
 	}
 	path := pathFor(u)
 
 	resolved := name
 	if !filepath.IsAbs(name) {
-		if found := lookPathIn(name, path); found != "" {
-			resolved = found
+		resolved = lookPathIn(name, path)
+		if resolved == "" {
+			return failedCommand(ctx, name, args, fmt.Errorf("%q not found in %s's PATH", name, runUser))
 		}
 	}
 
-	uid, _ := strconv.Atoi(u.Uid)
-	gid, _ := strconv.Atoi(u.Gid)
+	credential, err := credentialFor(u)
+	if err != nil {
+		return failedCommand(ctx, resolved, args, err)
+	}
 	cmd := execCommand(ctx, resolved, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}}
+	if credential != nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: credential}
+	}
 	cmd.Env = append(os.Environ(), "HOME="+u.HomeDir, "PATH="+path)
+	return cmd
+}
+
+// credentialFor returns nil when the process already runs as u. Reapplying a
+// Credential in that case makes Go call setgroups during fork/exec, which a
+// normal unprivileged process cannot do and surfaces as a misleading EPERM.
+// A different target user is permitted only from root and receives the full
+// supplementary-group set; every lookup/parse failure is returned rather than
+// accidentally leaving the child privileged.
+func credentialFor(u *user.User) (*syscall.Credential, error) {
+	uid, err := strconv.ParseUint(u.Uid, 10, 32)
+	if err != nil {
+		return nil, fmt.Errorf("invalid UID %q for user %q: %w", u.Uid, u.Username, err)
+	}
+	gid, err := strconv.ParseUint(u.Gid, 10, 32)
+	if err != nil {
+		return nil, fmt.Errorf("invalid GID %q for user %q: %w", u.Gid, u.Username, err)
+	}
+	if uint64(os.Geteuid()) == uid {
+		return nil, nil
+	}
+	if os.Geteuid() != 0 {
+		return nil, fmt.Errorf("cannot run as user %q (uid %d) from euid %d", u.Username, uid, os.Geteuid())
+	}
+
+	groupIDs, err := u.GroupIds()
+	if err != nil {
+		return nil, fmt.Errorf("resolving groups for user %q: %w", u.Username, err)
+	}
+	groups := make([]uint32, 0, len(groupIDs))
+	for _, groupID := range groupIDs {
+		parsed, err := strconv.ParseUint(groupID, 10, 32)
+		if err != nil {
+			return nil, fmt.Errorf("invalid supplementary GID %q for user %q: %w", groupID, u.Username, err)
+		}
+		groups = append(groups, uint32(parsed))
+	}
+	return &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid), Groups: groups}, nil
+}
+
+func failedCommand(ctx context.Context, name string, args []string, err error) *exec.Cmd {
+	cmd := execCommand(ctx, name, args...)
+	cmd.Err = err
 	return cmd
 }
 

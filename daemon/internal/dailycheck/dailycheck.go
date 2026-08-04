@@ -67,15 +67,17 @@ type Options struct {
 	DryRun         bool
 	PlatformProber PlatformProber
 	VerifyDelay    time.Duration
+	RepairAttempts map[string]RepairAttempt
 }
 
 type Outcome struct {
-	Instance string
-	Finding  string
-	Reason   string
-	Action   string
-	Result   string
-	Notable  bool
+	Instance  string
+	Finding   string
+	Reason    string
+	Action    string
+	Result    string
+	Notable   bool
+	Attempted bool
 }
 
 type Report struct {
@@ -229,6 +231,29 @@ func Run(ctx context.Context, client Client, analyzer Analyzer, opts Options) (R
 			continue
 		}
 
+		fresh, freshErr := reprobeSnapshot(ctx, client, opts, finding.Instance)
+		if freshErr != nil {
+			outcome.Result = "not applied: could not refresh session state: " + freshErr.Error()
+			outcome.Notable = true
+			report.Problems = append(report.Problems, fmt.Sprintf("%s: %s", finding.Instance, outcome.Result))
+			report.Outcomes = append(report.Outcomes, outcome)
+			continue
+		}
+		if validationErr := validateRepair(fresh, finding); validationErr != nil {
+			outcome.Result = "skipped: session changed since diagnosis: " + validationErr.Error()
+			outcome.Notable = true
+			report.Outcomes = append(report.Outcomes, outcome)
+			continue
+		}
+		if attempt, suppressed := repairSuppressed(fresh, finding, opts.RepairAttempts); suppressed {
+			outcome.Result = fmt.Sprintf("suppressed after %d unchanged ineffective %s attempts", attempt.ConsecutiveIneffective, finding.Action)
+			outcome.Notable = true
+			report.Problems = append(report.Problems, fmt.Sprintf("%s: %s; waiting for the session state to change", finding.Instance, outcome.Result))
+			report.Outcomes = append(report.Outcomes, outcome)
+			continue
+		}
+
+		outcome.Attempted = true
 		result, applyErr := applyRepair(ctx, client, finding)
 		if applyErr != nil {
 			outcome.Result = "failed: " + applyErr.Error()
@@ -262,6 +287,9 @@ func Run(ctx context.Context, client Client, analyzer Analyzer, opts Options) (R
 }
 
 func validateRepair(snapshot Snapshot, finding Finding) error {
+	if finding.Action != "" && finding.Action != ActionNone && snapshotHasIssue(snapshot, "refresh-running") {
+		return fmt.Errorf("repair is not allowed while the daily refresh is still running")
+	}
 	switch finding.Action {
 	case ActionNone:
 		return nil
@@ -298,6 +326,19 @@ func validateRepair(snapshot Snapshot, finding Finding) error {
 	default:
 		return fmt.Errorf("unsupported action %q", finding.Action)
 	}
+}
+
+func reprobeSnapshot(ctx context.Context, client Client, opts Options, instance string) (Snapshot, error) {
+	snapshots, _, err := collectHealth(ctx, client, opts)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	for _, snapshot := range snapshots {
+		if snapshot.Name == instance {
+			return snapshot, nil
+		}
+	}
+	return Snapshot{}, fmt.Errorf("instance is no longer configured")
 }
 
 func snapshotHasIssue(snapshot Snapshot, code string) bool {

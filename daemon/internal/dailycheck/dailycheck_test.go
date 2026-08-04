@@ -14,11 +14,15 @@ type fakeAnalyzer struct {
 	err       error
 	snapshots []Snapshot
 	calls     int
+	onAnalyze func()
 }
 
 func (a *fakeAnalyzer) Analyze(_ context.Context, snapshots []Snapshot) (Plan, error) {
 	a.calls++
 	a.snapshots = snapshots
+	if a.onAnalyze != nil {
+		a.onAnalyze()
+	}
 	return a.plan, a.err
 }
 
@@ -171,6 +175,46 @@ func TestRunRejectsUnsafeRestart(t *testing.T) {
 	}
 }
 
+func TestRunReprobesBeforeApplyingRepair(t *testing.T) {
+	client := &fakeClient{
+		instances: []*pb.Instance{{Name: "one", Agent: "claude-code", Status: pb.Status_STATUS_IDLE, TmuxSession: "one", Pid: 42}},
+		panes:     map[string]string{"one": "fatal: relay disconnected"},
+	}
+	analyzer := &fakeAnalyzer{
+		plan: Plan{Findings: []Finding{{
+			Instance: "one", Finding: "relay failed", Evidence: "fatal: relay disconnected", Action: ActionRestart,
+		}}},
+		onAnalyze: func() { client.panes["one"] = "fatal: relay disconnected\n/rc" },
+	}
+	report, err := Run(context.Background(), client, analyzer, Options{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(client.controls) != 0 {
+		t.Fatalf("stale repair was applied: %v", client.controls)
+	}
+	if len(report.Outcomes) != 1 || !strings.Contains(report.Outcomes[0].Result, "changed since diagnosis") {
+		t.Fatalf("outcomes = %+v", report.Outcomes)
+	}
+}
+
+func TestRunSuppressesRepeatedIneffectiveRepair(t *testing.T) {
+	client := &fakeClient{instances: []*pb.Instance{{Name: "dead", Status: pb.Status_STATUS_DEAD}}}
+	analyzer := &fakeAnalyzer{plan: Plan{Findings: []Finding{{Instance: "dead", Action: ActionStart}}}}
+	report, err := Run(context.Background(), client, analyzer, Options{RepairAttempts: map[string]RepairAttempt{
+		"dead": {Fingerprint: "dead:session-dead", Action: ActionStart, ConsecutiveIneffective: MaxConsecutiveIneffectiveRepairs},
+	}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(client.controls) != 0 {
+		t.Fatalf("suppressed repair was applied: %v", client.controls)
+	}
+	if len(report.Problems) != 1 || !strings.Contains(report.Problems[0], "suppressed after 2") {
+		t.Fatalf("problems = %v", report.Problems)
+	}
+}
+
 func TestValidateRestartRequiresCompatibleDeterministicIssue(t *testing.T) {
 	snapshot := Snapshot{
 		Status: "idle",
@@ -179,6 +223,18 @@ func TestValidateRestartRequiresCompatibleDeterministicIssue(t *testing.T) {
 	}
 	err := validateRepair(snapshot, Finding{Action: ActionRestart, Evidence: "fatal text"})
 	if err == nil || !strings.Contains(err.Error(), "not allowed") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestValidateRepairRejectsConcurrentRefresh(t *testing.T) {
+	snapshot := Snapshot{
+		Status: "idle",
+		Pane:   "fatal text",
+		Issues: []HealthIssue{{Code: "remote-disconnected"}, {Code: "refresh-running"}},
+	}
+	err := validateRepair(snapshot, Finding{Action: ActionRestart, Evidence: "fatal text"})
+	if err == nil || !strings.Contains(err.Error(), "refresh is still running") {
 		t.Fatalf("err = %v", err)
 	}
 }

@@ -116,17 +116,21 @@ the affected sessions' structured findings and capped pane snapshots, then
 returns JSON for agentmux to validate. A dead session may be started; Escape
 may be sent only when the visible pane advertises an Escape action; an idle
 session may be restarted only with a verbatim pane excerpt as evidence. A
-running session cannot be restarted. agentmux probes the sessions again after
-any repair rather than treating a successful command as proof of recovery.
-Pane text is still session content, so use an account you trust with that
-small excerpt.
+running session cannot be restarted, and no lifecycle repair runs while the
+daily refresh is still active. agentmux refreshes the affected session's state
+immediately before acting, then probes again afterward rather than treating a
+successful command as proof of recovery. Pane text is still session content,
+so use an account you trust with that small excerpt.
 
 No Discord message is sent for an uneventful pass. Repairs, meaningful
 observations, escalation failures, and inspection failures go to the webhook
 configured for the same OS user with `agentmux notify discord setup`. Each
 message includes the before/after state, including successful auto-recovery.
 An unchanged unresolved incident is debounced; recovery or a changed/new
-incident produces a fresh message.
+incident produces a fresh message. If the same repair leaves exactly the same
+problem behind twice, later attempts are suppressed until the session state
+changes, and that suppression is reported once rather than causing silent
+daily restart churn.
 
 ## Trust model
 

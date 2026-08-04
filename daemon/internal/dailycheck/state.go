@@ -10,12 +10,22 @@ import (
 )
 
 type NotificationState struct {
-	Fingerprint    string        `json:"fingerprint"`
-	Issues         []HealthIssue `json:"issues,omitempty"`
-	Problems       []string      `json:"problems,omitempty"`
-	PendingMessage string        `json:"pending_message,omitempty"`
-	UpdatedAt      time.Time     `json:"updated_at"`
+	Fingerprint    string                   `json:"fingerprint"`
+	Issues         []HealthIssue            `json:"issues,omitempty"`
+	Problems       []string                 `json:"problems,omitempty"`
+	RepairAttempts map[string]RepairAttempt `json:"repair_attempts,omitempty"`
+	PendingMessage string                   `json:"pending_message,omitempty"`
+	UpdatedAt      time.Time                `json:"updated_at"`
 }
+
+type RepairAttempt struct {
+	Fingerprint            string    `json:"fingerprint"`
+	Action                 string    `json:"action"`
+	ConsecutiveIneffective int       `json:"consecutive_ineffective"`
+	LastAttemptAt          time.Time `json:"last_attempt_at"`
+}
+
+const MaxConsecutiveIneffectiveRepairs = 2
 
 type NotificationDecision struct {
 	Notify   bool
@@ -72,6 +82,62 @@ func NotificationStateFor(report Report) NotificationState {
 		Issues:      append([]HealthIssue(nil), report.AfterIssues...),
 		Problems:    append([]string(nil), report.Problems...),
 	}
+}
+
+// AdvanceNotificationState carries forward repair history only while the same
+// issue remains unresolved. Two consecutive attempts with an unchanged
+// before/after fingerprint are enough to suppress that action on later runs;
+// any recovery or materially different issue clears the guard automatically.
+func AdvanceNotificationState(report Report, previous NotificationState) NotificationState {
+	next := NotificationStateFor(report)
+	next.PendingMessage = previous.PendingMessage
+	next.RepairAttempts = map[string]RepairAttempt{}
+	after := issuesByInstance(report.AfterIssues)
+	before := issuesByInstance(report.BeforeIssues)
+
+	for instance, attempt := range previous.RepairAttempts {
+		if instanceIssueFingerprint(after[instance]) == attempt.Fingerprint {
+			next.RepairAttempts[instance] = attempt
+		}
+	}
+	for _, outcome := range report.Outcomes {
+		if !outcome.Attempted || outcome.Action == "" || outcome.Action == ActionNone {
+			continue
+		}
+		beforeFingerprint := instanceIssueFingerprint(before[outcome.Instance])
+		afterFingerprint := instanceIssueFingerprint(after[outcome.Instance])
+		if beforeFingerprint == "" || afterFingerprint != beforeFingerprint {
+			delete(next.RepairAttempts, outcome.Instance)
+			continue
+		}
+		count := 1
+		if prior, ok := previous.RepairAttempts[outcome.Instance]; ok &&
+			prior.Fingerprint == beforeFingerprint && prior.Action == outcome.Action {
+			count = prior.ConsecutiveIneffective + 1
+		}
+		next.RepairAttempts[outcome.Instance] = RepairAttempt{
+			Fingerprint:            beforeFingerprint,
+			Action:                 outcome.Action,
+			ConsecutiveIneffective: count,
+			LastAttemptAt:          time.Now().UTC(),
+		}
+	}
+	if len(next.RepairAttempts) == 0 {
+		next.RepairAttempts = nil
+	}
+	return next
+}
+
+func repairSuppressed(snapshot Snapshot, finding Finding, attempts map[string]RepairAttempt) (RepairAttempt, bool) {
+	attempt, ok := attempts[snapshot.Name]
+	if !ok || attempt.Action != finding.Action || attempt.ConsecutiveIneffective < MaxConsecutiveIneffectiveRepairs {
+		return RepairAttempt{}, false
+	}
+	return attempt, attempt.Fingerprint == instanceIssueFingerprint(snapshot.Issues)
+}
+
+func instanceIssueFingerprint(issues []HealthIssue) string {
+	return issueFingerprint(issues, nil)
 }
 
 // DecideNotification debounces a problem that remains unchanged across daily

@@ -72,14 +72,17 @@ confirmation), `D` configures Discord notifications, and `q` quits.
 The doctor first checks service, process, refresh, pane, and backend remote
 state without an LLM. Only unhealthy sessions escalate to Claude Code, which
 receives capped snapshots and returns a repair plan for agentmux to validate,
-apply, and verify. Discord gets one debounced before/after incident summary,
-including successful recovery. Run it with `./agentmux doctor`, preview it
-with `./agentmux doctor -dry-run`, and use `./agentmux doctor -h` for model,
-run-user, timeout, and snapshot controls. Set a different schedule with
-`agentmux daemon install -doctor-time HH:MM`. On Linux the root-owned timer
-launches Claude as the owner of the first Claude Code instance (or the
-explicit `-run-user`), so Claude credentials and the Discord webhook are never
-read from root's home.
+re-check immediately before applying, and verify afterward. Repairs are held
+while refresh is still running, and the same ineffective repair is suppressed
+after two unchanged attempts. Discord gets one debounced before/after incident
+summary, including successful recovery. Run it with `./agentmux doctor`,
+preview it with `./agentmux doctor -dry-run`, and use `./agentmux doctor -h`
+for model, run-user, timeout, and snapshot controls. Set a different schedule
+with `agentmux daemon install -doctor-time HH:MM`. On Linux the root-owned
+timer launches Claude as the owner of the first Claude Code instance (or the
+explicit `-run-user`), so Claude credentials and the Discord webhook are
+never read from root's home; user lookup and credential setup fail closed
+rather than falling back to root.
 
 ## Create a new instance
 

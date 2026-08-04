@@ -41,6 +41,7 @@ func TestNotificationStateRoundTrip(t *testing.T) {
 	want := NotificationState{
 		Fingerprint:    "one:dead",
 		Issues:         []HealthIssue{{Instance: "one", Code: "dead"}},
+		RepairAttempts: map[string]RepairAttempt{"one": {Fingerprint: "one:dead", Action: ActionStart, ConsecutiveIneffective: 2}},
 		PendingMessage: "retry me",
 	}
 	if err := SaveNotificationState(path, want); err != nil {
@@ -50,8 +51,29 @@ func TestNotificationStateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadNotificationState: %v", err)
 	}
-	if got.Fingerprint != want.Fingerprint || len(got.Issues) != 1 || got.PendingMessage != want.PendingMessage {
+	if got.Fingerprint != want.Fingerprint || len(got.Issues) != 1 || got.PendingMessage != want.PendingMessage || got.RepairAttempts["one"].ConsecutiveIneffective != 2 {
 		t.Fatalf("state = %+v", got)
+	}
+}
+
+func TestAdvanceNotificationStateTracksAndClearsIneffectiveRepairs(t *testing.T) {
+	issue := HealthIssue{Instance: "one", Code: "remote-disconnected"}
+	report := Report{
+		BeforeIssues: []HealthIssue{issue},
+		AfterIssues:  []HealthIssue{issue},
+		Outcomes:     []Outcome{{Instance: "one", Action: ActionRestart, Attempted: true}},
+	}
+	first := AdvanceNotificationState(report, NotificationState{})
+	if got := first.RepairAttempts["one"].ConsecutiveIneffective; got != 1 {
+		t.Fatalf("first ineffective count = %d", got)
+	}
+	second := AdvanceNotificationState(report, first)
+	if got := second.RepairAttempts["one"].ConsecutiveIneffective; got != 2 {
+		t.Fatalf("second ineffective count = %d", got)
+	}
+	recovered := AdvanceNotificationState(Report{}, second)
+	if len(recovered.RepairAttempts) != 0 {
+		t.Fatalf("repair attempts survived recovery: %+v", recovered.RepairAttempts)
 	}
 }
 

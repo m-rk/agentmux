@@ -70,6 +70,7 @@ func runDoctorCmd(args []string) {
 		DryRun:         *dryRun,
 		PlatformProber: dailycheck.NewPlatformProber(),
 		VerifyDelay:    750 * time.Millisecond,
+		RepairAttempts: previousState.RepairAttempts,
 	})
 	if stateErr != nil {
 		report.Problems = append(report.Problems, "loading notification state: "+stateErr.Error())
@@ -102,21 +103,25 @@ func runDoctorCmd(args []string) {
 	// the Discord post are both suppressed, while the same report is printed.
 	if !*dryRun {
 		outbound := ""
-		nextState := dailycheck.NotificationStateFor(report)
+		nextState := dailycheck.AdvanceNotificationState(report, previousState)
 		if decision.Notify {
 			outbound = message
 		} else if previousState.PendingMessage != "" {
 			outbound = previousState.PendingMessage
-			nextState = previousState
 		}
+		var notifyErr error
 		if outbound != "" {
-			notifyErr := sendDoctorNotification(identity.HomeDir, statePath, outbound, nextState)
-			if notifyErr != nil {
-				if runErr == nil {
-					runErr = notifyErr
-				} else {
-					fmt.Fprintf(os.Stderr, "doctor: %v\n", notifyErr)
-				}
+			notifyErr = sendDoctorNotification(identity.HomeDir, statePath, outbound, nextState)
+		} else {
+			if err := dailycheck.SaveNotificationState(statePath, nextState); err != nil {
+				notifyErr = fmt.Errorf("saving doctor state: %w", err)
+			}
+		}
+		if notifyErr != nil {
+			if runErr == nil {
+				runErr = notifyErr
+			} else {
+				fmt.Fprintf(os.Stderr, "doctor: %v\n", notifyErr)
 			}
 		}
 	}
@@ -133,6 +138,10 @@ func sendDoctorNotification(home, statePath, message string, nextState dailychec
 	}
 	if cfg.WebhookURL == "" {
 		fmt.Fprintf(os.Stderr, "doctor: notable result, but Discord is not configured for this user (%s)\n", path)
+		nextState.PendingMessage = ""
+		if err := dailycheck.SaveNotificationState(statePath, nextState); err != nil {
+			return fmt.Errorf("saving doctor state: %w", err)
+		}
 		return nil
 	}
 
