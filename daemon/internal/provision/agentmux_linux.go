@@ -146,12 +146,15 @@ func createAgentmux(opts Options) (string, error) {
 	tickServiceName := "agentmux-" + name + "-tick.service"
 	tickTimerName := "agentmux-" + name + "-tick.timer"
 
-	// Stop the old process *before* touching anything on disk. A still-live
-	// kilo/zero/opencode process persists its own in-memory model/session
-	// state back to disk on graceful shutdown; a config update written while
-	// it's still running loses that race and gets silently overwritten the
-	// moment it exits, even though the write itself succeeded. Only matters
-	// for a genuine re-provision — a brand new instance has no unit yet.
+	// Stop the old process *before* touching anything on disk — separately
+	// from the fact that "enable --now" below is a no-op on an
+	// already-active oneshot unit (which alone would mean the new config
+	// never actually gets picked up). This relies on StopAgentmux/ExecStop
+	// (session.StopAgentmux) actually waiting for the old process to be
+	// gone rather than just issuing the kill and returning — see its own
+	// doc comment for the state-flush race that guards against. Only
+	// matters for a genuine re-provision — a brand new instance has no
+	// unit yet.
 	if alreadyExisted {
 		if err := runSystemctl("stop", serviceName); err != nil {
 			return "", fmt.Errorf("stopping %s before applying updated config: %w", serviceName, err)

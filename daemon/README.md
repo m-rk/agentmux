@@ -146,9 +146,11 @@ action without attaching a terminal. To change a zero/opencode/kilo
 instance's provider/model, prefer re-running `new -y` with the same
 `-instance`/`-agent` (see [Custom providers](../docs/custom-providers.md))
 over hand-editing the registry and calling `control -action restart`
-yourself — a single `restart` can race a still-live process's own
-shutdown-time state flush and silently lose the update; `new -y` avoids
-that by stopping the old process before writing anything.
+yourself — not because `restart` is unsafe (`StopAgentmux`, what its
+`ExecStop` runs, waits for the old process to actually be gone before
+returning, so this doesn't race), but because `new -y` is the one command
+that both writes the config *and* restarts, atomically; a hand-edited
+registry does nothing until something restarts the instance.
 `view`/`send-keys` are the headless counterpart to the TUI's `a` (attach):
 `view` prints a read-only snapshot of an instance's tmux pane (`-lines N`
 for trailing scrollback), `send-keys` types into it — trailing args are

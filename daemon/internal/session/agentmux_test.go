@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestKiloInstanceXDGEnvRequiresReadyMarker(t *testing.T) {
@@ -100,6 +101,93 @@ func TestLatestKiloSessionIDUsesProvidedEnv(t *testing.T) {
 	}
 	if id != "isolated-session" {
 		t.Errorf("latestKiloSessionID = %q, want %q", id, "isolated-session")
+	}
+}
+
+// TestStopAgentmuxWaitsForSessionToDisappear guards the actual fix: a
+// naive StopAgentmux that fired `tmux kill-session` and returned
+// immediately let a caller (a plain `systemctl restart`, or
+// provision.createAgentmux re-provisioning an existing instance) write
+// updated config and launch a replacement process while the old one was
+// still exiting — which could then flush its own stale state back to
+// disk a moment later, clobbering the update. This confirms StopAgentmux
+// actually polls has-session until it reports gone (not just fire the
+// kill and return) before applying its fixed grace period.
+func TestStopAgentmuxWaitsForSessionToDisappear(t *testing.T) {
+	dir := withEnvDir(t)
+	if err := os.WriteFile(filepath.Join(dir, "probe.env"), []byte("AGENTMUX_INSTANCE_NAME=probe\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	prevPoll, prevTimeout, prevGrace := stopSessionPollInterval, stopSessionTimeout, stopSessionGrace
+	stopSessionPollInterval = time.Millisecond
+	stopSessionTimeout = 200 * time.Millisecond
+	stopSessionGrace = 5 * time.Millisecond
+	t.Cleanup(func() {
+		stopSessionPollInterval, stopSessionTimeout, stopSessionGrace = prevPoll, prevTimeout, prevGrace
+	})
+
+	// has-session "still there" for the first two polls, then "gone" —
+	// simulating the real-world gap between tmux tearing down its own
+	// session bookkeeping and the signaled process actually finishing.
+	hasSessionCalls := 0
+	prevWithPath := withPath
+	withPath = func(name string, args ...string) *exec.Cmd {
+		if name != "tmux" {
+			t.Fatalf("withPath called with unexpected command %q", name)
+		}
+		isHasSession := false
+		for _, a := range args {
+			if a == "has-session" {
+				isHasSession = true
+			}
+		}
+		if !isHasSession {
+			return exec.Command("true") // kill-session
+		}
+		hasSessionCalls++
+		if hasSessionCalls <= 2 {
+			return exec.Command("true") // still there
+		}
+		return exec.Command("false") // gone
+	}
+	t.Cleanup(func() { withPath = prevWithPath })
+
+	if err := StopAgentmux("probe"); err != nil {
+		t.Fatalf("StopAgentmux: %v", err)
+	}
+	if hasSessionCalls < 3 {
+		t.Errorf("has-session polled %d times, want at least 3 (StopAgentmux must have returned before the session was actually gone)", hasSessionCalls)
+	}
+}
+
+func TestStopAgentmuxGivesUpAtDeadlineRatherThanHanging(t *testing.T) {
+	dir := withEnvDir(t)
+	if err := os.WriteFile(filepath.Join(dir, "probe.env"), []byte("AGENTMUX_INSTANCE_NAME=probe\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	prevPoll, prevTimeout, prevGrace := stopSessionPollInterval, stopSessionTimeout, stopSessionGrace
+	stopSessionPollInterval = time.Millisecond
+	stopSessionTimeout = 20 * time.Millisecond
+	stopSessionGrace = time.Millisecond
+	t.Cleanup(func() {
+		stopSessionPollInterval, stopSessionTimeout, stopSessionGrace = prevPoll, prevTimeout, prevGrace
+	})
+
+	prevWithPath := withPath
+	withPath = func(string, ...string) *exec.Cmd { return exec.Command("true") } // has-session always says "still there"
+	t.Cleanup(func() { withPath = prevWithPath })
+
+	done := make(chan error, 1)
+	go func() { done <- StopAgentmux("probe") }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("StopAgentmux: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("StopAgentmux hung instead of giving up at its deadline")
 	}
 }
 

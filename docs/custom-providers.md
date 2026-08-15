@@ -100,12 +100,29 @@ proves the key round-trips.
 
 A provider/model change only takes effect once the instance's process
 actually restarts with the new config — the running process doesn't
-hot-reload it. On Linux, a naive `systemctl restart` can lose this update:
-if the *old* process is still alive when the update is applied, it can
-flush its own last-used model back to disk on shutdown, clobbering the
-change you just made, moments after you made it. agentmux's provisioner
-avoids this by stopping an existing instance's unit *before* writing the
-new registry/config, then starting it fresh — not relying on
-`systemctl restart`'s single-shot semantics. (macOS's LaunchAgent path
-was never affected: it already fully unloads and reloads the agent on every
-provision, not just on the first one.)
+hot-reload it. On Linux, that alone used to be two separate bugs:
+
+1. `systemctl enable --now` (what a fresh provision ends with) is a no-op
+   on an already-active `Type=oneshot, RemainAfterExit=yes` unit, so
+   simply re-running the provisioner never even *tried* to restart an
+   existing instance. Fixed by having the provisioner explicitly stop the
+   unit before writing the updated registry/config on a re-provision,
+   rather than relying on `enable --now` alone.
+2. Even an explicit stop wasn't automatically enough: `tmux kill-session`
+   sends a hangup and tears down tmux's own session bookkeeping almost
+   immediately, but does **not** wait for the signaled process to actually
+   finish exiting — and a well-behaved agent CLI does async work in its
+   own shutdown handler (flushing its last-used model/session state to its
+   local database) before it actually exits. If the old process is still
+   mid-flush when the new config is written and a replacement process
+   launched, it can silently overwrite that fresh write with its own stale
+   state a moment later. Confirmed live: a provider swap reproducibly
+   failed to stick this way. `StopAgentmux` (what every instance's
+   `ExecStop` runs, on every stop/restart, not just re-provisioning) now
+   polls for the killed session to actually be gone plus a short grace
+   period before returning, closing this for good — `agentmux control
+   -action restart` benefits from this too, not just `new -y`.
+
+(macOS's LaunchAgent path was never affected by either bug: it already
+fully unloads and reloads the agent on every provision, not just the
+first one.)
