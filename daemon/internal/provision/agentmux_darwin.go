@@ -123,7 +123,10 @@ func createAgentmux(opts Options) (string, error) {
 		workdir = filepath.Join(u.HomeDir, ".agentmux", name)
 	}
 
-	baseURL := providerBaseURL(provider)
+	baseURL, err := resolveBaseURL(provider, opts.BaseURL)
+	if err != nil {
+		return "", err
+	}
 
 	if err := checkAgentInstalledCurrentUser(opts.Agent); err != nil {
 		return "", err
@@ -141,12 +144,15 @@ func createAgentmux(opts Options) (string, error) {
 	label := "com.agentmux." + name
 	updateLabel := label + ".update"
 
+	_, alreadyExisted := existingAgentFor(name)
+
 	regPath, err := writeRegistry(name, []kv{
 		{"AGENTMUX_INSTANCE_NAME", name},
 		{"AGENTMUX_AGENT", opts.Agent},
 		{"AGENTMUX_PROVIDER", provider},
 		{"AGENTMUX_MODEL", model},
 		{"AGENTMUX_PROVIDER_BASE_URL", baseURL},
+		{"AGENTMUX_PROVIDER_API_KEY_ENV", opts.APIKeyEnv},
 		{"AGENTMUX_PROVIDER_WAIT_SECONDS", defaultProviderWaitSecs},
 		{"AGENTMUX_SESSION_NAME", sessionName},
 		{"AGENTMUX_TMUX_SESSION_NAME", sessionName},
@@ -166,12 +172,24 @@ func createAgentmux(opts Options) (string, error) {
 		self = resolved
 	}
 
+	// installAgentmuxAgents always boots the old LaunchAgent out before
+	// bootstrapping/kickstarting the new one, so — unlike the Linux
+	// systemd path — no separate stop-before-update step is needed here to
+	// avoid racing a still-live process's shutdown-time state flush.
 	if err := installAgentmuxAgents(name, label, updateLabel, self); err != nil {
 		return "", err
 	}
 
-	return fmt.Sprintf("Created instance %q (registry: %s). Reattach with: tmux -L agentmux-%s attach -t %s",
-		name, regPath, name, sessionName), nil
+	verb := "Created"
+	if alreadyExisted {
+		verb = "Updated"
+	}
+	message := fmt.Sprintf("%s instance %q (registry: %s). Reattach with: tmux -L agentmux-%s attach -t %s",
+		verb, name, regPath, name, sessionName)
+	if opts.Agent == "kilo" && provider != "ollama" && opts.APIKeyEnv != "" {
+		message += kiloCustomProviderNote(provider, baseURL, model, opts.APIKeyEnv)
+	}
+	return message, nil
 }
 
 // checkAgentInstalledCurrentUser mirrors install-macos.sh's

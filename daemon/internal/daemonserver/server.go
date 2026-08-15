@@ -131,6 +131,8 @@ func (s *Server) CreateInstance(ctx context.Context, req *pb.CreateInstanceReque
 		ResumeSessionID: req.ResumeSessionId,
 		RunUser:         req.RunUser,
 		CompactOnUpdate: req.CompactOnUpdate,
+		BaseURL:         req.ProviderBaseUrl,
+		APIKeyEnv:       req.ProviderApiKeyEnv,
 	})
 	if err != nil {
 		return &pb.CreateInstanceResponse{Ok: false, Message: err.Error()}, nil

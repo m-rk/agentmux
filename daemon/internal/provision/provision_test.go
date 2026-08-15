@@ -158,17 +158,72 @@ func TestProviderBaseURL(t *testing.T) {
 }
 
 func TestValidateSupportedAgentProvider(t *testing.T) {
-	valid := [][2]string{{"zero", "ollama"}, {"opencode", "ollama"}, {"kilo", "ollama"}}
+	// Any provider id is accepted for zero/opencode/kilo — it's no longer
+	// an ollama-only allowlist, so a custom OpenAI-compatible gateway (e.g.
+	// "my-company-gateway") is just as valid as "ollama" here. Only the
+	// agent side is actually checked; resolveBaseURL is what enforces a
+	// non-ollama provider supplies its own base URL.
+	valid := [][2]string{
+		{"zero", "ollama"}, {"opencode", "ollama"}, {"kilo", "ollama"},
+		{"zero", "custom-gateway"}, {"opencode", "custom-gateway"}, {"kilo", "custom-gateway"},
+	}
 	for _, v := range valid {
 		if err := validateSupportedAgentProvider(v[0], v[1]); err != nil {
 			t.Errorf("validateSupportedAgentProvider(%q, %q) = %v, want nil", v[0], v[1], err)
 		}
 	}
 
-	invalid := [][2]string{{"claude-code", "ollama"}, {"zero", "openai"}, {"unknown", "unknown"}}
+	invalid := [][2]string{{"claude-code", "ollama"}, {"unknown", "unknown"}}
 	for _, v := range invalid {
 		if err := validateSupportedAgentProvider(v[0], v[1]); err == nil {
 			t.Errorf("validateSupportedAgentProvider(%q, %q) = nil, want an error", v[0], v[1])
+		}
+	}
+}
+
+func TestResolveBaseURL(t *testing.T) {
+	t.Run("ollama with no explicit URL: built-in default", func(t *testing.T) {
+		got, err := resolveBaseURL("ollama", "")
+		if err != nil {
+			t.Fatalf("resolveBaseURL: %v", err)
+		}
+		if want := "http://localhost:11434/v1"; got != want {
+			t.Errorf("resolveBaseURL(ollama, \"\") = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("ollama with an explicit override: the override wins", func(t *testing.T) {
+		got, err := resolveBaseURL("ollama", "http://elsewhere:11434/v1")
+		if err != nil {
+			t.Fatalf("resolveBaseURL: %v", err)
+		}
+		if want := "http://elsewhere:11434/v1"; got != want {
+			t.Errorf("resolveBaseURL(ollama, override) = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("custom provider with an explicit URL: used as-is", func(t *testing.T) {
+		got, err := resolveBaseURL("custom-gateway", "https://gateway.example/v1")
+		if err != nil {
+			t.Fatalf("resolveBaseURL: %v", err)
+		}
+		if want := "https://gateway.example/v1"; got != want {
+			t.Errorf("resolveBaseURL(custom, url) = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("custom provider with no explicit URL: error", func(t *testing.T) {
+		if _, err := resolveBaseURL("custom-gateway", ""); err == nil {
+			t.Error("resolveBaseURL(custom, \"\") = nil error, want one (no default to fall back to)")
+		}
+	})
+}
+
+func TestKiloCustomProviderNote(t *testing.T) {
+	got := kiloCustomProviderNote("acme", "https://acme.example/v1", "big-model", "ACME_API_KEY")
+	for _, want := range []string{"acme", "https://acme.example/v1", "big-model", "ACME_API_KEY", "~/.config/kilo/kilo.jsonc", "~/.config/agentmux/kilo-env", "kilo roll-call big-model"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("kiloCustomProviderNote output missing %q:\n%s", want, got)
 		}
 	}
 }

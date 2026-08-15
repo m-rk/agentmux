@@ -59,6 +59,8 @@ Usage:
   agentmux daemon run         run the daemon in the foreground (used by the installed unit)
   agentmux new                 interactive wizard to create a new instance
   agentmux new -y ...          create an instance non-interactively (see -h)
+  agentmux new -y -instance NAME -agent kilo -provider custom -provider-base-url URL -model M
+                                update an existing instance's provider/model too (re-run with the same instance+agent)
   agentmux rename ...          rename an instance's tmux session/display name
   agentmux resume-list ...     list resumable Claude Code sessions for a workdir
   agentmux list                headless instance status (name/agent/model/status/workdir); add -json for scripts

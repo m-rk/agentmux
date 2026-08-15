@@ -67,6 +67,12 @@ separate parts of an instance rather than defining the backend itself.
   instances stay on their legacy shared paths until their migration is marked
   ready, so installing a new binary cannot silently log them out. See the
   [Kilo isolation runbook](docs/kilo-xdg-isolation.md).
+- **Custom providers** — point a zero/opencode/kilo instance at any
+  OpenAI-compatible endpoint, not just the built-in Ollama default, via
+  `-provider`/`-provider-base-url` (and, for Kilo, `-provider-api-key-env`).
+  Re-running `new -y` against an existing instance updates its
+  provider/model in place. See
+  [Custom providers](docs/custom-providers.md).
 - **Compact-before-resume** — by default, nightly Claude Code maintenance
   compacts and restarts the session so a long-running unattended session
   doesn't get stuck behind Claude Code's own huge-session prompt. If the

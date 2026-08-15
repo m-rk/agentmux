@@ -134,7 +134,7 @@ message ControlResponse {
 message CreateInstanceRequest {
   string instance_name = 1;
   string agent = 2;              // "claude-code" | "zero" | "opencode" | "kilo"
-  string provider = 3;           // zero/opencode/kilo only
+  string provider = 3;           // zero/opencode/kilo only; "ollama", or a custom provider id
   string model = 4;               // zero/opencode/kilo only
   string workdir = 5;             // empty = provisioner default
   string resume_session_id = 6;   // claude-code only; empty = fresh session
@@ -143,6 +143,19 @@ message CreateInstanceRequest {
   // (on). Off skips the nightly compact-then-restart cycle entirely,
   // falling back to the old version-change-only restart behavior.
   string compact_on_update = 8;
+  // zero/opencode/kilo only. The OpenAI-compatible base URL for `provider`.
+  // Only "ollama" has a built-in default (localhost); any other provider
+  // must set this explicitly.
+  string provider_base_url = 9;
+  // kilo only, optional. Name of an environment variable (not the API key
+  // value itself) that holds the provider's API key. Kilo's per-project
+  // config can't reference "{env:VAR}" at all, so a non-ollama provider
+  // needing auth must be declared in kilo's shared global config instead —
+  // CreateInstance can't do that safely on the caller's behalf (it would
+  // mean rewriting a hand-maintained, comment-bearing config file), so it
+  // only validates and echoes back copy-pasteable setup instructions in the
+  // response message. See docs/custom-providers.md.
+  string provider_api_key_env = 10;
 }
 
 message CreateInstanceResponse {

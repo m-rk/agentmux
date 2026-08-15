@@ -34,8 +34,10 @@ func runWizard(args []string) {
 	host := fs.String("host", "local", "device to create the instance on (a name from hosts.yaml, or \"local\"); -y only")
 	instance := fs.String("instance", "", "instance name; -y only")
 	agent := fs.String("agent", "", "claude-code | zero | opencode | kilo; -y only")
-	provider := fs.String("provider", "", "zero/opencode/kilo only; -y only")
+	provider := fs.String("provider", "", "zero/opencode/kilo only; \"ollama\" or a custom provider id; -y only")
 	model := fs.String("model", "", "zero/opencode/kilo only; -y only")
+	providerBaseURL := fs.String("provider-base-url", "", "zero/opencode/kilo only; required when -provider isn't \"ollama\"; -y only")
+	providerAPIKeyEnv := fs.String("provider-api-key-env", "", "kilo only, optional; env var name (not the key itself) holding a custom provider's API key; -y only")
 	workdir := fs.String("workdir", "", "blank = provisioner default; -y only")
 	runUser := fs.String("run-user", "", "Linux only, required there; -y only")
 	resume := fs.String("resume", "", "claude-code only, a session ID; -y only")
@@ -70,14 +72,16 @@ func runWizard(args []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	resp, err := client.CreateInstance(ctx, &pb.CreateInstanceRequest{
-		InstanceName:    *instance,
-		Agent:           *agent,
-		Provider:        *provider,
-		Model:           *model,
-		Workdir:         *workdir,
-		ResumeSessionId: *resume,
-		RunUser:         *runUser,
-		CompactOnUpdate: *compact,
+		InstanceName:      *instance,
+		Agent:             *agent,
+		Provider:          *provider,
+		Model:             *model,
+		Workdir:           *workdir,
+		ResumeSessionId:   *resume,
+		RunUser:           *runUser,
+		CompactOnUpdate:   *compact,
+		ProviderBaseUrl:   *providerBaseURL,
+		ProviderApiKeyEnv: *providerAPIKeyEnv,
 	})
 	if err != nil {
 		log.Fatalf("new: %v", err)
@@ -124,14 +128,16 @@ func runWizardForm(clients map[string]*tuiclient.Client) error {
 	}
 
 	var (
-		host            = hostNames[0]
-		agent           = "claude-code"
-		instance        = "claude-code"
-		runUser         string
-		workdir         string
-		provider        string
-		model           string
-		compactOnUpdate string
+		host              = hostNames[0]
+		agent             = "claude-code"
+		instance          = "claude-code"
+		runUser           string
+		workdir           string
+		provider          string
+		model             string
+		providerBaseURL   string
+		providerAPIKeyEnv string
+		compactOnUpdate   string
 	)
 	if u, err := user.Current(); err == nil {
 		runUser = u.Username
@@ -153,8 +159,10 @@ func runWizardForm(clients map[string]*tuiclient.Client) error {
 			huh.NewInput().Title("Instance name").Value(&instance),
 			huh.NewInput().Title("Run as user").Description("required; the device's OS username to run the session as").Value(&runUser),
 			huh.NewInput().Title("Workdir").Description("blank = provisioner default").Value(&workdir),
-			huh.NewInput().Title("Provider").Description("zero/opencode/kilo only; blank = ollama").Value(&provider),
+			huh.NewInput().Title("Provider").Description("zero/opencode/kilo only; blank = ollama, or a custom provider id").Value(&provider),
 			huh.NewInput().Title("Model").Description("zero/opencode/kilo only; blank = provisioner default").Value(&model),
+			huh.NewInput().Title("Provider base URL").Description("zero/opencode/kilo only; required unless Provider is blank/\"ollama\"").Value(&providerBaseURL),
+			huh.NewInput().Title("Provider API key env var").Description("kilo only, optional; NAME of an env var holding a custom provider's key, e.g. MYPROVIDER_API_KEY — not the key itself. See the message after creation for the one-time setup this still requires.").Value(&providerAPIKeyEnv),
 			huh.NewSelect[string]().Title("Compact before nightly resume?").
 				Description("claude-code only; prevents Claude Code's own huge-session resume prompt by compacting and restarting every night, not just on a version change").
 				Options(
@@ -206,14 +214,16 @@ func runWizardForm(clients map[string]*tuiclient.Client) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	resp, err := client.CreateInstance(ctx, &pb.CreateInstanceRequest{
-		InstanceName:    instance,
-		Agent:           agent,
-		Provider:        provider,
-		Model:           model,
-		Workdir:         workdir,
-		ResumeSessionId: resume,
-		RunUser:         runUser,
-		CompactOnUpdate: compactOnUpdate,
+		InstanceName:      instance,
+		Agent:             agent,
+		Provider:          provider,
+		Model:             model,
+		Workdir:           workdir,
+		ResumeSessionId:   resume,
+		RunUser:           runUser,
+		CompactOnUpdate:   compactOnUpdate,
+		ProviderBaseUrl:   providerBaseURL,
+		ProviderApiKeyEnv: providerAPIKeyEnv,
 	})
 	if err != nil {
 		return err

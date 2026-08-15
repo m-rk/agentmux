@@ -842,7 +842,7 @@ type CreateInstanceRequest struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	InstanceName    string                 `protobuf:"bytes,1,opt,name=instance_name,json=instanceName,proto3" json:"instance_name,omitempty"`
 	Agent           string                 `protobuf:"bytes,2,opt,name=agent,proto3" json:"agent,omitempty"`                                              // "claude-code" | "zero" | "opencode" | "kilo"
-	Provider        string                 `protobuf:"bytes,3,opt,name=provider,proto3" json:"provider,omitempty"`                                        // zero/opencode/kilo only
+	Provider        string                 `protobuf:"bytes,3,opt,name=provider,proto3" json:"provider,omitempty"`                                        // zero/opencode/kilo only; "ollama", or a custom provider id
 	Model           string                 `protobuf:"bytes,4,opt,name=model,proto3" json:"model,omitempty"`                                              // zero/opencode/kilo only
 	Workdir         string                 `protobuf:"bytes,5,opt,name=workdir,proto3" json:"workdir,omitempty"`                                          // empty = provisioner default
 	ResumeSessionId string                 `protobuf:"bytes,6,opt,name=resume_session_id,json=resumeSessionId,proto3" json:"resume_session_id,omitempty"` // claude-code only; empty = fresh session
@@ -851,8 +851,21 @@ type CreateInstanceRequest struct {
 	// (on). Off skips the nightly compact-then-restart cycle entirely,
 	// falling back to the old version-change-only restart behavior.
 	CompactOnUpdate string `protobuf:"bytes,8,opt,name=compact_on_update,json=compactOnUpdate,proto3" json:"compact_on_update,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// zero/opencode/kilo only. The OpenAI-compatible base URL for `provider`.
+	// Only "ollama" has a built-in default (localhost); any other provider
+	// must set this explicitly.
+	ProviderBaseUrl string `protobuf:"bytes,9,opt,name=provider_base_url,json=providerBaseUrl,proto3" json:"provider_base_url,omitempty"`
+	// kilo only, optional. Name of an environment variable (not the API key
+	// value itself) that holds the provider's API key. Kilo's per-project
+	// config can't reference "{env:VAR}" at all, so a non-ollama provider
+	// needing auth must be declared in kilo's shared global config instead —
+	// CreateInstance can't do that safely on the caller's behalf (it would
+	// mean rewriting a hand-maintained, comment-bearing config file), so it
+	// only validates and echoes back copy-pasteable setup instructions in the
+	// response message. See docs/custom-providers.md.
+	ProviderApiKeyEnv string `protobuf:"bytes,10,opt,name=provider_api_key_env,json=providerApiKeyEnv,proto3" json:"provider_api_key_env,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *CreateInstanceRequest) Reset() {
@@ -937,6 +950,20 @@ func (x *CreateInstanceRequest) GetRunUser() string {
 func (x *CreateInstanceRequest) GetCompactOnUpdate() string {
 	if x != nil {
 		return x.CompactOnUpdate
+	}
+	return ""
+}
+
+func (x *CreateInstanceRequest) GetProviderBaseUrl() string {
+	if x != nil {
+		return x.ProviderBaseUrl
+	}
+	return ""
+}
+
+func (x *CreateInstanceRequest) GetProviderApiKeyEnv() string {
+	if x != nil {
+		return x.ProviderApiKeyEnv
 	}
 	return ""
 }
@@ -1502,7 +1529,7 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\x06action\x18\x02 \x01(\x0e2\x1b.agentmuxd.v1.ControlActionR\x06action\";\n" +
 	"\x0fControlResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\x91\x02\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xee\x02\n" +
 	"\x15CreateInstanceRequest\x12#\n" +
 	"\rinstance_name\x18\x01 \x01(\tR\finstanceName\x12\x14\n" +
 	"\x05agent\x18\x02 \x01(\tR\x05agent\x12\x1a\n" +
@@ -1511,7 +1538,10 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\aworkdir\x18\x05 \x01(\tR\aworkdir\x12*\n" +
 	"\x11resume_session_id\x18\x06 \x01(\tR\x0fresumeSessionId\x12\x19\n" +
 	"\brun_user\x18\a \x01(\tR\arunUser\x12*\n" +
-	"\x11compact_on_update\x18\b \x01(\tR\x0fcompactOnUpdate\"B\n" +
+	"\x11compact_on_update\x18\b \x01(\tR\x0fcompactOnUpdate\x12*\n" +
+	"\x11provider_base_url\x18\t \x01(\tR\x0fproviderBaseUrl\x12/\n" +
+	"\x14provider_api_key_env\x18\n" +
+	" \x01(\tR\x11providerApiKeyEnv\"B\n" +
 	"\x16CreateInstanceResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"S\n" +
