@@ -10,6 +10,10 @@ import (
 	"github.com/m-rk/agentmux/daemon/internal/runas"
 )
 
+// TimeoutStartSec=90 below (was 30): a genuinely-fine kilo cold start —
+// fresh isolated login, cold model-list/indexing caches — confirmed live
+// to take 34s, which the old 30s timeout killed with a bare "start
+// operation timed out" and no indication it was just slow, not broken.
 const agentmuxUnitTemplate = `[Unit]
 Description=Persistent agentmux instance %[1]s (%[2]s + %[3]s)
 After=network-online.target ollama.service
@@ -21,7 +25,7 @@ RemainAfterExit=yes
 User=%[4]s
 ExecStart=%[5]s session run --instance %[1]s
 ExecStop=%[5]s session stop --instance %[1]s
-TimeoutStartSec=30
+TimeoutStartSec=90
 
 [Install]
 WantedBy=multi-user.target
@@ -58,7 +62,7 @@ Wants=network-online.target
 Type=oneshot
 User=%[2]s
 ExecStart=%[3]s session run --instance %[1]s
-TimeoutStartSec=30
+TimeoutStartSec=90
 `
 
 const agentmuxTickTimerTemplate = `[Unit]
@@ -92,6 +96,12 @@ func createAgentmux(opts Options) (string, error) {
 		return "", err
 	}
 
+	// Captured before writeRegistry below overwrites the file: whether this
+	// is a fresh instance or a re-provision of an existing one determines
+	// whether there's a live process whose stale config needs clearing out
+	// (see the restart call near the end of this function).
+	_, alreadyExisted := existingAgentFor(name)
+
 	sessionName := name
 	if err := validateIdentifier("tmux session name", sessionName); err != nil {
 		return "", err
@@ -116,7 +126,10 @@ func createAgentmux(opts Options) (string, error) {
 		workdir = filepath.Join(u.HomeDir, ".agentmux", name)
 	}
 
-	baseURL := providerBaseURL(provider)
+	baseURL, err := resolveBaseURL(provider, opts.BaseURL)
+	if err != nil {
+		return "", err
+	}
 
 	if err := checkAgentInstalled(opts.Agent, runUser); err != nil {
 		return "", err
@@ -137,12 +150,28 @@ func createAgentmux(opts Options) (string, error) {
 	tickServiceName := "agentmux-" + name + "-tick.service"
 	tickTimerName := "agentmux-" + name + "-tick.timer"
 
+	// Stop the old process *before* touching anything on disk — separately
+	// from the fact that "enable --now" below is a no-op on an
+	// already-active oneshot unit (which alone would mean the new config
+	// never actually gets picked up). This relies on StopAgentmux/ExecStop
+	// (session.StopAgentmux) actually waiting for the old process to be
+	// gone rather than just issuing the kill and returning — see its own
+	// doc comment for the state-flush race that guards against. Only
+	// matters for a genuine re-provision — a brand new instance has no
+	// unit yet.
+	if alreadyExisted {
+		if err := runSystemctl("stop", serviceName); err != nil {
+			return "", fmt.Errorf("stopping %s before applying updated config: %w", serviceName, err)
+		}
+	}
+
 	regPath, err := writeRegistry(name, []kv{
 		{"AGENTMUX_INSTANCE_NAME", name},
 		{"AGENTMUX_AGENT", opts.Agent},
 		{"AGENTMUX_PROVIDER", provider},
 		{"AGENTMUX_MODEL", model},
 		{"AGENTMUX_PROVIDER_BASE_URL", baseURL},
+		{"AGENTMUX_PROVIDER_API_KEY_ENV", opts.APIKeyEnv},
 		{"AGENTMUX_PROVIDER_WAIT_SECONDS", defaultProviderWaitSecs},
 		{"AGENTMUX_SESSION_NAME", sessionName},
 		{"AGENTMUX_TMUX_SESSION_NAME", sessionName},
@@ -166,8 +195,16 @@ func createAgentmux(opts Options) (string, error) {
 		return "", err
 	}
 
-	return fmt.Sprintf("Created instance %q (registry: %s). Reattach with: sudo -u %s tmux -L agentmux-%s attach -t %s",
-		name, regPath, runUser, name, sessionName), nil
+	verb := "Created"
+	if alreadyExisted {
+		verb = "Updated"
+	}
+	message := fmt.Sprintf("%s instance %q (registry: %s). Reattach with: sudo -u %s tmux -L agentmux-%s attach -t %s",
+		verb, name, regPath, runUser, name, sessionName)
+	if opts.Agent == "kilo" && provider != "ollama" && opts.APIKeyEnv != "" {
+		message += kiloCustomProviderNote(provider, baseURL, model, opts.APIKeyEnv)
+	}
+	return message, nil
 }
 
 // checkAgentInstalled mirrors install.sh's `command -v "$AGENT"` check

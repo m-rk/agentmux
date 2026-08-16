@@ -28,6 +28,7 @@ func runControlCmd(args []string) {
 	host := fs.String("host", "local", "device the instance lives on (a name from hosts.yaml, or \"local\")")
 	instance := fs.String("instance", "", "instance name (required)")
 	action := fs.String("action", "", "start|stop|restart (required)")
+	force := fs.Bool("force", false, "allow targeting the instance this process is currently running inside of")
 	fs.Parse(args)
 
 	if *instance == "" {
@@ -44,6 +45,11 @@ func runControlCmd(args []string) {
 		pbAction = pb.ControlAction_CONTROL_RESTART
 	default:
 		log.Fatalf("control: -action must be one of start|stop|restart, got %q", *action)
+	}
+	if *action != "start" {
+		if err := refuseIfSelfTarget(*host, *instance, *force); err != nil {
+			log.Fatalf("control: %v", err)
+		}
 	}
 
 	client, err := dialOneHost(*hostsPath, *socketPath, *host)

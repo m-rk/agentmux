@@ -142,8 +142,15 @@ to the TUI's instance table (name/agent/model/status/workdir); `-json`
 gives a stable, scriptable shape, and `-host all` (the default) merges
 every device from `hosts.yaml` into one list. `control` is the CLI
 counterpart to the TUI's start/stop/restart keybindings — drive the same
-action without attaching a terminal, e.g. after editing an instance's
-`AGENTMUX_MODEL` and needing the running session to actually pick it up.
+action without attaching a terminal. To change a zero/opencode/kilo
+instance's provider/model, prefer re-running `new -y` with the same
+`-instance`/`-agent` (see [Custom providers](../docs/custom-providers.md))
+over hand-editing the registry and calling `control -action restart`
+yourself — not because `restart` is unsafe (`StopAgentmux`, what its
+`ExecStop` runs, waits for the old process to actually be gone before
+returning, so this doesn't race), but because `new -y` is the one command
+that both writes the config *and* restarts, atomically; a hand-edited
+registry does nothing until something restarts the instance.
 `view`/`send-keys` are the headless counterpart to the TUI's `a` (attach):
 `view` prints a read-only snapshot of an instance's tmux pane (`-lines N`
 for trailing scrollback), `send-keys` types into it — trailing args are

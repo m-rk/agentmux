@@ -141,7 +141,40 @@ func RunAgentmux(name string) error {
 	return nil
 }
 
+// stopSessionPollInterval/stopSessionTimeout/stopSessionGrace bound how
+// long StopAgentmux waits for the killed session to actually be gone —
+// see StopAgentmux's own doc comment for why this wait exists at all.
+// vars (not consts) so tests can shrink them instead of actually
+// sleeping for real timeouts.
+var (
+	stopSessionPollInterval = 100 * time.Millisecond
+	stopSessionTimeout      = 5 * time.Second
+	stopSessionGrace        = 1 * time.Second
+)
+
 // StopAgentmux is the instance unit's ExecStop.
+//
+// `tmux kill-session` sends a hangup to the pane's process and tears down
+// tmux's own session bookkeeping essentially immediately — but it does not
+// wait for that process to actually finish exiting, and a well-behaved
+// agent CLI (kilo confirmed live) does async work in its own shutdown
+// handler: flushing its last-used model/session state to its local
+// database before it actually calls exit(). If the caller — ExecStart on
+// a plain `systemctl restart`, or provision.createAgentmux re-provisioning
+// an existing instance — proceeds to write updated config and launch a
+// new process the moment this function returns, that still-exiting old
+// process can flush its *stale* in-memory state to disk a moment later,
+// silently clobbering the update that was just written. Confirmed live:
+// a provider/model change reproducibly failed to take effect this way,
+// and only reliably stuck once an explicit wait for the old process to be
+// fully gone was added before writing anything new.
+//
+// tmux itself gives no synchronous "wait for this session's process to
+// actually exit" primitive, so this polls has-session (which does at
+// least confirm tmux's own bookkeeping is gone) and then adds a short
+// fixed grace period for the signaled process's own async shutdown to
+// finish — a heuristic, not a guarantee, but one that's already proven
+// out the actual failure mode above end-to-end.
 func StopAgentmux(name string) error {
 	fields, err := registry(name)
 	if err != nil {
@@ -150,6 +183,12 @@ func StopAgentmux(name string) error {
 	session := sessionNameOf(fields, name)
 	socket := tmuxSocket(name)
 	_ = withPath("tmux", "-L", socket, "kill-session", "-t", session).Run()
+
+	deadline := time.Now().Add(stopSessionTimeout)
+	for hasSession(socket, session) && time.Now().Before(deadline) {
+		time.Sleep(stopSessionPollInterval)
+	}
+	time.Sleep(stopSessionGrace)
 	return nil
 }
 
@@ -620,6 +659,21 @@ func kiloInstanceXDGEnvForHome(instance, home string) ([]string, error) {
 		if err := ensurePrivateKiloDir(dir); err != nil {
 			return nil, err
 		}
+	}
+	// An isolated instance's XDG_DATA_HOME starts with no Kilo account
+	// credentials at all — those live under data/kilo/auth.json, separate
+	// from the LLM provider auth in kilo.jsonc/kilo-env. Launching kilo
+	// without them non-interactively confirmed live: it blocks on its own
+	// "Add credential" prompt with no output, which just looks like a hang
+	// until systemd's TimeoutStartSec kills it with a bare "start operation
+	// timed out" — no hint that auth is the problem. Failing here instead
+	// turns that into an immediate, actionable error.
+	authFile := filepath.Join(dataDir, "kilo", "auth.json")
+	if _, err := os.Lstat(authFile); err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("isolated kilo data for %s has no account login yet (%s missing) — this instance would hang waiting on an interactive prompt; run `kilo auth login` under XDG_DATA_HOME=%s XDG_STATE_HOME=%s first (see docs/kilo-xdg-isolation.md)", instance, authFile, dataDir, stateDir)
+		}
+		return nil, err
 	}
 	return []string{
 		"XDG_DATA_HOME=" + dataDir,
