@@ -30,7 +30,10 @@ func updateAgentmux(name string) error {
 	if err := updateAgent(runUser, agent, agentEnv); err != nil {
 		return fmt.Errorf("%s update/check failed, leaving existing session running untouched: %w", agent, err)
 	}
-	after, _ := agentVersion(runUser, agent, agentEnv)
+	after, err := agentVersion(runUser, agent, agentEnv)
+	if err != nil {
+		return fmt.Errorf("%s reported success but is not runnable afterward, leaving existing session running untouched: %w", agent, err)
+	}
 
 	if before == after && hasSessionAs(runUser, socket, session) {
 		return nil // no version change, session already running

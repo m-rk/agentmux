@@ -660,6 +660,21 @@ func kiloInstanceXDGEnvForHome(instance, home string) ([]string, error) {
 			return nil, err
 		}
 	}
+	// An isolated instance's XDG_DATA_HOME starts with no Kilo account
+	// credentials at all — those live under data/kilo/auth.json, separate
+	// from the LLM provider auth in kilo.jsonc/kilo-env. Launching kilo
+	// without them non-interactively confirmed live: it blocks on its own
+	// "Add credential" prompt with no output, which just looks like a hang
+	// until systemd's TimeoutStartSec kills it with a bare "start operation
+	// timed out" — no hint that auth is the problem. Failing here instead
+	// turns that into an immediate, actionable error.
+	authFile := filepath.Join(dataDir, "kilo", "auth.json")
+	if _, err := os.Lstat(authFile); err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("isolated kilo data for %s has no account login yet (%s missing) — this instance would hang waiting on an interactive prompt; run `kilo auth login` under XDG_DATA_HOME=%s XDG_STATE_HOME=%s first (see docs/kilo-xdg-isolation.md)", instance, authFile, dataDir, stateDir)
+		}
+		return nil, err
+	}
 	return []string{
 		"XDG_DATA_HOME=" + dataDir,
 		"XDG_STATE_HOME=" + stateDir,

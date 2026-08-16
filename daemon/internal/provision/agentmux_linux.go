@@ -10,6 +10,10 @@ import (
 	"github.com/m-rk/agentmux/daemon/internal/runas"
 )
 
+// TimeoutStartSec=90 below (was 30): a genuinely-fine kilo cold start —
+// fresh isolated login, cold model-list/indexing caches — confirmed live
+// to take 34s, which the old 30s timeout killed with a bare "start
+// operation timed out" and no indication it was just slow, not broken.
 const agentmuxUnitTemplate = `[Unit]
 Description=Persistent agentmux instance %[1]s (%[2]s + %[3]s)
 After=network-online.target ollama.service
@@ -21,7 +25,7 @@ RemainAfterExit=yes
 User=%[4]s
 ExecStart=%[5]s session run --instance %[1]s
 ExecStop=%[5]s session stop --instance %[1]s
-TimeoutStartSec=30
+TimeoutStartSec=90
 
 [Install]
 WantedBy=multi-user.target
@@ -58,7 +62,7 @@ Wants=network-online.target
 Type=oneshot
 User=%[2]s
 ExecStart=%[3]s session run --instance %[1]s
-TimeoutStartSec=30
+TimeoutStartSec=90
 `
 
 const agentmuxTickTimerTemplate = `[Unit]

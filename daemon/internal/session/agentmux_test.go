@@ -30,6 +30,20 @@ func TestKiloInstanceXDGEnvRequiresReadyMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if _, err := kiloInstanceXDGEnv("probe"); err == nil {
+		t.Fatal("kiloInstanceXDGEnv with a ready marker but no account login: want an error, got none")
+	} else if !strings.Contains(err.Error(), "account login") {
+		t.Fatalf("kiloInstanceXDGEnv with no account login: want an error about missing login, got %v", err)
+	}
+
+	authDir := filepath.Join(root, "data", "kilo")
+	if err := os.MkdirAll(authDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(authDir, "auth.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	env, err = kiloInstanceXDGEnv("probe")
 	if err != nil {
 		t.Fatalf("kiloInstanceXDGEnv after migration: %v", err)

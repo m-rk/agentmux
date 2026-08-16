@@ -42,6 +42,7 @@ func runWizard(args []string) {
 	runUser := fs.String("run-user", "", "Linux only, required there; -y only")
 	resume := fs.String("resume", "", "claude-code only, a session ID; -y only")
 	compact := fs.String("compact", "", "claude-code only: \"\" (default/on) or \"off\"; -y only")
+	force := fs.Bool("force", false, "allow re-provisioning the instance this process is currently running inside of; -y only")
 	fs.Parse(args)
 
 	if !*nonInteractive {
@@ -62,6 +63,10 @@ func runWizard(args []string) {
 			log.Fatalf("new: %v", err)
 		}
 		return
+	}
+
+	if err := refuseIfSelfTarget(*host, *instance, *force); err != nil {
+		log.Fatalf("new: %v", err)
 	}
 
 	client, err := dialOneHost(*hostsPath, *socketPath, *host)
