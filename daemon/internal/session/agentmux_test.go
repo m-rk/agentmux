@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -91,6 +92,54 @@ func TestKiloInstanceXDGEnvRejectsNonFileMarker(t *testing.T) {
 func TestKiloInstanceXDGEnvRejectsPathTraversal(t *testing.T) {
 	if _, err := kiloInstanceXDGEnvForHome("../escape", t.TempDir()); err == nil {
 		t.Fatal("kiloInstanceXDGEnvForHome accepted a path traversal instance name")
+	}
+}
+
+// TestWriteOpencodeConfigPreservesHandAddedModels guards against
+// regenerating opencode.json wiping models a user added by hand: confirmed
+// live that a plain restart clobbered them back down to just the
+// instance's own default model.
+func TestWriteOpencodeConfigPreservesHandAddedModels(t *testing.T) {
+	workdir := t.TempDir()
+	path := filepath.Join(workdir, "opencode.json")
+	existing := `{
+		"provider": {
+			"token-tan-gl": {
+				"models": {
+					"glm-5.2": {"name": "glm-5.2"},
+					"kimi-k2.6": {"name": "kimi-k2.6"}
+				}
+			}
+		}
+	}`
+	if err := os.WriteFile(path, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeOpencodeConfig("token-tan-gl", "glm-5.2", "https://token.tan.gl/v1", workdir); err != nil {
+		t.Fatalf("writeOpencodeConfig: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Provider map[string]struct {
+			Models map[string]struct {
+				Name string `json:"name"`
+			} `json:"models"`
+		} `json:"provider"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("unmarshaling written config: %v", err)
+	}
+	models := doc.Provider["token-tan-gl"].Models
+	if _, ok := models["kimi-k2.6"]; !ok {
+		t.Errorf("writeOpencodeConfig dropped the hand-added model kimi-k2.6, got models: %v", models)
+	}
+	if _, ok := models["glm-5.2"]; !ok {
+		t.Errorf("writeOpencodeConfig dropped its own default model glm-5.2, got models: %v", models)
 	}
 }
 

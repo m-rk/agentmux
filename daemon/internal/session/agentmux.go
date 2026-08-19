@@ -513,6 +513,7 @@ func writeZeroConfig(provider, model, baseURL, workdir string) error {
 }
 
 func writeOpencodeConfig(provider, model, baseURL, workdir string) error {
+	path := filepath.Join(workdir, "opencode.json")
 	doc := map[string]any{
 		"$schema": "https://opencode.ai/config.json",
 		"model":   provider + "/" + model,
@@ -523,21 +524,53 @@ func writeOpencodeConfig(provider, model, baseURL, workdir string) error {
 				"options": map[string]any{
 					"baseURL": baseURL,
 				},
-				"models": map[string]any{
-					model: map[string]any{
-						"name": model,
-					},
-				},
+				"models": mergeExistingModels(path, provider, model),
 			},
 		},
 	}
-	return writeJSONAtomic(filepath.Join(workdir, "opencode.json"), doc)
+	return writeJSONAtomic(path, doc)
+}
+
+// mergeExistingModels preserves any extra models a user has hand-added
+// under provider.<provider>.models in an existing project config file —
+// that file is otherwise fully regenerated on every instance start/
+// restart, which would otherwise silently wipe them (confirmed live: a
+// user's manually-added models vanished across two consecutive restarts
+// before this was added).
+func mergeExistingModels(path, provider, model string) map[string]any {
+	models := map[string]any{
+		model: map[string]any{"name": model},
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return models
+	}
+	var existing struct {
+		Provider map[string]struct {
+			Models map[string]json.RawMessage `json:"models"`
+		} `json:"provider"`
+	}
+	if err := json.Unmarshal(data, &existing); err != nil {
+		return models
+	}
+	for name, raw := range existing.Provider[provider].Models {
+		if _, ok := models[name]; ok {
+			continue
+		}
+		var v any
+		if err := json.Unmarshal(raw, &v); err != nil {
+			continue
+		}
+		models[name] = v
+	}
+	return models
 }
 
 // writeKiloCodeConfig mirrors writeOpencodeConfig: Kilo CLI (`kilo`, from
 // the @kilocode/cli npm package) is a fork of opencode and shares its
 // config schema, just under its own project-level file name/$schema URL.
 func writeKiloCodeConfig(provider, model, baseURL, workdir string) error {
+	path := filepath.Join(workdir, "kilo.json")
 	doc := map[string]any{
 		"$schema": "https://app.kilo.ai/config.json",
 		"model":   provider + "/" + model,
@@ -548,15 +581,11 @@ func writeKiloCodeConfig(provider, model, baseURL, workdir string) error {
 				"options": map[string]any{
 					"baseURL": baseURL,
 				},
-				"models": map[string]any{
-					model: map[string]any{
-						"name": model,
-					},
-				},
+				"models": mergeExistingModels(path, provider, model),
 			},
 		},
 	}
-	return writeJSONAtomic(filepath.Join(workdir, "kilo.json"), doc)
+	return writeJSONAtomic(path, doc)
 }
 
 // readKiloExtraEnv reads an optional local, never-committed dotenv-style
