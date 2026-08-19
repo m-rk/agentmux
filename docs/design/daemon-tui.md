@@ -195,10 +195,12 @@ setting `cmd.Env` on an already-built one and hoping.
 
 ### Safety: cross-agent overwrite guard
 
-The wizard's instance-name field doesn't react to the agent dropdown — it
-always starts at the claude-code default regardless of which agent is
-selected. `provision.Create` refuses to proceed if the requested name
-already belongs to a different agent, checked two ways: `existingAgentFor`
+The wizard chooses its instance-name default after the agent is selected
+(`claude-code` for Claude Code, `agentmux` for the other agents) and renders
+only that agent's relevant settings. `provision.Create` still refuses to
+proceed if the requested name already belongs to a different agent, covering
+non-interactive callers and explicit name collisions. It checks two ways:
+`existingAgentFor`
 (the registry, for instances this provisioner itself created) and
 `unitFileExists` (the plist/unit file directly, for older instances
 installed by the bash scripts, which predate the registry and so have no

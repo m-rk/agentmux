@@ -146,6 +146,27 @@ func TestDisplayNameFor(t *testing.T) {
 			t.Errorf("DisplayNameFor = %q, want prefix %q", got, "testuser:")
 		}
 	})
+
+	t.Run("explicit host name overrides the derived host", func(t *testing.T) {
+		realUserCount = func() int { return 1 }
+		got := DisplayNameForHost("testuser", "build-box", "/home/testuser/.agentmux/probe")
+		if want := "build-box 🤹 probe"; got != want {
+			t.Errorf("DisplayNameForHost = %q, want %q", got, want)
+		}
+	})
+}
+
+func TestResolveHostName(t *testing.T) {
+	got, err := resolveHostName("  build-box  ")
+	if err != nil {
+		t.Fatalf("resolveHostName: %v", err)
+	}
+	if got != "build-box" {
+		t.Fatalf("resolveHostName = %q, want build-box", got)
+	}
+	if _, err := resolveHostName("not a host"); err == nil {
+		t.Error("resolveHostName accepted spaces")
+	}
 }
 
 func TestProviderBaseURL(t *testing.T) {

@@ -7,8 +7,12 @@ design and phased rollout plan.
 
 <p align="center">
   <img src="../docs/design/img/tui-list.png" alt="agentmux TUI: list of instances across hosts" width="49%">
-  <img src="../docs/design/img/tui-wizard.png" alt="agentmux new: instance creation wizard" width="49%">
+  <img src="../docs/design/img/tui-wizard-claude.svg" alt="agentmux new: Claude instance creation wizard" width="49%">
 </p>
+
+The wizard preview is generated from its real form code with fixed synthetic
+data. See [deterministic UX screenshots](../docs/design/ux-screenshots.md) to
+regenerate every state or add another one.
 
 Phase 1: TUI + daemon talk over a Unix socket on one host — no networking
 needed. Phase 2: the daemon can also listen on a TCP address (e.g. a
@@ -90,11 +94,16 @@ rather than falling back to root.
 ./agentmux new
 ```
 
-Prompts for device (any host from `hosts.yaml`, or `local`), agent
-(`claude-code`, `zero`, `opencode`, or `kilo`), instance name, run-as user
-(Linux only — a macOS instance always runs as whoever ran the wizard),
-workdir, and provider/model (zero/opencode/kilo only). Calls the target
-device's daemon
+First prompts for the device (any host from `hosts.yaml`, or `local`) and
+agent (`claude-code`, `zero`, `opencode`, or `kilo`), then shows only the
+settings relevant to that agent. Provider/model fields appear for
+zero/opencode/kilo, the custom-provider URL appears only after choosing a
+custom provider, the API-key environment variable appears only for Kilo, and
+nightly compaction appears only for Claude Code. Claude Code and Kilo also
+offer an editable host name for their remote display label, prefilled from the
+target device's derived host name. Common settings are the instance name,
+run-as user (Linux only — a macOS instance always runs as whoever ran the
+wizard), and workdir. Calls the target device's daemon
 over the same connection the TUI uses — creating on a remote device just
 means picking it from the same list. If `claude-code` is selected and an
 explicit workdir was given, it looks up resumable sessions for that workdir
@@ -120,7 +129,7 @@ cutover is explicitly marked ready; follow the
 ### Scripting: non-interactive create, rename, resume lookup, status, view, and control
 
 ```sh
-./agentmux new -y -instance myinstance -agent claude-code -run-user ubuntu
+./agentmux new -y -instance myinstance -agent claude-code -run-user ubuntu -host-name build-box
 ./agentmux rename -instance myinstance -tmux-name renamed -display-name "new name"
 ./agentmux resume-list -workdir /path/to/project -run-user ubuntu
 ./agentmux list -json
@@ -130,7 +139,8 @@ cutover is explicitly marked ready; follow the
 ```
 
 `new -y` skips the interactive form and creates directly from flags — same
-fields as the form, run `agentmux new -h` for the full list. `rename` is
+fields as the form, run `agentmux new -h` for the full list. Leaving
+`-host-name` blank derives it on the target device. `rename` is
 the CLI counterpart to the TUI's `R` keybinding: a tmux session rename
 applies live, a display name change (claude-code only) restarts the
 session. That restart uses the resume ID currently saved in the registry, so

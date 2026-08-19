@@ -25,6 +25,9 @@ service AgentmuxDaemon {
   // entry, installs its unit/LaunchAgent, and starts it.
   rpc CreateInstance(CreateInstanceRequest) returns (CreateInstanceResponse);
 
+  // Returns host-derived defaults used by the interactive creation wizard.
+  rpc GetCreateOptions(GetCreateOptionsRequest) returns (GetCreateOptionsResponse);
+
   // Lists Claude Code session IDs resumable for a given workdir, for the
   // wizard's resume picker.
   rpc ListResumableSessions(ListResumableSessionsRequest) returns (ListResumableSessionsResponse);
@@ -156,11 +159,20 @@ message CreateInstanceRequest {
   // only validates and echoes back copy-pasteable setup instructions in the
   // response message. See docs/custom-providers.md.
   string provider_api_key_env = 10;
+  // claude-code/kilo only. Host portion of the remote display name; empty
+  // derives it from the target device.
+  string host_name = 11;
 }
 
 message CreateInstanceResponse {
   bool ok = 1;
   string message = 2;  // combined log/summary, mirrors ControlResponse
+}
+
+message GetCreateOptionsRequest {}
+
+message GetCreateOptionsResponse {
+  string default_host_name = 1;
 }
 
 message ListResumableSessionsRequest {

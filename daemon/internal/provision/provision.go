@@ -22,6 +22,7 @@ import (
 type Options struct {
 	InstanceName    string
 	Agent           string
+	HostName        string
 	Provider        string
 	Model           string
 	Workdir         string
@@ -59,12 +60,9 @@ func defaultInstanceName(agent, workdir string) string {
 
 // Create dispatches to the right agent-specific provisioner, after
 // refusing to silently clobber an existing instance registered under a
-// different agent. The wizard form's instance-name field doesn't update
-// when the agent selection changes — it always starts at "claude-code"
-// regardless of which agent is picked — so choosing zero/opencode and
-// submitting without noticing/changing that default would otherwise
-// overwrite a same-named claude-code instance's registry file and
-// systemd unit/LaunchAgent outright.
+// different agent. The wizard gives each agent an appropriate default, but
+// this guard remains important for non-interactive callers and explicit name
+// collisions.
 func Create(opts Options) (string, error) {
 	name := opts.InstanceName
 	if name == "" {
@@ -177,15 +175,41 @@ func machineName(fallback string) string {
 	return name
 }
 
+// DefaultHostName returns the short host name used in remote display names
+// when callers do not provide an override.
+func DefaultHostName() string {
+	return machineName("host")
+}
+
+func resolveHostName(hostName string) (string, error) {
+	hostName = strings.TrimSpace(hostName)
+	if hostName == "" {
+		hostName = DefaultHostName()
+	}
+	if err := validateIdentifier("host name", hostName); err != nil {
+		return "", err
+	}
+	return hostName, nil
+}
+
 // DisplayNameFor mirrors install.sh's default display-name heuristic:
 // "<user>:<host> 🤹 <workdir-basename>", with the "<user>:" prefix omitted
 // on single-real-user machines.
 func DisplayNameFor(runUser, workdir string) string {
+	return DisplayNameForHost(runUser, "", workdir)
+}
+
+// DisplayNameForHost applies the display-name heuristic with an optional
+// caller-supplied host name. A blank host name preserves the derived default.
+func DisplayNameForHost(runUser, hostName, workdir string) string {
 	prefix := ""
 	if realUserCount() != 1 {
 		prefix = runUser + ":"
 	}
-	return fmt.Sprintf("%s%s 🤹 %s", prefix, machineName("host"), filepath.Base(workdir))
+	if hostName == "" {
+		hostName = DefaultHostName()
+	}
+	return fmt.Sprintf("%s%s 🤹 %s", prefix, hostName, filepath.Base(workdir))
 }
 
 // ResumableSession is one candidate Claude Code session a new instance

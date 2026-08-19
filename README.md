@@ -19,8 +19,12 @@ the host; it doesn't bundle those tools itself.
 
 <p align="center">
   <img src="docs/design/img/tui-list.png" alt="agentmux TUI: list of instances across hosts" width="49%">
-  <img src="docs/design/img/tui-wizard.png" alt="agentmux new: instance creation wizard" width="49%">
+  <img src="docs/design/img/tui-wizard-claude.svg" alt="agentmux new: Claude instance creation wizard" width="49%">
 </p>
+
+The wizard preview is generated from its real form code with fixed synthetic
+data. See [deterministic UX screenshots](docs/design/ux-screenshots.md) to
+regenerate every state or add another one.
 
 ```sh
 git clone https://github.com/m-rk/agentmux.git
@@ -30,7 +34,7 @@ go build -o agentmux ./cmd/agentmux
 sudo ./agentmux daemon install   # Linux: daemon + doctor systemd timer
 ./agentmux daemon install        # macOS: daemon + doctor LaunchAgent, no sudo
 
-./agentmux new                   # wizard: pick device, agent, model, workdir
+./agentmux new                   # agent-specific wizard: device, agent, relevant settings
 ./agentmux                       # TUI: attach, rename, restart, create — across every host
 ```
 

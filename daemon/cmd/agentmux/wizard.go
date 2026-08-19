@@ -17,6 +17,7 @@ import (
 	"github.com/m-rk/agentmux/daemon/internal/hostsconfig"
 	"github.com/m-rk/agentmux/daemon/internal/pb"
 	"github.com/m-rk/agentmux/daemon/internal/tuiclient"
+	"github.com/m-rk/agentmux/daemon/internal/wizardui"
 )
 
 // runWizard is the `agentmux new` subcommand entrypoint: dial every
@@ -34,6 +35,7 @@ func runWizard(args []string) {
 	host := fs.String("host", "local", "device to create the instance on (a name from hosts.yaml, or \"local\"); -y only")
 	instance := fs.String("instance", "", "instance name; -y only")
 	agent := fs.String("agent", "", "claude-code | zero | opencode | kilo; -y only")
+	hostName := fs.String("host-name", "", "claude-code/kilo display hostname; blank = derive from the target device; -y only")
 	provider := fs.String("provider", "", "zero/opencode/kilo only; \"ollama\" or a custom provider id; -y only")
 	model := fs.String("model", "", "zero/opencode/kilo only; -y only")
 	providerBaseURL := fs.String("provider-base-url", "", "zero/opencode/kilo only; required when -provider isn't \"ollama\"; -y only")
@@ -79,6 +81,7 @@ func runWizard(args []string) {
 	resp, err := client.CreateInstance(ctx, &pb.CreateInstanceRequest{
 		InstanceName:      *instance,
 		Agent:             *agent,
+		HostName:          *hostName,
 		Provider:          *provider,
 		Model:             *model,
 		Workdir:           *workdir,
@@ -112,11 +115,9 @@ func newInstanceCmd(p *tea.Program, clients map[string]*tuiclient.Client) tea.Cm
 	}
 }
 
-// runWizardForm prompts for device/agent/instance details, then calls
-// CreateInstance on the chosen host's client. claude-code (Linux only so
-// far) and zero/opencode/kilo (also Linux only so far) are selectable;
-// macOS provisioning isn't implemented yet and CreateInstance will report
-// that clearly rather than doing something wrong.
+// runWizardForm first asks what to create and where, then builds a details
+// form containing only fields that apply to the selected agent. It finally
+// calls CreateInstance on the chosen host's client.
 func runWizardForm(clients map[string]*tuiclient.Client) error {
 	hostNames := make([]string, 0, len(clients))
 	for name := range clients {
@@ -127,79 +128,11 @@ func runWizardForm(clients map[string]*tuiclient.Client) error {
 		return fmt.Errorf("no hosts available")
 	}
 
-	hostOptions := make([]huh.Option[string], len(hostNames))
-	for i, n := range hostNames {
-		hostOptions[i] = huh.NewOption(n, n)
-	}
-
-	var (
-		host              = hostNames[0]
-		agent             = "claude-code"
-		instance          = "claude-code"
-		runUser           string
-		workdir           string
-		provider          string
-		model             string
-		providerBaseURL   string
-		providerAPIKeyEnv string
-		compactOnUpdate   string
-	)
-	if u, err := user.Current(); err == nil {
-		runUser = u.Username
-	}
-
-	groups := []*huh.Group{
-		huh.NewGroup(
-			huh.NewSelect[string]().Title("Device").Options(hostOptions...).Value(&host),
-			huh.NewSelect[string]().Title("Agent").
-				Options(
-					huh.NewOption("claude-code", "claude-code"),
-					huh.NewOption("zero", "zero"),
-					huh.NewOption("opencode", "opencode"),
-					huh.NewOption("kilo", "kilo"),
-				).
-				Value(&agent),
-		),
-		huh.NewGroup(
-			huh.NewInput().Title("Instance name").Value(&instance),
-			huh.NewInput().Title("Run as user").Description("required; the device's OS username to run the session as").Value(&runUser),
-			huh.NewInput().Title("Workdir").Description("blank = provisioner default").Value(&workdir),
-			huh.NewInput().Title("Provider").Description("zero/opencode/kilo only; blank = ollama, or a custom provider id").Value(&provider),
-			huh.NewInput().Title("Model").Description("zero/opencode/kilo only; blank = provisioner default").Value(&model),
-			huh.NewInput().Title("Provider base URL").Description("zero/opencode/kilo only; required unless Provider is blank/\"ollama\"").Value(&providerBaseURL),
-			huh.NewInput().Title("Provider API key env var").Description("kilo only, optional; NAME of an env var holding a custom provider's key, e.g. MYPROVIDER_API_KEY — not the key itself. See the message after creation for the one-time setup this still requires.").Value(&providerAPIKeyEnv),
-			huh.NewSelect[string]().Title("Compact before nightly resume?").
-				Description("claude-code only; prevents Claude Code's own huge-session resume prompt by compacting and restarting every night, not just on a version change").
-				Options(
-					huh.NewOption("on (default)", ""),
-					huh.NewOption("off", "off"),
-				).
-				Value(&compactOnUpdate),
-		),
-	}
-
-	// Optional onboarding step: only offered if Discord notifications
-	// aren't already configured, so returning wizard users creating a
-	// second/third instance aren't asked again every time.
-	setupDiscord := false
-	if discordCfg, err := discordnotify.Load(discordnotify.DefaultPath()); err == nil && discordCfg.WebhookURL == "" {
-		groups = append(groups, huh.NewGroup(
-			huh.NewConfirm().
-				Title("Set up Discord notifications?").
-				Description("Optional — lets agentmux message you proactively (e.g. a Claude Code refresh token about to expire). Can also be done later with 'agentmux notify discord setup'.").
-				Value(&setupDiscord),
-		))
-	}
-
-	form := huh.NewForm(groups...)
-	if err := form.Run(); err != nil {
+	host := hostNames[0]
+	agent := "claude-code"
+	selectionForm := wizardui.NewSelectionForm(hostNames, &host, &agent)
+	if err := selectionForm.Run(); err != nil {
 		return err
-	}
-
-	if setupDiscord {
-		if _, err := runDiscordSetupForm(); err != nil {
-			fmt.Printf("warning: Discord setup failed, continuing without it: %v\n", err)
-		}
 	}
 
 	client, ok := clients[host]
@@ -207,28 +140,67 @@ func runWizardForm(clients map[string]*tuiclient.Client) error {
 		return fmt.Errorf("no connection to host %q", host)
 	}
 
+	capabilities := wizardui.CapabilitiesForAgent(agent)
+	hostName := ""
+	if capabilities.DisplayHostName {
+		optionsCtx, optionsCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		options, optionsErr := client.GetCreateOptions(optionsCtx)
+		optionsCancel()
+		if optionsErr == nil {
+			hostName = options.DefaultHostName
+		}
+	}
+
+	details := &wizardui.Details{
+		Instance: wizardui.DefaultInstance(agent),
+		HostName: hostName,
+		Provider: "ollama",
+	}
+	if u, err := user.Current(); err == nil {
+		details.RunUser = u.Username
+	}
+
+	// Optional onboarding step: only offered if Discord notifications
+	// aren't already configured, so returning wizard users creating a
+	// second/third instance aren't asked again every time.
+	includeDiscord := false
+	if discordCfg, err := discordnotify.Load(discordnotify.DefaultPath()); err == nil {
+		includeDiscord = discordCfg.WebhookURL == ""
+	}
+	form := wizardui.NewDetailsForm(agent, details, includeDiscord)
+	if err := form.Run(); err != nil {
+		return err
+	}
+
+	if details.SetupDiscord {
+		if _, err := runDiscordSetupForm(); err != nil {
+			fmt.Printf("warning: Discord setup failed, continuing without it: %v\n", err)
+		}
+	}
+
 	// Only claude-code supports --resume, and the picker needs an explicit
 	// workdir to look sessions up under — a blank workdir here means "use
 	// the provisioner's own default," which this client can't predict for
 	// an arbitrary remote device, so it's a fresh session in that case.
 	resume := ""
-	if agent == "claude-code" && workdir != "" {
-		resume = pickResumeSession(client, workdir, runUser)
+	if agent == "claude-code" && details.Workdir != "" {
+		resume = pickResumeSession(client, details.Workdir, details.RunUser)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	resp, err := client.CreateInstance(ctx, &pb.CreateInstanceRequest{
-		InstanceName:      instance,
+		InstanceName:      details.Instance,
 		Agent:             agent,
-		Provider:          provider,
-		Model:             model,
-		Workdir:           workdir,
+		HostName:          details.HostName,
+		Provider:          details.Provider,
+		Model:             details.Model,
+		Workdir:           details.Workdir,
 		ResumeSessionId:   resume,
-		RunUser:           runUser,
-		CompactOnUpdate:   compactOnUpdate,
-		ProviderBaseUrl:   providerBaseURL,
-		ProviderApiKeyEnv: providerAPIKeyEnv,
+		RunUser:           details.RunUser,
+		CompactOnUpdate:   details.CompactOnUpdate,
+		ProviderBaseUrl:   details.ProviderBaseURL,
+		ProviderApiKeyEnv: details.ProviderAPIKeyEnv,
 	})
 	if err != nil {
 		return err
