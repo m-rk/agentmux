@@ -128,9 +128,13 @@ func createClaudeCode(opts Options) (string, error) {
 	if workdir == "" {
 		workdir = filepath.Join(u.HomeDir, ".agentmux", name)
 	}
+	hostName, err := resolveHostName(opts.HostName)
+	if err != nil {
+		return "", err
+	}
 
 	claudeJSON := claudeJSONPath(u.HomeDir)
-	displayName := DisplayNameFor(u.Username, workdir)
+	displayName := DisplayNameForHost(u.Username, hostName, workdir)
 
 	if !claudeLoggedIn() {
 		return "", fmt.Errorf("Claude Code does not appear to be logged in; run 'claude' once to log in, then retry")
@@ -152,6 +156,7 @@ func createClaudeCode(opts Options) (string, error) {
 		{"AGENTMUX_SESSION_NAME", sessionName},
 		{"AGENTMUX_TMUX_SESSION_NAME", sessionName},
 		{"AGENTMUX_DISPLAY_NAME", displayName},
+		{"AGENTMUX_HOST_NAME", hostName},
 		{"AGENTMUX_SERVICE_NAME", label},
 		{"AGENTMUX_WORKDIR", workdir},
 		{"AGENTMUX_RESUME", opts.ResumeSessionID},

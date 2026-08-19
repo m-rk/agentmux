@@ -102,6 +102,10 @@ func (c *Client) CreateInstance(ctx context.Context, req *pb.CreateInstanceReque
 	return c.api.CreateInstance(ctx, req)
 }
 
+func (c *Client) GetCreateOptions(ctx context.Context) (*pb.GetCreateOptionsResponse, error) {
+	return c.api.GetCreateOptions(ctx, &pb.GetCreateOptionsRequest{})
+}
+
 func (c *Client) ListResumableSessions(ctx context.Context, req *pb.ListResumableSessionsRequest) (*pb.ListResumableSessionsResponse, error) {
 	return c.api.ListResumableSessions(ctx, req)
 }

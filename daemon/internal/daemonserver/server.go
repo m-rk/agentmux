@@ -125,6 +125,7 @@ func (s *Server) CreateInstance(ctx context.Context, req *pb.CreateInstanceReque
 	message, err := provision.Create(provision.Options{
 		InstanceName:    req.InstanceName,
 		Agent:           req.Agent,
+		HostName:        req.HostName,
 		Provider:        req.Provider,
 		Model:           req.Model,
 		Workdir:         req.Workdir,
@@ -138,6 +139,10 @@ func (s *Server) CreateInstance(ctx context.Context, req *pb.CreateInstanceReque
 		return &pb.CreateInstanceResponse{Ok: false, Message: err.Error()}, nil
 	}
 	return &pb.CreateInstanceResponse{Ok: true, Message: message}, nil
+}
+
+func (s *Server) GetCreateOptions(context.Context, *pb.GetCreateOptionsRequest) (*pb.GetCreateOptionsResponse, error) {
+	return &pb.GetCreateOptionsResponse{DefaultHostName: provision.DefaultHostName()}, nil
 }
 
 func (s *Server) ListResumableSessions(ctx context.Context, req *pb.ListResumableSessionsRequest) (*pb.ListResumableSessionsResponse, error) {

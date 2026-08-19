@@ -119,7 +119,7 @@ func RunAgentmux(name string) error {
 			return fmt.Errorf("checking for an existing kilo session in %s: %w", workdir, err)
 		}
 		if id == "" {
-			displayName := provision.DisplayNameFor(fields["AGENTMUX_RUN_USER"], workdir)
+			displayName := provision.DisplayNameForHost(fields["AGENTMUX_RUN_USER"], fields["AGENTMUX_HOST_NAME"], workdir)
 			newID, err := seedKiloSession(workdir, kiloEnv, displayName)
 			if err != nil {
 				return fmt.Errorf("seeding initial kilo session in %s: %w", workdir, err)

@@ -125,6 +125,13 @@ func createAgentmux(opts Options) (string, error) {
 	if workdir == "" {
 		workdir = filepath.Join(u.HomeDir, ".agentmux", name)
 	}
+	hostName := ""
+	if opts.Agent == "kilo" {
+		hostName, err = resolveHostName(opts.HostName)
+		if err != nil {
+			return "", err
+		}
+	}
 
 	baseURL, err := resolveBaseURL(provider, opts.BaseURL)
 	if err != nil {
@@ -175,6 +182,7 @@ func createAgentmux(opts Options) (string, error) {
 		{"AGENTMUX_PROVIDER_WAIT_SECONDS", defaultProviderWaitSecs},
 		{"AGENTMUX_SESSION_NAME", sessionName},
 		{"AGENTMUX_TMUX_SESSION_NAME", sessionName},
+		{"AGENTMUX_HOST_NAME", hostName},
 		{"AGENTMUX_WORKDIR", workdir},
 		{"AGENTMUX_RUN_USER", runUser},
 		{"AGENTMUX_SERVICE_NAME", serviceName},
