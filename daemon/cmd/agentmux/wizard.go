@@ -39,7 +39,7 @@ func runWizard(args []string) {
 	provider := fs.String("provider", "", "zero/opencode/kilo only; \"ollama\" or a custom provider id; -y only")
 	model := fs.String("model", "", "zero/opencode/kilo only; -y only")
 	providerBaseURL := fs.String("provider-base-url", "", "zero/opencode/kilo only; required when -provider isn't \"ollama\"; -y only")
-	providerAPIKeyEnv := fs.String("provider-api-key-env", "", "kilo only, optional; env var name (not the key itself) holding a custom provider's API key; -y only")
+	providerAPIKeyEnv := fs.String("provider-api-key-env", "", "kilo/opencode only, not zero; optional; env var name (not the key itself) holding a custom provider's API key; -y only")
 	workdir := fs.String("workdir", "", "blank = provisioner default; -y only")
 	runUser := fs.String("run-user", "", "Linux only, required there; -y only")
 	resume := fs.String("resume", "", "claude-code only, a session ID; -y only")
