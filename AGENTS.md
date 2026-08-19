@@ -58,6 +58,26 @@ agentmux itself considers the live session.
 
 ## Developing agentmux itself
 
+### UX screenshots in pull requests
+
+UX-affecting pull requests should include screenshots produced from mocked,
+sanitised state rather than a live agentmux deployment. Use fixed synthetic
+users, host names, paths, instance names, providers, and credential variable
+names so no local or private details can reach a public artifact.
+
+- Reuse the production UI builders instead of recreating the interface for a
+  screenshot. For the instance wizard, run
+  `./scripts/generate-ux-screenshots.sh` and verify the checked-in output with
+  `./scripts/generate-ux-screenshots.sh -check`.
+- Inspect every screenshot before publishing it. Do not upload captures from a
+  live daemon, terminal, browser session, or machine-derived configuration.
+- Run `gh auth status` before publishing and repair authentication with
+  `gh auth login` if needed. Upload the sanitised screenshot files with
+  `gh image --repo m-rk/agentmux ...`, then embed the returned
+  `user-attachments` Markdown in the pull request body.
+- Never print, persist, commit, or paste an authentication or browser-session
+  token. The pull request should contain only the uploaded attachment URLs.
+
 - `daemon/proto/agentmuxd.proto` is the source of truth for the daemon's
   gRPC API. After editing it, regenerate stubs (see `daemon/README.md`):
   ```sh
