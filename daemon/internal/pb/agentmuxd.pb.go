@@ -855,14 +855,17 @@ type CreateInstanceRequest struct {
 	// Only "ollama" has a built-in default (localhost); any other provider
 	// must set this explicitly.
 	ProviderBaseUrl string `protobuf:"bytes,9,opt,name=provider_base_url,json=providerBaseUrl,proto3" json:"provider_base_url,omitempty"`
-	// kilo only, optional. Name of an environment variable (not the API key
-	// value itself) that holds the provider's API key. Kilo's per-project
-	// config can't reference "{env:VAR}" at all, so a non-ollama provider
-	// needing auth must be declared in kilo's shared global config instead —
-	// CreateInstance can't do that safely on the caller's behalf (it would
-	// mean rewriting a hand-maintained, comment-bearing config file), so it
-	// only validates and echoes back copy-pasteable setup instructions in the
-	// response message. See docs/custom-providers.md.
+	// kilo/opencode only, optional; not zero. Name of an environment variable
+	// (not the API key value itself) that holds the provider's API key.
+	// Kilo's per-project config can't reference "{env:VAR}" at all, so a
+	// non-ollama provider needing auth must be declared in kilo's shared
+	// global config instead — CreateInstance can't do that safely on the
+	// caller's behalf (it would mean rewriting a hand-maintained,
+	// comment-bearing config file), so it only validates and echoes back
+	// copy-pasteable setup instructions in the response message. Opencode's
+	// per-project config does accept "{env:VAR}", so CreateInstance writes
+	// that reference itself; only the actual key value still needs manual
+	// setup. See docs/custom-providers.md.
 	ProviderApiKeyEnv string `protobuf:"bytes,10,opt,name=provider_api_key_env,json=providerApiKeyEnv,proto3" json:"provider_api_key_env,omitempty"`
 	// claude-code/kilo only. Host portion of the remote display name; empty
 	// derives it from the target device.

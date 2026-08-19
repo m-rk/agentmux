@@ -30,7 +30,7 @@ type Options struct {
 	RunUser         string
 	CompactOnUpdate string // claude-code only: "", "on", or "off" — see proto doc
 	BaseURL         string // zero/opencode/kilo only; see proto doc
-	APIKeyEnv       string // kilo only; see proto doc
+	APIKeyEnv       string // kilo/opencode only, not zero; see proto doc
 }
 
 var identifierRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)

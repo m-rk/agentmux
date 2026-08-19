@@ -92,3 +92,19 @@ host, are still needed before %[1]q can actually authenticate:
 Verify with: kilo roll-call %[3]s   (run from the instance's workdir)
 See docs/custom-providers.md for more detail.`, provider, baseURL, model, apiKeyEnv)
 }
+
+// opencodeCustomProviderNote is the equivalent of kiloCustomProviderNote for
+// opencode. Simpler than kilo's case: opencode's project-level config (which
+// agentmux regenerates every session run, see writeOpencodeConfig) accepts
+// "{env:VAR}" references directly, so agentmux already writes that reference
+// itself — the only thing still needed by hand is the actual key value.
+func opencodeCustomProviderNote(apiKeyEnv string) string {
+	return fmt.Sprintf(`
+NOTE: %[1]q still needs its real value put somewhere agentmux-launched
+processes can see it — put it in ~/.config/agentmux/kilo-env (created if
+absent, one NAME=VALUE per line despite the name — agentmux injects every
+tmux-launched zero/opencode/kilo instance's environment from it), e.g.:
+%[1]s=sk-...
+Then restart this instance for it to take effect.
+See docs/custom-providers.md for more detail.`, apiKeyEnv)
+}

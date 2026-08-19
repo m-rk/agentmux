@@ -116,7 +116,7 @@ func TestWriteOpencodeConfigPreservesHandAddedModels(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := writeOpencodeConfig("token-tan-gl", "glm-5.2", "https://token.tan.gl/v1", workdir); err != nil {
+	if err := writeOpencodeConfig("token-tan-gl", "glm-5.2", "https://token.tan.gl/v1", "", workdir); err != nil {
 		t.Fatalf("writeOpencodeConfig: %v", err)
 	}
 

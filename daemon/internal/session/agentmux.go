@@ -60,6 +60,7 @@ func RunAgentmux(name string) error {
 	provider := fields["AGENTMUX_PROVIDER"]
 	model := fields["AGENTMUX_MODEL"]
 	baseURL := fields["AGENTMUX_PROVIDER_BASE_URL"]
+	apiKeyEnv := fields["AGENTMUX_PROVIDER_API_KEY_ENV"]
 	session := sessionNameOf(fields, name)
 	socket := tmuxSocket(name)
 	workdir := fields["AGENTMUX_WORKDIR"]
@@ -77,7 +78,7 @@ func RunAgentmux(name string) error {
 	if err := waitForProvider(provider, waitSeconds); err != nil {
 		return err
 	}
-	if err := configureAgent(agent, provider, model, baseURL, workdir); err != nil {
+	if err := configureAgent(agent, provider, model, baseURL, apiKeyEnv, workdir); err != nil {
 		return err
 	}
 
@@ -89,21 +90,20 @@ func RunAgentmux(name string) error {
 	if err != nil {
 		return err
 	}
-	var kiloEnv []string
+	// Sets it on the tmux *server's* environment (this new-session call only
+	// runs when no server/session exists yet for this socket, see the
+	// hasSession check above), which every pane subsequently launched under
+	// this socket — including a later `--session <id>` resume — inherits.
+	// Passed via Cmd.Env rather than a tmux -e/setenv CLI argument
+	// deliberately: CLI args land in /proc/<pid>/cmdline, which is
+	// world-readable, unlike /proc/<pid>/environ. Applies to any agent, not
+	// just kilo: it's how a custom provider's apiKeyEnv (see configureAgent)
+	// actually gets a value at runtime for opencode/zero too.
+	extraEnv, err := readKiloExtraEnv()
+	if err != nil {
+		return fmt.Errorf("reading local provider env overlay: %w", err)
+	}
 	if agent == "kilo" {
-		// Sets it on the tmux *server's* environment (this new-session call
-		// only runs when no server/session exists yet for this socket, see
-		// the hasSession check above), which every pane subsequently
-		// launched under this socket — including a later `--session <id>`
-		// resume — inherits. Passed via Cmd.Env rather than a tmux -e/
-		// setenv CLI argument deliberately: CLI args land in
-		// /proc/<pid>/cmdline, which is world-readable, unlike
-		// /proc/<pid>/environ.
-		env, err := readKiloExtraEnv()
-		if err != nil {
-			return fmt.Errorf("reading local kilo env overlay: %w", err)
-		}
-		kiloEnv = env
 		isolatedEnv, err := kiloInstanceXDGEnv(name)
 		if err != nil {
 			return fmt.Errorf("preparing isolated kilo data for %s: %w", name, err)
@@ -112,15 +112,15 @@ func RunAgentmux(name string) error {
 		// kilo-env cannot accidentally collapse prepared instances back onto
 		// the same database and state directory. Config and cache remain
 		// untouched and can still be shared deliberately.
-		kiloEnv = append(kiloEnv, isolatedEnv...)
+		extraEnv = append(extraEnv, isolatedEnv...)
 
-		id, err := latestKiloSessionID(workdir, kiloEnv)
+		id, err := latestKiloSessionID(workdir, extraEnv)
 		if err != nil {
 			return fmt.Errorf("checking for an existing kilo session in %s: %w", workdir, err)
 		}
 		if id == "" {
 			displayName := provision.DisplayNameForHost(fields["AGENTMUX_RUN_USER"], fields["AGENTMUX_HOST_NAME"], workdir)
-			newID, err := seedKiloSession(workdir, kiloEnv, displayName)
+			newID, err := seedKiloSession(workdir, extraEnv, displayName)
 			if err != nil {
 				return fmt.Errorf("seeding initial kilo session in %s: %w", workdir, err)
 			}
@@ -129,7 +129,7 @@ func RunAgentmux(name string) error {
 		launchCmd = "kilo --session " + id
 	}
 	cmd := withPath("tmux", "-L", socket, "new-session", "-d", "-s", session, "-c", workdir, launchCmd)
-	cmd.Env = append(cmd.Env, kiloEnv...)
+	cmd.Env = append(cmd.Env, extraEnv...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("starting tmux session %s: %w: %s", session, err, out)
 	}
@@ -461,12 +461,12 @@ func waitForProvider(provider string, waitSeconds int) error {
 	}
 }
 
-func configureAgent(agent, provider, model, baseURL, workdir string) error {
+func configureAgent(agent, provider, model, baseURL, apiKeyEnv, workdir string) error {
 	switch agent {
 	case "zero":
 		return writeZeroConfig(provider, model, baseURL, workdir)
 	case "opencode":
-		return writeOpencodeConfig(provider, model, baseURL, workdir)
+		return writeOpencodeConfig(provider, model, baseURL, apiKeyEnv, workdir)
 	case "kilo":
 		return writeKiloCodeConfig(provider, model, baseURL, workdir)
 	default:
@@ -512,19 +512,28 @@ func writeZeroConfig(provider, model, baseURL, workdir string) error {
 	return nil
 }
 
-func writeOpencodeConfig(provider, model, baseURL, workdir string) error {
+func writeOpencodeConfig(provider, model, baseURL, apiKeyEnv, workdir string) error {
 	path := filepath.Join(workdir, "opencode.json")
+	options := map[string]any{
+		"baseURL": baseURL,
+	}
+	if apiKeyEnv != "" {
+		// Unlike kilo, opencode's project-level config (this file,
+		// regenerated on every session run) accepts "{env:VAR}" references
+		// directly — the actual value just needs to reach this process's
+		// environment at runtime, which readKiloExtraEnv/RunAgentmux take
+		// care of regardless of agent.
+		options["apiKey"] = fmt.Sprintf("{env:%s}", apiKeyEnv)
+	}
 	doc := map[string]any{
 		"$schema": "https://opencode.ai/config.json",
 		"model":   provider + "/" + model,
 		"provider": map[string]any{
 			provider: map[string]any{
-				"npm":  "@ai-sdk/openai-compatible",
-				"name": provider,
-				"options": map[string]any{
-					"baseURL": baseURL,
-				},
-				"models": mergeExistingModels(path, provider, model),
+				"npm":     "@ai-sdk/openai-compatible",
+				"name":    provider,
+				"options": options,
+				"models":  mergeExistingModels(path, provider, model),
 			},
 		},
 	}

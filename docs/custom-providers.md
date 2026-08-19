@@ -31,8 +31,25 @@ agentmux new -y -instance my-kilo -agent kilo -run-user myuser \
 
 This records which environment variable *name* holds the key (never the key
 value itself — nothing secret goes through agentmux's registry or RPC
-layer). For zero/opencode this is enough on its own — see each project's own
-docs for how their generated project config picks up provider credentials.
+layer). `-provider-api-key-env` supports `kilo` and `opencode`; it's not
+wired up for `zero` yet — its config format's support for a templated
+`"{env:VAR}"` value hasn't been confirmed, so agentmux doesn't guess at it.
+
+**Opencode** is the simpler case: its project-level config (the
+`opencode.json` agentmux regenerates on every `session run`) accepts a
+`"{env:VAR}"` reference directly, and agentmux writes one there itself once
+`-provider-api-key-env` is set. The only thing left to do by hand, once, on
+the host, is put the actual key where agentmux-launched processes can see
+it — in `~/.config/agentmux/kilo-env` (same file kilo uses, see below;
+despite the name it's read for any zero/opencode/kilo instance), one
+`NAME=VALUE` per line:
+
+```sh
+MY_GATEWAY_API_KEY=sk-...
+```
+
+Then restart the instance (re-run the `agentmux new` command above, or
+`agentmux control -action restart`) for it to pick the value up.
 
 **Kilo is a different story.** Kilo's project-level config (the `kilo.json`
 agentmux regenerates on every `session run`) flatly refuses any
@@ -73,18 +90,18 @@ running the command above, do this once, by hand, on the host:
    ```
 
    agentmux's own `session run` reads this file and injects its contents
-   into every tmux-launched kilo instance's environment. That's a deliberate
-   extra step, not an oversight: agentmux-managed kilo processes run
-   non-interactively under tmux/systemd and never source a shell profile, so
-   an env var exported only from `.bashrc` never reaches them — confirmed
-   the hard way. If you also want an interactive `kilo` session started
-   directly from a terminal to see the same key, export it from your shell
-   profile too (e.g. `.bashrc`); the two paths are independent.
+   into every tmux-launched zero/opencode/kilo instance's environment.
+   That's a deliberate extra step, not an oversight: agentmux-managed
+   instances run non-interactively under tmux/systemd and never source a
+   shell profile, so an env var exported only from `.bashrc` never reaches
+   them — confirmed the hard way. If you also want an interactive session
+   started directly from a terminal to see the same key, export it from
+   your shell profile too (e.g. `.bashrc`); the two paths are independent.
 
 `agentmux new`'s response prints these exact steps back at you (filled in
 with your actual provider id/URL/model/env-var name) whenever
-`-provider-api-key-env` is set on a kilo instance, so you don't have to
-remember this doc.
+`-provider-api-key-env` is set on a kilo or opencode instance, so you don't
+have to remember this doc.
 
 Once both are in place, confirm the key actually works — this tests the
 real endpoint, not just config schema validity:

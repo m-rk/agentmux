@@ -209,8 +209,13 @@ func createAgentmux(opts Options) (string, error) {
 	}
 	message := fmt.Sprintf("%s instance %q (registry: %s). Reattach with: sudo -u %s tmux -L agentmux-%s attach -t %s",
 		verb, name, regPath, runUser, name, sessionName)
-	if opts.Agent == "kilo" && provider != "ollama" && opts.APIKeyEnv != "" {
-		message += kiloCustomProviderNote(provider, baseURL, model, opts.APIKeyEnv)
+	if provider != "ollama" && opts.APIKeyEnv != "" {
+		switch opts.Agent {
+		case "kilo":
+			message += kiloCustomProviderNote(provider, baseURL, model, opts.APIKeyEnv)
+		case "opencode":
+			message += opencodeCustomProviderNote(opts.APIKeyEnv)
+		}
 	}
 	return message, nil
 }
