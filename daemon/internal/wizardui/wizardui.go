@@ -87,7 +87,7 @@ func DetailsGroups(agent string, details *Details, includeDiscord bool) []*huh.G
 	}
 	if capabilities.DisplayHostName {
 		commonFields = append(commonFields,
-			huh.NewInput().Title("Host name").Description("used in the remote display name; derived from the target device by default").Value(&details.HostName),
+			huh.NewInput().Title("Host name").Value(&details.HostName),
 		)
 	}
 	commonFields = append(commonFields,

@@ -75,6 +75,10 @@ names so no local or private details can reach a public artifact.
   `gh auth login` if needed. Upload the sanitised screenshot files with
   `gh image --repo m-rk/agentmux ...`, then embed the returned
   `user-attachments` Markdown in the pull request body.
+- When a pull request description contains multiple screenshots, arrange them
+  in a Markdown table and give every screenshot a clear heading.
+- When a pull request changes UX, include before and after screenshots in the
+  description as a Markdown table with headings.
 - Never print, persist, commit, or paste an authentication or browser-session
   token. The pull request should contain only the uploaded attachment URLs.
 
