@@ -72,7 +72,14 @@ func updateAgent(runUser, agent string, env []string) error {
 	case "zero":
 		cmd = runAs(runUser, "zero", "update", "--check")
 	case "opencode":
-		cmd = runAs(runUser, "opencode", "upgrade", "--method", "npm")
+		// Not `opencode upgrade --method npm`: that shells out through the
+		// currently-installed opencode binary itself, so a broken install
+		// (confirmed live: npm's postinstall silently failed to link the
+		// platform binary, once while disk was nearly full) can never
+		// upgrade its way back to working — every future refresh just
+		// repeats the same exec failure forever. Installing the npm
+		// package directly needs nothing from the existing binary.
+		cmd = runAs(runUser, "npm", "install", "-g", "opencode-ai@latest")
 	case "kilo":
 		cmd = runAs(runUser, "kilo", "upgrade")
 	default:

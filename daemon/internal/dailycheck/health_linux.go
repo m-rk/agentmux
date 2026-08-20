@@ -19,7 +19,7 @@ func (platformProber) Probe(ctx context.Context, instance *pb.Instance) []Health
 		if props["LoadState"] != "loaded" {
 			issues = append(issues, platformIssue(instance, "service-missing", "managed service unit is not loaded", service))
 		} else if props["ActiveState"] == "failed" || failedResult(props["Result"], props["ExecMainStatus"]) {
-			issues = append(issues, platformIssue(instance, "service-failed", "managed service is failed", describeProperties(props)))
+			issues = append(issues, platformIssue(instance, "service-failed", "managed service is failed", describeFailure(ctx, service, props)))
 		} else if props["ActiveState"] != "active" {
 			issues = append(issues, platformIssue(instance, "service-inactive", "managed service is not active", describeProperties(props)))
 		}
@@ -33,7 +33,7 @@ func (platformProber) Probe(ctx context.Context, instance *pb.Instance) []Health
 	} else if props["ActiveState"] == "active" || props["ActiveState"] == "activating" {
 		issues = append(issues, platformIssue(instance, "refresh-running", "daily refresh is still running", describeProperties(props)))
 	} else if failedResult(props["Result"], props["ExecMainStatus"]) {
-		issues = append(issues, platformIssue(instance, "refresh-failed", "daily refresh failed", describeProperties(props)))
+		issues = append(issues, platformIssue(instance, "refresh-failed", "daily refresh failed", describeFailure(ctx, updateService, props)))
 	}
 
 	issues = append(issues, processIdentityIssue(ctx, instance)...)
@@ -67,6 +67,30 @@ func failedResult(result, status string) bool {
 func describeProperties(props map[string]string) string {
 	return fmt.Sprintf("active=%s sub=%s result=%s exit=%s restarts=%s",
 		props["ActiveState"], props["SubState"], props["Result"], props["ExecMainStatus"], props["NRestarts"])
+}
+
+// describeFailure is describeProperties plus the unit's own last log line.
+// Confirmed live: systemd's ActiveState/Result/ExecMainStatus alone gave no
+// hint that an update had failed with "fork/exec ...: exec format error" —
+// finding that required a manual journalctl dig doctor should have
+// surfaced itself.
+func describeFailure(ctx context.Context, unit string, props map[string]string) string {
+	summary := describeProperties(props)
+	line, err := lastAppLogLine(ctx, unit)
+	if err != nil || line == "" {
+		return summary
+	}
+	return summary + " last: " + line
+}
+
+// lastAppLogLine returns the unit's own last log line, filtered to
+// _COMM=agentmux so it's the app's own message rather than systemd's
+// surrounding "Main process exited"/"Failed with result" bookkeeping,
+// which journalctl -n 1 without the filter would return instead. A package
+// var so tests can swap it without a real systemd unit to log against.
+var lastAppLogLine = func(ctx context.Context, unit string) (string, error) {
+	out, err := exec.CommandContext(ctx, "journalctl", "-u", unit, "_COMM=agentmux", "-n", "1", "-o", "cat", "--no-pager").Output()
+	return strings.TrimSpace(string(out)), err
 }
 
 func platformIssue(instance *pb.Instance, code, summary, detail string) HealthIssue {

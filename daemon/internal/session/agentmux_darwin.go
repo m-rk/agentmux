@@ -66,7 +66,13 @@ func updateAgent(agent string, env []string) error {
 	case "zero":
 		cmd = withPath("zero", "update", "--check")
 	case "opencode":
-		cmd = withPath("opencode", "upgrade", "--method", "npm")
+		// Not `opencode upgrade --method npm`: that shells out through the
+		// currently-installed opencode binary itself, so a broken install
+		// can never upgrade its way back to working. Installing the npm
+		// package directly needs nothing from the existing binary. See the
+		// matching comment in agentmux_linux.go for the incident that
+		// prompted this.
+		cmd = withPath("npm", "install", "-g", "opencode-ai@latest")
 	case "kilo":
 		cmd = withPath("kilo", "upgrade")
 	default:
