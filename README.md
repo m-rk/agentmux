@@ -9,6 +9,10 @@ can drop into from anywhere — not just while a terminal happens to be open.
 agentmux keeps one running per instance, brings it back after a reboot, and
 keeps the CLI itself up to date without you babysitting it.
 
+<p align="center">
+  <img src="docs/design/img/agentmux-logo-opart-a-black-on-white.png" alt="agentmux logo" width="280">
+</p>
+
 ## agentmux CLI
 
 `agentmux` is one Go binary: a background daemon, a TUI to see and control
