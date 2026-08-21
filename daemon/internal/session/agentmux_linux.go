@@ -79,12 +79,34 @@ func updateAgent(runUser, agent string, env []string) error {
 		// upgrade its way back to working — every future refresh just
 		// repeats the same exec failure forever. Installing the npm
 		// package directly needs nothing from the existing binary.
-		cmd = runAs(runUser, "npm", "install", "-g", "opencode-ai@latest")
+		//
+		// Retried once on failure: postinstall fetches the platform-specific
+		// binary package as its own separate npm registry call, and a single
+		// transient network hiccup there is enough to fail the whole install
+		// and leave the *shared* global binary as a broken stub — breaking
+		// not just this instance's already-running session (which keeps
+		// working untouched) but any brand-new opencode invocation anywhere
+		// on the host, including ones this daemon doesn't manage (confirmed
+		// live: Paseo failed to start a new session against exactly this
+		// stub, moments after a nightly refresh failed here; re-running the
+		// same install with no other change succeeded immediately).
+		return runWithRetry(runUser, "npm", []string{"install", "-g", "opencode-ai@latest"}, env)
 	case "kilo":
 		cmd = runAs(runUser, "kilo", "upgrade")
 	default:
 		return fmt.Errorf("unsupported agent: %s", agent)
 	}
+	cmd.Env = append(cmd.Env, env...)
+	return cmd.Run()
+}
+
+func runWithRetry(runUser, name string, args, env []string) error {
+	cmd := runAs(runUser, name, args...)
+	cmd.Env = append(cmd.Env, env...)
+	if err := cmd.Run(); err == nil {
+		return nil
+	}
+	cmd = runAs(runUser, name, args...)
 	cmd.Env = append(cmd.Env, env...)
 	return cmd.Run()
 }

@@ -69,15 +69,28 @@ func updateAgent(agent string, env []string) error {
 		// Not `opencode upgrade --method npm`: that shells out through the
 		// currently-installed opencode binary itself, so a broken install
 		// can never upgrade its way back to working. Installing the npm
-		// package directly needs nothing from the existing binary. See the
-		// matching comment in agentmux_linux.go for the incident that
+		// package directly needs nothing from the existing binary. Retried
+		// once on failure since postinstall's own registry fetch of the
+		// platform binary is a separate, flaky-network-prone step. See the
+		// matching comment in agentmux_linux.go for the incidents that
 		// prompted this.
-		cmd = withPath("npm", "install", "-g", "opencode-ai@latest")
+		return runWithRetry("npm", []string{"install", "-g", "opencode-ai@latest"}, env)
 	case "kilo":
 		cmd = withPath("kilo", "upgrade")
 	default:
 		return fmt.Errorf("unsupported agent: %s", agent)
 	}
+	cmd.Env = append(cmd.Env, env...)
+	return cmd.Run()
+}
+
+func runWithRetry(name string, args, env []string) error {
+	cmd := withPath(name, args...)
+	cmd.Env = append(cmd.Env, env...)
+	if err := cmd.Run(); err == nil {
+		return nil
+	}
+	cmd = withPath(name, args...)
 	cmd.Env = append(cmd.Env, env...)
 	return cmd.Run()
 }
