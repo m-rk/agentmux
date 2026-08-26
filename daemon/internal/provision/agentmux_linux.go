@@ -14,6 +14,10 @@ import (
 // fresh isolated login, cold model-list/indexing caches — confirmed live
 // to take 34s, which the old 30s timeout killed with a bare "start
 // operation timed out" and no indication it was just slow, not broken.
+//
+// Restart=on-failure: a transient ExecStart failure (see the claude-code
+// template's comment) shouldn't leave the instance dead until the nightly
+// maintenance timer; retry after 30s instead. Valid for Type=oneshot.
 const agentmuxUnitTemplate = `[Unit]
 Description=Persistent agentmux instance %[1]s (%[2]s + %[3]s)
 After=network-online.target ollama.service
@@ -26,6 +30,8 @@ User=%[4]s
 ExecStart=%[5]s session run --instance %[1]s
 ExecStop=%[5]s session stop --instance %[1]s
 TimeoutStartSec=90
+Restart=on-failure
+RestartSec=30
 
 [Install]
 WantedBy=multi-user.target
