@@ -1,6 +1,7 @@
 package provision
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -299,40 +300,78 @@ func write(t *testing.T, dir, name, content string) {
 	}
 }
 
-func TestIsCompactSummaryLine(t *testing.T) {
+func TestAtCompactBoundary(t *testing.T) {
+	const (
+		compactSummary = `{"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}`
+		bookkeeping    = `{"type":"attachment"}`
+		continuePrompt = `{"type":"user","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"Continue from where you left off."}]}}`
+		syntheticReply = `{"type":"assistant","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"No response requested."}]}}`
+		realUserTurn   = `{"type":"user","message":{"role":"user","content":"do something"}}`
+		realAssistant  = `{"type":"assistant","message":{"role":"assistant","model":"claude-sonnet-5","content":[{"type":"text","text":"done"}]}}`
+	)
+
 	cases := []struct {
-		name string
-		line string
-		want bool
+		name  string
+		lines []string
+		want  bool
 	}{
-		{"compact summary", `{"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}`, true},
-		{"explicit false", `{"type":"user","isCompactSummary":false}`, false},
-		{"field absent", `{"type":"assistant","message":{"role":"assistant"}}`, false},
-		{"empty line", ``, false},
-		{"malformed json", `{not json`, false},
+		{"empty transcript", nil, false},
+		{"last line is the compact summary itself", []string{realAssistant, compactSummary}, true},
+		{"real conversation after compact summary", []string{compactSummary, realUserTurn, realAssistant}, false},
+		{
+			"synthetic resume exchange right after a compact summary is still a boundary",
+			[]string{realUserTurn, compactSummary, bookkeeping, continuePrompt, syntheticReply},
+			true,
+		},
+		{
+			"bookkeeping interspersed throughout doesn't change the answer",
+			[]string{compactSummary, bookkeeping, bookkeeping, continuePrompt, bookkeeping, syntheticReply, bookkeeping},
+			true,
+		},
+		{
+			"synthetic reply with real content underneath is not a boundary",
+			[]string{realUserTurn, realAssistant, continuePrompt, syntheticReply},
+			false,
+		},
+		{"malformed json is skipped, not fatal", []string{compactSummary, `{not json`}, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := isCompactSummaryLine([]byte(c.line)); got != c.want {
-				t.Errorf("isCompactSummaryLine(%q) = %v, want %v", c.line, got, c.want)
+			var lines [][]byte
+			for _, l := range c.lines {
+				lines = append(lines, []byte(l))
+			}
+			if got := atCompactBoundary(lines); got != c.want {
+				t.Errorf("atCompactBoundary() = %v, want %v", got, c.want)
 			}
 		})
 	}
 }
 
-func TestLastLine(t *testing.T) {
+func TestTailLines(t *testing.T) {
 	dir := t.TempDir()
 
 	cases := []struct {
-		name    string
-		content string
-		want    string
+		name     string
+		content  string
+		minLines int
+		want     []string
 	}{
-		{"multiple lines", "first\nsecond\nthird\n", "third"},
-		{"no trailing newline", "first\nsecond\nthird", "third"},
-		{"single line", "only\n", "only"},
-		{"empty file", "", ""},
-		{"large last line spans read window", strings.Repeat("a", 100) + "\n" + strings.Repeat("b", 200*1024), strings.Repeat("b", 200*1024)},
+		// A file smaller than the 64KB starting window is always read whole
+		// in one pass, so minLines doesn't trim the result down to exactly
+		// that many lines — it only guarantees "at least" when the window
+		// has to grow.
+		{"multiple lines, whole file fits in one window", "first\nsecond\nthird\n", 2, []string{"first", "second", "third"}},
+		{"no trailing newline", "first\nsecond\nthird", 3, []string{"first", "second", "third"}},
+		{"single line", "only\n", 1, []string{"only"}},
+		{"empty file", "", 1, nil},
+		{"fewer lines than requested returns what's there", "first\nsecond\n", 10, []string{"first", "second"}},
+		{
+			"large last line spans read window: grows past it to the real boundary rather than truncating",
+			strings.Repeat("a", 100) + "\n" + strings.Repeat("b", 200*1024),
+			1,
+			[]string{strings.Repeat("a", 100), strings.Repeat("b", 200*1024)},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -340,13 +379,57 @@ func TestLastLine(t *testing.T) {
 			if err := os.WriteFile(path, []byte(c.content), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			got, err := lastLine(path)
+			got, err := tailLines(path, c.minLines)
 			if err != nil {
-				t.Fatalf("lastLine: %v", err)
+				t.Fatalf("tailLines: %v", err)
 			}
-			if string(got) != c.want {
-				t.Errorf("lastLine() = %d bytes, want %d bytes (mismatch)", len(got), len(c.want))
+			if len(got) != len(c.want) {
+				t.Fatalf("tailLines() = %d lines, want %d", len(got), len(c.want))
+			}
+			for i, l := range got {
+				if string(l) != c.want[i] {
+					t.Errorf("tailLines()[%d] = %d bytes, want %d bytes (mismatch)", i, len(l), len(c.want[i]))
+				}
 			}
 		})
+	}
+}
+
+// TestTailLinesGrowsAcrossWindows uses many mid-sized lines (padded well
+// past the plain per-line overhead) so that the initial 64KB window falls
+// short of minLines and tailLines has to double at least once — checking
+// that growth doesn't introduce a truncated fragment at the start of the
+// result once it does.
+func TestTailLinesGrowsAcrossWindows(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "growth.jsonl")
+
+	const numLines = 20
+	want := make([]string, numLines)
+	var content strings.Builder
+	for i := range numLines {
+		want[i] = fmt.Sprintf("line-%03d-", i) + strings.Repeat("x", 5000)
+		content.WriteString(want[i])
+		content.WriteByte('\n')
+	}
+	if err := os.WriteFile(path, []byte(content.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := tailLines(path, numLines-2) // short of the full file, forcing at least one doubling
+	if err != nil {
+		t.Fatalf("tailLines: %v", err)
+	}
+	if len(got) < numLines-2 {
+		t.Fatalf("tailLines() = %d lines, want at least %d", len(got), numLines-2)
+	}
+	// Every returned line must exactly match its counterpart from the end
+	// of want — a truncated fragment from a mishandled window boundary
+	// would show up here as a mismatch on the first returned line.
+	offset := numLines - len(got)
+	for i, l := range got {
+		if string(l) != want[offset+i] {
+			t.Errorf("tailLines()[%d] = %q, want %q", i, string(l), want[offset+i])
+		}
 	}
 }

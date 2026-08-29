@@ -252,13 +252,28 @@ already-migrated instance keeps today's behavior) keeps compacting nightly.
 
 An instance that sat idle since its last nightly update has nothing new to
 compact — its transcript's last message is already the compact-boundary
-summary from that earlier run. Sending another `/compact` in that state is
-a pure no-op (Claude Code refuses it outright: "Not enough messages to
-compact."), which would otherwise burn the idle-wait/compact timeouts on a
-prompt that was never going anywhere. `LastMessageIsCompactSummary` checks
-the newest `~/.claude/projects` transcript's last line for
-`isCompactSummary:true` before sending `/compact` at all, so this case
-skips straight to resolving the resume ID.
+summary from that earlier run. Sending another `/compact` in that state
+should be a pure no-op, which would otherwise burn the idle-wait/compact
+timeouts on a prompt that was never going anywhere.
+
+`LastMessageIsCompactSummary` checks the newest `~/.claude/projects`
+transcript for this before sending `/compact` at all — but it can't just
+look at the literal last line. Every restart (`rc-start.sh`'s
+`claude --remote-control ... --resume <id>`, which the nightly cycle
+itself triggers right after compacting) makes the CLI inject a synthetic
+"Continue from where you left off." turn into the transcript, met with a
+canned "No response requested." reply (`message.model` on that reply is
+the literal string `"<synthetic>"`, and the injected prompt itself carries
+`isMeta:true` — the two reliable markers this check keys off). That
+exchange becomes the new last message after every compact, is never
+itself an `isCompactSummary` line, and — before this was accounted for —
+silently defeated the whole check on every subsequent run: instances were
+recompacting every single night regardless of whether anything had
+actually happened. `atCompactBoundary` (`daemon/internal/provision/
+provision.go`) now walks back past exactly that synthetic pair (and any
+bookkeeping entries around it) to the last real conversation turn before
+deciding; if that's a compact summary, the run skips straight to
+resolving the resume ID as intended.
 
 ### Renaming an instance
 

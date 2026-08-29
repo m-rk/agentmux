@@ -267,13 +267,11 @@ func ListResumable(workdir, runUser string) ([]ResumableSession, error) {
 }
 
 // LastMessageIsCompactSummary reports whether workdir's most recently
-// modified resumable session already ends with a compact-boundary message
-// — i.e. a previous nightly update already compacted it and nothing has
-// happened in it since, so sending another /compact would be a no-op
-// (Claude Code itself refuses with "Not enough messages to compact.",
-// which otherwise wastes a nightly maintenance cycle waiting on a prompt
-// that was never going anywhere). A workdir with no resumable sessions
-// yet reports false, not an error.
+// modified resumable session is still effectively sitting at a compact
+// boundary — i.e. a previous nightly update already compacted it and
+// nothing but bookkeeping has happened in it since, so sending another
+// /compact would be a no-op. A workdir with no resumable sessions yet
+// reports false, not an error.
 func LastMessageIsCompactSummary(workdir, runUser string) (bool, error) {
 	sessions, err := ListResumable(workdir, runUser)
 	if err != nil {
@@ -287,34 +285,87 @@ func LastMessageIsCompactSummary(workdir, runUser string) (bool, error) {
 		return false, err
 	}
 	path := filepath.Join(home, ".claude", "projects", slugifyWorkdir(workdir), sessions[0].SessionID+".jsonl")
-	line, err := lastLine(path)
+	lines, err := tailLines(path, minTailScanLines)
 	if err != nil {
 		return false, err
 	}
-	return isCompactSummaryLine(line), nil
+	return atCompactBoundary(lines), nil
 }
 
-// isCompactSummaryLine reports whether line is a Claude Code transcript
-// entry with "isCompactSummary":true. A malformed or unparseable line
-// (e.g. a partially-flushed write from a session still being written to)
-// is treated as "not a compact summary" rather than an error, since a
-// false negative here just means one redundant /compact, not a failure.
-func isCompactSummaryLine(line []byte) bool {
-	var entry struct {
-		IsCompactSummary bool `json:"isCompactSummary"`
+// minTailScanLines is how many raw transcript lines tailLines tries to
+// collect for atCompactBoundary. Real messages are usually separated by a
+// dozen-odd bookkeeping entries (attachment, last-prompt, ai-title, mode,
+// ...), so this comfortably covers the three messages atCompactBoundary
+// looks at even with that padding in between.
+const minTailScanLines = 60
+
+// transcriptEntry is the subset of a Claude Code transcript line that
+// atCompactBoundary needs to tell a real conversation turn apart from
+// bookkeeping and from the synthetic resume exchange.
+type transcriptEntry struct {
+	Type             string `json:"type"`
+	IsCompactSummary bool   `json:"isCompactSummary"`
+	IsMeta           bool   `json:"isMeta"`
+	Message          struct {
+		Model string `json:"model"`
+	} `json:"message"`
+}
+
+// atCompactBoundary reports whether the newest real conversation turn
+// among lines (oldest first, as returned by tailLines) is a compact
+// summary. It skips non-message bookkeeping entries (attachment,
+// last-prompt, ai-title, mode, ...) and — critically — the synthetic
+// "Continue from where you left off." / "No response requested." exchange
+// Claude Code's own --resume flow injects every time it reattaches to a
+// session sitting at a compact boundary (see updateClaudeCode's doc
+// comment: every nightly run restarts the session after compacting it).
+// That injected exchange (a "isMeta":true user turn answered by an
+// assistant turn whose message.model is the literal string "<synthetic>")
+// is not real activity; without skipping it, it would become the new
+// "last message" after every nightly compact, never itself satisfy
+// isCompactSummary, and defeat this check forever after the very first
+// run — which is exactly what was happening before this fix: every
+// instance recompacted every single night regardless of whether anything
+// had actually been said in it.
+//
+// A malformed or unparseable line (e.g. a partially-flushed write from a
+// session still being written to) is skipped rather than treated as an
+// error, since a false negative here just means one redundant /compact,
+// not a failure.
+func atCompactBoundary(lines [][]byte) bool {
+	var msgs []transcriptEntry // newest first
+	for i := len(lines) - 1; i >= 0 && len(msgs) < 3; i-- {
+		var e transcriptEntry
+		if err := json.Unmarshal(lines[i], &e); err != nil {
+			continue
+		}
+		if e.Type != "user" && e.Type != "assistant" {
+			continue // bookkeeping entry, not a conversation turn
+		}
+		msgs = append(msgs, e)
 	}
-	if err := json.Unmarshal(line, &entry); err != nil {
+	if len(msgs) == 0 {
 		return false
 	}
-	return entry.IsCompactSummary
+	if msgs[0].IsCompactSummary {
+		return true
+	}
+	syntheticReply := msgs[0].Type == "assistant" && msgs[0].Message.Model == "<synthetic>"
+	if syntheticReply && len(msgs) >= 2 && msgs[1].Type == "user" && msgs[1].IsMeta {
+		return len(msgs) >= 3 && msgs[2].IsCompactSummary
+	}
+	return false
 }
 
-// lastLine reads the final non-empty line of path without loading the
+// tailLines reads the final non-empty lines of path without loading the
 // whole file into memory — Claude Code session transcripts can run into
 // the tens of megabytes, and individual lines (a single large tool
-// result) can themselves be over 100KB, so the read window doubles until
-// it contains a newline rather than assuming a fixed chunk size suffices.
-func lastLine(path string) ([]byte, error) {
+// result) can themselves be over 100KB — growing the read window until it
+// both has at least minLines lines and closes on a real line boundary
+// (rather than stopping mid-window with a truncated fragment of a still-
+// larger last line) or has covered the whole file. Returned in file order
+// (oldest first).
+func tailLines(path string, minLines int) ([][]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", path, err)
@@ -336,12 +387,27 @@ func lastLine(path string) ([]byte, error) {
 		if _, err := f.ReadAt(buf, size-readSize); err != nil {
 			return nil, fmt.Errorf("reading %s: %w", path, err)
 		}
-		trimmed := bytes.TrimRight(buf, "\n")
-		if idx := bytes.LastIndexByte(trimmed, '\n'); idx >= 0 {
-			return trimmed[idx+1:], nil
+		start := 0
+		if readSize < size {
+			// The window's first newline ends a fragment of whatever line
+			// preceded the window; drop that fragment rather than treat it
+			// as a whole line. If there's no newline at all, the entire
+			// window is a fragment of one still-larger line — keep growing
+			// rather than return a truncated line.
+			idx := bytes.IndexByte(buf, '\n')
+			if idx < 0 {
+				continue
+			}
+			start = idx + 1
 		}
-		if readSize == size {
-			return trimmed, nil // whole file is a single line (or empty)
+		var lines [][]byte
+		for _, l := range bytes.Split(bytes.TrimRight(buf[start:], "\n"), []byte("\n")) {
+			if len(l) > 0 {
+				lines = append(lines, l)
+			}
+		}
+		if len(lines) >= minLines || readSize == size {
+			return lines, nil
 		}
 	}
 }
