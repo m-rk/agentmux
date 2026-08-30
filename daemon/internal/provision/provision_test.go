@@ -359,6 +359,20 @@ func TestAtCompactBoundary(t *testing.T) {
 			true,
 		},
 	}
+	// A run of bookkeeping turns beyond maxBookkeepingLookback fails safe
+	// (not a boundary) rather than skipping past it to find the real
+	// compact summary underneath — see maxBookkeepingLookback's doc
+	// comment. This exercises that cap: the compact summary is real, but
+	// buried behind more filler than the lookback allows.
+	tooDeep := []string{compactSummary}
+	for range maxBookkeepingLookback + 5 {
+		tooDeep = append(tooDeep, continuePrompt)
+	}
+	cases = append(cases, struct {
+		name  string
+		lines []string
+		want  bool
+	}{"a compact summary buried past the lookback cap is not treated as a boundary", tooDeep, false})
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var lines [][]byte

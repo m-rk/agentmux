@@ -372,6 +372,19 @@ func isBookkeepingTurn(e transcriptEntry) bool {
 	return false
 }
 
+// maxBookkeepingLookback bounds how many CLI-bookkeeping conversation
+// turns atCompactBoundary will skip past while searching for either the
+// compact-summary entry or real content. A normal nightly cycle produces
+// about half a dozen of them (the /compact echo plus the resume
+// exchange, see below), so this leaves a wide margin while still failing
+// safe: if a future CLI version adds some new bookkeeping shape
+// isBookkeepingTurn doesn't recognize, atCompactBoundary stops and
+// reports "not a boundary" rather than skipping past it and scanning
+// arbitrarily far back into real history looking for a compact summary
+// that isn't there. The cost of that bailout is one redundant /compact,
+// not a wrong answer.
+const maxBookkeepingLookback = 20
+
 // atCompactBoundary reports whether the newest real conversation turn
 // among lines (oldest first, as returned by tailLines) is a compact
 // summary — i.e. nothing but CLI bookkeeping has happened since the last
@@ -379,8 +392,9 @@ func isBookkeepingTurn(e transcriptEntry) bool {
 //
 // It walks backward from the newest line, skipping non-message
 // bookkeeping entries (attachment, last-prompt, ai-title, mode, ...) and
-// every isBookkeepingTurn along the way, until it finds either the
-// compact-summary entry (true) or a real conversation turn (false).
+// up to maxBookkeepingLookback isBookkeepingTurn entries, until it finds
+// either the compact-summary entry (true) or a real conversation turn
+// (false).
 //
 // This has to look past more than just Claude Code's synthetic
 // "Continue from where you left off." / "No response requested." resume
@@ -398,13 +412,16 @@ func isBookkeepingTurn(e transcriptEntry) bool {
 // every single night regardless of whether anything had actually been
 // said. Skipping every recognized bookkeeping shape (rather than counting
 // a fixed number of turns) fixes that regardless of how many such lines
-// accumulate between compacts.
+// accumulate between compacts, bounded by maxBookkeepingLookback so a
+// transcript shape this doesn't recognize fails safe instead of scanning
+// forever.
 //
 // A malformed or unparseable line (e.g. a partially-flushed write from a
 // session still being written to) is skipped rather than treated as an
 // error, since a false negative here just means one redundant /compact,
 // not a failure.
 func atCompactBoundary(lines [][]byte) bool {
+	skipped := 0
 	for i := len(lines) - 1; i >= 0; i-- {
 		var e transcriptEntry
 		if err := json.Unmarshal(lines[i], &e); err != nil {
@@ -417,6 +434,10 @@ func atCompactBoundary(lines [][]byte) bool {
 			return true
 		}
 		if isBookkeepingTurn(e) {
+			skipped++
+			if skipped > maxBookkeepingLookback {
+				return false
+			}
 			continue
 		}
 		return false
