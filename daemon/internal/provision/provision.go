@@ -293,48 +293,119 @@ func LastMessageIsCompactSummary(workdir, runUser string) (bool, error) {
 }
 
 // minTailScanLines is how many raw transcript lines tailLines tries to
-// collect for atCompactBoundary. Real messages are usually separated by a
-// dozen-odd bookkeeping entries (attachment, last-prompt, ai-title, mode,
-// ...), so this comfortably covers the three messages atCompactBoundary
-// looks at even with that padding in between.
+// collect for atCompactBoundary. A nightly compact plus resume leaves
+// roughly a dozen conversation-and-bookkeeping lines behind it (see
+// atCompactBoundary's doc comment), so this comfortably covers that with
+// room to spare.
 const minTailScanLines = 60
 
 // transcriptEntry is the subset of a Claude Code transcript line that
 // atCompactBoundary needs to tell a real conversation turn apart from
-// bookkeeping and from the synthetic resume exchange.
+// bookkeeping and from the CLI's own injected turns.
 type transcriptEntry struct {
 	Type             string `json:"type"`
 	IsCompactSummary bool   `json:"isCompactSummary"`
 	IsMeta           bool   `json:"isMeta"`
 	Message          struct {
-		Model string `json:"model"`
+		Model   string          `json:"model"`
+		Content json.RawMessage `json:"content"`
 	} `json:"message"`
+}
+
+// text extracts a transcriptEntry's message text, whether content is a
+// plain string or an array of {"type":"text","text":...} blocks.
+func (e transcriptEntry) text() string {
+	if len(e.Message.Content) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(e.Message.Content, &s); err == nil {
+		return s
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(e.Message.Content, &blocks); err != nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, blk := range blocks {
+		if blk.Type == "text" {
+			b.WriteString(blk.Text)
+		}
+	}
+	return b.String()
+}
+
+// localCommandTags are the literal XML-ish wrapper tags Claude Code's CLI
+// prepends to a slash command's own echo of itself (its caveat, name, and
+// output) — see isBookkeepingTurn.
+var localCommandTags = []string{
+	"<local-command-caveat>",
+	"<command-name>",
+	"<local-command-stdout>",
+	"<local-command-stderr>",
+}
+
+// isBookkeepingTurn reports whether e is CLI-injected scaffolding around a
+// slash command rather than real conversation content: either an
+// "isMeta":true turn (covers both the /compact command's own caveat line
+// and the "Continue from where you left off." resume prompt), the
+// synthetic assistant reply to that resume prompt (message.model is the
+// literal string "<synthetic>"), or one of the non-meta lines the CLI
+// still emits to echo a local command's name/output back into the
+// transcript.
+func isBookkeepingTurn(e transcriptEntry) bool {
+	if e.IsMeta {
+		return true
+	}
+	if e.Type == "assistant" && e.Message.Model == "<synthetic>" {
+		return true
+	}
+	text := e.text()
+	for _, tag := range localCommandTags {
+		if strings.HasPrefix(text, tag) {
+			return true
+		}
+	}
+	return false
 }
 
 // atCompactBoundary reports whether the newest real conversation turn
 // among lines (oldest first, as returned by tailLines) is a compact
-// summary. It skips non-message bookkeeping entries (attachment,
-// last-prompt, ai-title, mode, ...) and — critically — the synthetic
-// "Continue from where you left off." / "No response requested." exchange
-// Claude Code's own --resume flow injects every time it reattaches to a
-// session sitting at a compact boundary (see updateClaudeCode's doc
-// comment: every nightly run restarts the session after compacting it).
-// That injected exchange (a "isMeta":true user turn answered by an
-// assistant turn whose message.model is the literal string "<synthetic>")
-// is not real activity; without skipping it, it would become the new
-// "last message" after every nightly compact, never itself satisfy
-// isCompactSummary, and defeat this check forever after the very first
-// run — which is exactly what was happening before this fix: every
-// instance recompacted every single night regardless of whether anything
-// had actually been said in it.
+// summary — i.e. nothing but CLI bookkeeping has happened since the last
+// nightly compact, so sending another /compact would be a no-op.
+//
+// It walks backward from the newest line, skipping non-message
+// bookkeeping entries (attachment, last-prompt, ai-title, mode, ...) and
+// every isBookkeepingTurn along the way, until it finds either the
+// compact-summary entry (true) or a real conversation turn (false).
+//
+// This has to look past more than just Claude Code's synthetic
+// "Continue from where you left off." / "No response requested." resume
+// exchange (injected every time --resume reattaches to a session sitting
+// at a compact boundary — see updateClaudeCode's doc comment). The
+// /compact command that produced that boundary in the first place also
+// echoes itself back into the transcript as three more "user"-typed
+// lines (a "<local-command-caveat>" isMeta turn, then non-meta
+// "<command-name>" and "<local-command-stdout>" turns) sitting between
+// the resume exchange and the actual isCompactSummary entry. An earlier
+// version of this function only looked at the newest 3 conversation
+// turns, which was enough for the resume exchange but not enough to also
+// see past the /compact echo — so it kept finding the echo's plain
+// non-meta lines first, treating them as "real" activity, and recompacted
+// every single night regardless of whether anything had actually been
+// said. Skipping every recognized bookkeeping shape (rather than counting
+// a fixed number of turns) fixes that regardless of how many such lines
+// accumulate between compacts.
 //
 // A malformed or unparseable line (e.g. a partially-flushed write from a
 // session still being written to) is skipped rather than treated as an
 // error, since a false negative here just means one redundant /compact,
 // not a failure.
 func atCompactBoundary(lines [][]byte) bool {
-	var msgs []transcriptEntry // newest first
-	for i := len(lines) - 1; i >= 0 && len(msgs) < 3; i-- {
+	for i := len(lines) - 1; i >= 0; i-- {
 		var e transcriptEntry
 		if err := json.Unmarshal(lines[i], &e); err != nil {
 			continue
@@ -342,17 +413,13 @@ func atCompactBoundary(lines [][]byte) bool {
 		if e.Type != "user" && e.Type != "assistant" {
 			continue // bookkeeping entry, not a conversation turn
 		}
-		msgs = append(msgs, e)
-	}
-	if len(msgs) == 0 {
+		if e.IsCompactSummary {
+			return true
+		}
+		if isBookkeepingTurn(e) {
+			continue
+		}
 		return false
-	}
-	if msgs[0].IsCompactSummary {
-		return true
-	}
-	syntheticReply := msgs[0].Type == "assistant" && msgs[0].Message.Model == "<synthetic>"
-	if syntheticReply && len(msgs) >= 2 && msgs[1].Type == "user" && msgs[1].IsMeta {
-		return len(msgs) >= 3 && msgs[2].IsCompactSummary
 	}
 	return false
 }
