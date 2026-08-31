@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 )
 
@@ -74,7 +75,19 @@ func updateAgent(agent string, env []string) error {
 		// platform binary is a separate, flaky-network-prone step. See the
 		// matching comment in agentmux_linux.go for the incidents that
 		// prompted this.
-		return runWithRetry("npm", []string{"install", "-g", "opencode-ai@latest"}, env)
+		//
+		// Locked on HOME: every local instance on this host shares one npm
+		// global prefix (macOS doesn't drop privilege per instance), so
+		// without this, N instances refreshing on the same nightly
+		// schedule race each other's postinstall on the same
+		// node_modules/opencode-ai directory. See npmlock.go.
+		home, herr := os.UserHomeDir()
+		if herr != nil {
+			return fmt.Errorf("resolving HOME for npm update lock: %w", herr)
+		}
+		return withNpmGlobalLock(home, nil, func() error {
+			return runWithRetry("npm", []string{"install", "-g", "opencode-ai@latest"}, env)
+		})
 	case "kilo":
 		cmd = withPath("kilo", "upgrade")
 	default:
