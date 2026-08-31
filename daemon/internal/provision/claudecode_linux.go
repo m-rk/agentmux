@@ -13,6 +13,12 @@ import (
 
 const defaultClaudeCodeInstance = "claude-code"
 
+// Restart=on-failure below: `session run` can fail transiently — e.g. a
+// big session resuming slowly after a needrestart sweep losing the race
+// against ensureClaudeRemoteControl's 5s reconnect window. Without it,
+// one transient failure leaves the unit in failed state and the session
+// dead until the nightly update timer (or a human) restarts it. Valid
+// for Type=oneshot (only Restart=always is forbidden).
 const claudeCodeUnitTemplate = `[Unit]
 Description=Persistent agentmux Claude Code session (%[1]s / %[2]s)
 After=network-online.target
@@ -25,6 +31,8 @@ User=%[3]s
 ExecStart=%[4]s session run --instance %[1]s
 ExecStop=%[4]s session stop --instance %[1]s
 TimeoutStartSec=30
+Restart=on-failure
+RestartSec=30
 
 [Install]
 WantedBy=multi-user.target
