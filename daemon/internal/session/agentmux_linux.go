@@ -60,6 +60,11 @@ func agentUpdateEnv(name, runUser, agent string) ([]string, error) {
 	return env, nil
 }
 
+// userLookup is user.Lookup by default, overridable in tests that need
+// updateAgent's opencode path to resolve a user without depending on a real
+// account existing on the machine running the test.
+var userLookup = user.Lookup
+
 func agentVersion(runUser, agent string, env []string) (string, error) {
 	cmd := runAs(runUser, agent, "--version")
 	cmd.Env = append(cmd.Env, env...)
@@ -116,7 +121,7 @@ func updateAgent(runUser, agent string, env []string) error {
 		// runUser (and so one npm global prefix), concurrent installs would
 		// otherwise race each other's postinstall the same way they did on
 		// macOS, where every instance shares one user. See npmlock.go.
-		u, uerr := user.Lookup(runUser)
+		u, uerr := userLookup(runUser)
 		if uerr != nil {
 			return fmt.Errorf("looking up run user %q for npm update lock: %w", runUser, uerr)
 		}

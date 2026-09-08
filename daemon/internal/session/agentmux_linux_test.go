@@ -1,10 +1,34 @@
 package session
 
 import (
+	"fmt"
+	"os"
 	"os/exec"
+	"os/user"
 	"strings"
 	"testing"
 )
+
+// withFakeUserLookup stubs userLookup so updateAgent's opencode path (which
+// looks up runUser to key the npm install lock by home directory) doesn't
+// depend on "someuser" being a real account on whatever machine runs the
+// test — see the matching comment on userLookup itself. Uid/Gid are the
+// test process's own, so withNpmGlobalLock's chown-if-freshly-created path
+// (self-chown) succeeds without needing root.
+func withFakeUserLookup(t *testing.T) {
+	t.Helper()
+	previous := userLookup
+	home := t.TempDir()
+	userLookup = func(username string) (*user.User, error) {
+		return &user.User{
+			Username: username,
+			HomeDir:  home,
+			Uid:      fmt.Sprint(os.Getuid()),
+			Gid:      fmt.Sprint(os.Getgid()),
+		}, nil
+	}
+	t.Cleanup(func() { userLookup = previous })
+}
 
 // TestUpdateAgentOpencodeDoesNotShellOutThroughItself guards against a real
 // incident: `opencode upgrade --method npm` shells out through the
@@ -14,6 +38,7 @@ import (
 // same exec failure forever with no way to self-heal. Installing the npm
 // package directly needs nothing from the existing binary.
 func TestUpdateAgentOpencodeDoesNotShellOutThroughItself(t *testing.T) {
+	withFakeUserLookup(t)
 	var gotName string
 	var gotArgs []string
 	previousRunAs := runAs
@@ -44,6 +69,7 @@ func TestUpdateAgentOpencodeDoesNotShellOutThroughItself(t *testing.T) {
 // stub minutes after a nightly refresh failed here, and simply re-running
 // the same install with no other change succeeded).
 func TestUpdateAgentOpencodeRetriesOnceOnFailure(t *testing.T) {
+	withFakeUserLookup(t)
 	calls := 0
 	previousRunAs := runAs
 	runAs = func(runUser, name string, args ...string) *exec.Cmd {
@@ -67,6 +93,7 @@ func TestUpdateAgentOpencodeRetriesOnceOnFailure(t *testing.T) {
 // bounded: a persistent failure (not just a one-off blip) must still
 // surface as an error rather than retrying forever.
 func TestUpdateAgentOpencodeFailsAfterExhaustingRetry(t *testing.T) {
+	withFakeUserLookup(t)
 	calls := 0
 	previousRunAs := runAs
 	runAs = func(runUser, name string, args ...string) *exec.Cmd {
