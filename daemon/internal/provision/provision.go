@@ -181,15 +181,50 @@ func DefaultHostName() string {
 	return machineName("host")
 }
 
+// resolveHostName returns hostName unchanged if given, else the last
+// explicit host name a caller on this host supplied, else "" (meaning: no
+// explicit choice exists yet — callers pass that straight through to
+// DisplayNameForHost, which derives and prefixes a name itself). Once any
+// call resolves a non-blank value, it's remembered so the next instance
+// created without a -host-name flag reuses it instead of re-deriving
+// os.Hostname() from scratch.
 func resolveHostName(hostName string) (string, error) {
 	hostName = strings.TrimSpace(hostName)
 	if hostName == "" {
-		hostName = DefaultHostName()
+		hostName = loadLastHostName()
+	}
+	if hostName == "" {
+		return "", nil
 	}
 	if err := validateIdentifier("host name", hostName); err != nil {
 		return "", err
 	}
+	saveLastHostName(hostName)
 	return hostName, nil
+}
+
+// lastHostNamePath is a dotfile alongside the instance registries, so
+// discovery.List's "*.env" glob skips it. It remembers the most recently
+// resolved -host-name so a one-off override (e.g. dropping a cloud
+// provider's "-vnic" suffix) sticks as the default for every instance
+// created afterward, instead of re-deriving os.Hostname() every time.
+func lastHostNamePath() string {
+	return filepath.Join(discovery.EnvDir, ".last-host-name")
+}
+
+func loadLastHostName() string {
+	data, err := os.ReadFile(lastHostNamePath())
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func saveLastHostName(hostName string) {
+	if err := os.MkdirAll(discovery.EnvDir, 0o755); err != nil {
+		return
+	}
+	_ = os.WriteFile(lastHostNamePath(), []byte(hostName+"\n"), 0o644)
 }
 
 // DisplayNameFor mirrors install.sh's default display-name heuristic:
@@ -200,13 +235,17 @@ func DisplayNameFor(runUser, workdir string) string {
 }
 
 // DisplayNameForHost applies the display-name heuristic with an optional
-// caller-supplied host name. A blank host name preserves the derived default.
+// caller-supplied host name. A blank host name derives one from the machine
+// itself and, on a multi-user box, disambiguates it with a "<user>:"
+// prefix; a non-blank one is assumed to already be a deliberate choice (an
+// explicit -host-name, or one remembered from a previous instance via
+// resolveHostName) and is shown exactly as given, with no added prefix.
 func DisplayNameForHost(runUser, hostName, workdir string) string {
 	prefix := ""
-	if realUserCount() != 1 {
-		prefix = runUser + ":"
-	}
 	if hostName == "" {
+		if realUserCount() != 1 {
+			prefix = runUser + ":"
+		}
 		hostName = DefaultHostName()
 	}
 	return fmt.Sprintf("%s%s 🤹 %s", prefix, hostName, filepath.Base(workdir))

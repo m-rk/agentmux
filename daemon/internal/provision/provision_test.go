@@ -155,19 +155,58 @@ func TestDisplayNameFor(t *testing.T) {
 			t.Errorf("DisplayNameForHost = %q, want %q", got, want)
 		}
 	})
+
+	t.Run("explicit host name skips the multi-user prefix", func(t *testing.T) {
+		realUserCount = func() int { return 2 }
+		got := DisplayNameForHost("testuser", "build-box", "/home/testuser/.agentmux/probe")
+		if want := "build-box 🤹 probe"; got != want {
+			t.Errorf("DisplayNameForHost = %q, want %q (no prefix for an explicit host name)", got, want)
+		}
+	})
 }
 
 func TestResolveHostName(t *testing.T) {
-	got, err := resolveHostName("  build-box  ")
-	if err != nil {
-		t.Fatalf("resolveHostName: %v", err)
-	}
-	if got != "build-box" {
-		t.Fatalf("resolveHostName = %q, want build-box", got)
-	}
-	if _, err := resolveHostName("not a host"); err == nil {
-		t.Error("resolveHostName accepted spaces")
-	}
+	withEnvDir(t)
+
+	t.Run("blank with nothing remembered stays blank", func(t *testing.T) {
+		got, err := resolveHostName("")
+		if err != nil || got != "" {
+			t.Errorf("resolveHostName(\"\") = %q, %v, want \"\", nil", got, err)
+		}
+	})
+
+	t.Run("an explicit value is remembered for the next blank call", func(t *testing.T) {
+		if _, err := resolveHostName("mproject2000"); err != nil {
+			t.Fatalf("resolveHostName: %v", err)
+		}
+		got, err := resolveHostName("")
+		if err != nil || got != "mproject2000" {
+			t.Errorf("resolveHostName(\"\") after an explicit call = %q, %v, want %q, nil", got, err, "mproject2000")
+		}
+	})
+
+	t.Run("a fresh explicit value overrides what was remembered", func(t *testing.T) {
+		if _, err := resolveHostName("other-box"); err != nil {
+			t.Fatalf("resolveHostName: %v", err)
+		}
+		got, err := resolveHostName("")
+		if err != nil || got != "other-box" {
+			t.Errorf("resolveHostName(\"\") after a second explicit call = %q, %v, want %q, nil", got, err, "other-box")
+		}
+	})
+
+	t.Run("surrounding whitespace is trimmed", func(t *testing.T) {
+		got, err := resolveHostName("  build-box  ")
+		if err != nil || got != "build-box" {
+			t.Errorf("resolveHostName = %q, %v, want %q, nil", got, err, "build-box")
+		}
+	})
+
+	t.Run("an invalid identifier is rejected", func(t *testing.T) {
+		if _, err := resolveHostName("not a host"); err == nil {
+			t.Error("resolveHostName accepted spaces")
+		}
+	})
 }
 
 func TestProviderBaseURL(t *testing.T) {
