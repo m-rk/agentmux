@@ -111,7 +111,18 @@ func updateAgent(runUser, agent string, env []string) error {
 		// live: Paseo failed to start a new session against exactly this
 		// stub, moments after a nightly refresh failed here; re-running the
 		// same install with no other change succeeded immediately).
-		return runWithRetry(runUser, "npm", []string{"install", "-g", "opencode-ai@latest"}, env)
+		//
+		// Locked per runUser's HOME: if multiple instances ever share a
+		// runUser (and so one npm global prefix), concurrent installs would
+		// otherwise race each other's postinstall the same way they did on
+		// macOS, where every instance shares one user. See npmlock.go.
+		u, uerr := user.Lookup(runUser)
+		if uerr != nil {
+			return fmt.Errorf("looking up run user %q for npm update lock: %w", runUser, uerr)
+		}
+		return withNpmGlobalLock(u.HomeDir, u, func() error {
+			return runWithRetry(runUser, "npm", []string{"install", "-g", "opencode-ai@latest"}, env)
+		})
 	case "kilo":
 		cmd = runAs(runUser, "kilo", "upgrade")
 	default:
