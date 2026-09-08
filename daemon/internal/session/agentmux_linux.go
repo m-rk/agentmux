@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"os/user"
+	"time"
 )
 
 // updateAgentmux runs as root (it needs to call systemctl), dropping to the
@@ -30,7 +31,7 @@ func updateAgentmux(name string) error {
 	if err := updateAgent(runUser, agent, agentEnv); err != nil {
 		return fmt.Errorf("%s update/check failed, leaving existing session running untouched: %w", agent, err)
 	}
-	after, err := agentVersion(runUser, agent, agentEnv)
+	after, err := agentVersionWithRetry(runUser, agent, agentEnv)
 	if err != nil {
 		return fmt.Errorf("%s reported success but is not runnable afterward, leaving existing session running untouched: %w", agent, err)
 	}
@@ -64,6 +65,26 @@ func agentVersion(runUser, agent string, env []string) (string, error) {
 	cmd.Env = append(cmd.Env, env...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// agentVersionWithRetry re-checks a couple of times before giving up: npm's
+// postinstall can still be finishing its global-bin symlink swap for a
+// moment after `npm install` itself has already returned (confirmed live on
+// uptime-kuma: the runnable-check failed with opencode "not found in PATH",
+// then the symlink's mtime showed it was written a minute later).
+func agentVersionWithRetry(runUser, agent string, env []string) (string, error) {
+	var out string
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Second)
+		}
+		out, err = agentVersion(runUser, agent, env)
+		if err == nil {
+			return out, nil
+		}
+	}
+	return out, err
 }
 
 func updateAgent(runUser, agent string, env []string) error {

@@ -3,6 +3,7 @@ package session
 import (
 	"fmt"
 	"os/exec"
+	"time"
 )
 
 // updateAgentmux runs as the instance's own user already (macOS
@@ -28,7 +29,7 @@ func updateAgentmux(name string) error {
 	if err := updateAgent(agent, agentEnv); err != nil {
 		return fmt.Errorf("%s update/check failed, leaving existing session running untouched: %w", agent, err)
 	}
-	after, err := agentVersion(agent, agentEnv)
+	after, err := agentVersionWithRetry(agent, agentEnv)
 	if err != nil {
 		return fmt.Errorf("%s reported success but is not runnable afterward, leaving existing session running untouched: %w", agent, err)
 	}
@@ -58,6 +59,25 @@ func agentVersion(agent string, env []string) (string, error) {
 	cmd.Env = append(cmd.Env, env...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// agentVersionWithRetry re-checks a couple of times before giving up: npm's
+// postinstall can still be finishing its global-bin symlink swap for a
+// moment after `npm install` itself has already returned. See the matching
+// comment in agentmux_linux.go for the incident that prompted this.
+func agentVersionWithRetry(agent string, env []string) (string, error) {
+	var out string
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Second)
+		}
+		out, err = agentVersion(agent, env)
+		if err == nil {
+			return out, nil
+		}
+	}
+	return out, err
 }
 
 func updateAgent(agent string, env []string) error {
