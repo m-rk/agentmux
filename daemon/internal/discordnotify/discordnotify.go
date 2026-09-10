@@ -18,7 +18,24 @@ import (
 
 // Config is the on-disk shape of ~/.config/agentmux/discord.yaml.
 type Config struct {
-	WebhookURL string `yaml:"webhook_url"`
+	WebhookURL    string              `yaml:"webhook_url"`
+	Collaboration CollaborationConfig `yaml:"collaboration,omitempty"`
+}
+
+// CollaborationConfig is deliberately separate from the notification
+// webhook above. Collaboration needs a bot credential to read a forum and a
+// forum-owned webhook to write with per-session names and avatars.
+type CollaborationConfig struct {
+	BotToken          string            `yaml:"bot_token,omitempty"`
+	WebhookURL        string            `yaml:"webhook_url,omitempty"`
+	ForumChannelID    string            `yaml:"forum_channel_id,omitempty"`
+	AgentAvatarURLs   map[string]string `yaml:"agent_avatar_urls,omitempty"`
+	ProjectKeys       map[string]string `yaml:"project_keys,omitempty"`
+	SessionAvatarURLs map[string]string `yaml:"session_avatar_urls,omitempty"`
+}
+
+func (c CollaborationConfig) Configured() bool {
+	return c.BotToken != "" && c.WebhookURL != "" && c.ForumChannelID != ""
 }
 
 // DefaultPath returns ~/.config/agentmux/discord.yaml.
@@ -58,19 +75,39 @@ func Load(path string) (*Config, error) {
 }
 
 // Save writes cfg to path with 0600 permissions. Unlike hosts.yaml (which
-// holds no secrets), the webhook URL is itself a bearer credential — anyone
-// who has it can post messages as this webhook — so the file and its parent
-// directory must not be group/world-readable.
+// holds no secrets), Discord webhook URLs and bot tokens are bearer
+// credentials, so the file and its parent directory must not be
+// group/world-readable.
 func Save(path string, cfg *Config) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("creating %s: %w", filepath.Dir(path), err)
+	}
+	if err := os.Chmod(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("securing %s: %w", filepath.Dir(path), err)
 	}
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".discord-*.yaml")
+	if err != nil {
+		return fmt.Errorf("creating temporary Discord config: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return fmt.Errorf("securing temporary Discord config: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("writing temporary Discord config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("closing temporary Discord config: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("saving %s: %w", path, err)
 	}
 	return nil
 }

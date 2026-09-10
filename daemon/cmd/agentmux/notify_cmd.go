@@ -61,7 +61,13 @@ func runNotifyDiscordSetup(args []string) {
 			os.Exit(1)
 		}
 		path := discordnotify.DefaultPath()
-		if err := discordnotify.Save(path, &discordnotify.Config{WebhookURL: *webhookURL}); err != nil {
+		cfg, err := discordnotify.Load(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "notify discord setup: reading existing config: %v\n", err)
+			os.Exit(1)
+		}
+		cfg.WebhookURL = *webhookURL
+		if err := discordnotify.Save(path, cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "notify discord setup: saving config: %v\n", err)
 			os.Exit(1)
 		}
@@ -108,7 +114,8 @@ func runDiscordSetupForm() (string, error) {
 	if err := discordnotify.Send(webhookURL, "✅ agentmux: Discord notifications configured."); err != nil {
 		return "", fmt.Errorf("test message failed, not saving: %w", err)
 	}
-	if err := discordnotify.Save(path, &discordnotify.Config{WebhookURL: webhookURL}); err != nil {
+	existing.WebhookURL = webhookURL
+	if err := discordnotify.Save(path, existing); err != nil {
 		return "", fmt.Errorf("saving config: %w", err)
 	}
 	return webhookURL, nil

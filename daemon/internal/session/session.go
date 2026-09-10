@@ -7,9 +7,11 @@ package session
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/m-rk/agentmux/daemon/internal/discovery"
 	"github.com/m-rk/agentmux/daemon/internal/runas"
@@ -38,6 +40,13 @@ func registry(name string) (map[string]string, error) {
 		fields[strings.TrimSpace(k)] = strings.TrimSpace(v)
 	}
 	return fields, scanner.Err()
+}
+
+// ReadRegistry exposes an instance's configuration to other agentmux CLI
+// surfaces without duplicating the registry parser. The returned map is a
+// copy populated by this read and can be changed by the caller.
+func ReadRegistry(name string) (map[string]string, error) {
+	return registry(name)
 }
 
 // SetRegistryField updates a single KEY=VALUE line in name's registry file
@@ -100,18 +109,45 @@ func agentFor(name string) (string, error) {
 // implementation by peeking at the instance's own registry file — this is
 // what `agentmux session run|update|stop --instance NAME` actually calls.
 func Run(name string) error {
-	agent, err := agentFor(name)
+	started := time.Now()
+	fields, err := registry(name)
 	if err != nil {
 		return err
 	}
+	agent := agentOf(fields)
+	fallback := name
+	if agent == "claude-code" {
+		fallback = "agentmux"
+	}
+	// New sessions can take most of their service's startup deadline to
+	// paint and connect. Their collaboration onboarding is safely deferred
+	// to the next five-minute tick; existing sessions can receive updates
+	// during this run.
+	wasRunning := hasSession(tmuxSocket(name), sessionNameOf(fields, fallback))
+	var runErr error
 	switch agent {
 	case "claude-code":
-		return RunClaudeCode(name)
+		runErr = RunClaudeCode(name)
 	case "zero", "opencode", "kilo":
-		return RunAgentmux(name)
+		runErr = RunAgentmux(name)
 	default:
 		return fmt.Errorf("unsupported agent %q for instance %q", agent, name)
 	}
+	if runErr != nil {
+		return runErr
+	}
+	// Claude's existing service units have a 30-second deadline. If the
+	// primary health work consumed a meaningful part of that budget, leave
+	// collaboration for the next tick rather than turning an additive
+	// feature into a service failure.
+	if wasRunning && time.Since(started) < 8*time.Second {
+		if err := syncCollaboration(name); err != nil {
+			// Discord collaboration is additive. A Discord outage or malformed
+			// project config must never mark an otherwise healthy session failed.
+			log.Printf("agentmux collaboration warning for %s: %v", name, err)
+		}
+	}
+	return nil
 }
 
 func Update(name string) error {

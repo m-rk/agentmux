@@ -39,6 +39,8 @@ func main() {
 		runDoctorCmd(args[1:])
 	case "notify":
 		runNotifyCmd(args[1:])
+	case "collab":
+		runCollabCmd(args[1:])
 	case "-h", "--help", "help":
 		printUsage()
 	default:
@@ -71,5 +73,10 @@ Usage:
   agentmux notify discord setup    configure the Discord webhook agentmux notifies on (e.g. expiring auth)
   agentmux notify discord setup -y -webhook-url URL   same, non-interactively
   agentmux notify discord test     resend a test message using the saved webhook
+  agentmux collab setup            configure Discord forum collaboration
+  agentmux collab configure -instance NAME [-project KEY] [-avatar-url URL]
+  agentmux collab read -instance NAME [-thread ID]
+  agentmux collab post -instance NAME -topic TOPIC -summary SENTENCE [-shared] [-details FILE.md]
+  agentmux collab post -instance NAME -thread ID -summary TEXT [-details FILE.md]
   agentmux help                show this message`)
 }

@@ -98,6 +98,13 @@ separate parts of an instance rather than defining the backend itself.
   notable doctor findings and repairs, plus Linux Claude Code warnings
   around 48 hours before a refresh token expires and again when it does. See
   [Known limitations](#known-limitations) for the current scope.
+- **Discord collaboration (early)** — managed sessions can share findings,
+  decisions, blockers, and handovers through one Discord forum, even when
+  they're running on different hosts or in different agent CLIs. A read-only
+  bot follows relevant threads; a webhook speaks as the individual session,
+  for example `kilo-minecraft · build-box.example.net`. New context is delivered on the
+  existing health tick only when the pane is idle. See
+  [Discord collaboration](docs/discord-collaboration.md).
 
 ### Session doctor
 
@@ -379,11 +386,12 @@ AGENTMUX_LIVE_OPENCODE=1 tests/smoke.sh
   instance with an explicit `-resume` ID rather than assuming any restart will
   infer the exact transcript you meant.
 - **Discord setup is local to one user on one host.** Discord is the general
-  outbound communication channel for agentmux and its managed sessions; token
-  expiry is simply the first event wired into it. The webhook URL is a bearer
-  credential stored under that user's config directory, so configure it
-  separately for the run user on each host and protect the file. The doctor
-  reports on both Linux and macOS. Token-expiry warnings remain
+  communication channel for agentmux and its managed sessions; token expiry
+  is simply one event wired into it. Notification and collaboration webhooks,
+  plus the collaboration bot token, are bearer credentials stored under that
+  user's config directory, so configure them separately for the run user on
+  each host and protect the file. The doctor reports on both Linux and macOS.
+  Token-expiry warnings remain
   Linux-only because Claude Code keeps macOS credentials in Keychain, and the
   daemon reports them as unsupported instead of guessing at a Keychain item.
 - **The manual Kilo backend is basic.** It writes `kilo.json`, launches the
