@@ -96,6 +96,26 @@ agentmux collab setup -y \
   -forum-channel "$DISCORD_FORUM_CHANNEL_ID"
 ```
 
+There's one bot, forum, and webhook shared across every host in the fleet — this
+is a multi-host collaboration space, not a per-host one. Provision a new host
+against the *same* Discord application and forum (`channel_id`
+`1547592034334806119`) rather than creating new ones.
+
+The credentials live in the `Mark's agents` 1Password vault. The `op` service
+account needs `--vault` passed explicitly (it errors without it), and broad
+enumeration (`op vault list`, `op item list`) may be blocked by an agent's
+sandbox even when a scoped lookup by item ID is allowed — reach for the item
+IDs below directly rather than listing the vault:
+
+```sh
+op item get 627h7czjtbkaqv3u3dgvwys65i --vault "Mark's agents" --format=json  # "agentmux Discord bot token": value is field "credential"
+op item get ab3alqe5aucauyniekjcm6ttvi --vault "Mark's agents" --format=json  # "mproject2000 Discord agent forum webhook": value is the item's "website" url
+```
+
+The forum channel ID doesn't need its own credential: any Discord webhook URL
+answers `GET <webhook-url>` with its own `channel_id`, so it can be derived
+from the webhook item alone (it matches the ID above).
+
 That file contains bearer credentials and is kept mode `0600`. Use a narrowly
 permissioned bot and webhook, and don't commit or paste the file into a session.
 
