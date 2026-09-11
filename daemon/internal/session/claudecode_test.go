@@ -65,6 +65,10 @@ footer six
 		{"menu open hides the footer", "   Enter to select · Esc to continue\n", false},
 		{"indicator outside footer window", indicatorOutsideFooter, false},
 		{"lookalike footer text", "status /rc-old\nmodel\nauto mode\n", false},
+		// 2.1.248+ moved /rc out of the footer. The "/remote-control is
+		// active" body text confirms the connection instead.
+		{"connected via body indicator (no footer /rc)", "/remote-control is active · Continue here, on your phone, or at\nhttps://claude.ai/code/session_example\n\n\n───\n❯\n───\n  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents\n", true},
+		{"body indicator absent, no footer /rc", "Sonnet 5 · Claude Pro\nworkdir\n\n\n\n───\n❯\n───\n  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents\n", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -37,12 +37,23 @@ const (
 	authExpiryWarnWindow = 48 * time.Hour
 )
 
-// claudeRemoteIndicator is the footer text Claude Code shows only while
-// Remote Control is actually connected — confirmed live, not guessed from
-// bundle strings: a session started without --remote-control shows no such
-// text at all, and the "/remote-control" palette entry itself reads
-// "Disconnect Remote Control" while a session is connected.
-const claudeRemoteIndicator = "/rc"
+// claudeRemoteFooterIndicator is the exact footer token Claude Code shows
+// while Remote Control is actually connected in versions through 2.1.247.
+// Versions 2.1.248+ moved this token out of the footer — see
+// claudeRemoteBodyIndicator and claudeRemoteBodyScanLines for the
+// replacement.
+const claudeRemoteFooterIndicator = "/rc"
+
+// claudeRemoteBodyIndicator is the substring Claude Code shows in the
+// body (just below the welcome box) when Remote Control is connected in
+// versions 2.1.248+, where the footer no longer carries the /rc token.
+// Confirmed live against 2.1.268; the line is literally
+// "/remote-control is active · Continue here, on your phone, or at
+// https://claude.ai/code/session_<id>". The literal "/remote-control"
+// (without the surrounding "is active" phrase) is enough — neither the
+// welcome box nor the Remote Control menu's body items render the bare
+// token in a way that would false-positive the check.
+const claudeRemoteBodyIndicator = "/remote-control"
 
 // claudeFooterScanLines bounds Remote Control status/menu detection to the
 // bottom of Claude Code's TUI. The status area is not a single fixed row: mode,
@@ -50,6 +61,13 @@ const claudeRemoteIndicator = "/rc"
 // Six rows covers the observed variants while staying well clear of the
 // welcome box, where workdir text must not be mistaken for connection state.
 const claudeFooterScanLines = 6
+
+// claudeRemoteBodyScanLines bounds the secondary, body-text scan added for
+// claude 2.1.248+. It only fires when the footer check misses; keeping the
+// window small keeps the cost negligible and the false-positive surface
+// minimal (the body is mostly conversation content that mentions neither
+// indicator while the session is idle).
+const claudeRemoteBodyScanLines = 30
 
 // compactOnUpdateEnabled reports whether the nightly update should compact
 // and always restart (true, the default — preserves behavior for any
@@ -142,30 +160,45 @@ func UpdateClaudeCode(name string) error {
 	return updateClaudeCode(name)
 }
 
-// claudeRemoteConnected checks a bounded footer window for /rc as an exact
-// whitespace-delimited token. Checking the whole pane is unsafe: workdir text
-// renders in the welcome box and can contain lookalike "rc" strings. Claude's
-// status area can span several rows, though, so checking only the literal last
-// row misses a real /rc whenever a mode/model hint renders beneath it.
+// claudeRemoteConnected checks the bottom of the pane for either the
+// legacy /rc footer token (claude <= 2.1.247) or the body substring
+// claude 2.1.248+ uses instead. Checking the whole pane is unsafe:
+// workdir text renders in the welcome box and can contain lookalike
+// "rc" strings, so the footer check stays narrow. The body check uses
+// a still-bounded window for the /remote-control substring.
 func claudeRemoteConnected(tmux func(args ...string) *exec.Cmd, socket, session string) bool {
-	return ClaudePaneRemoteConnected(lastPaneLines(tmux, socket, session, claudeFooterScanLines))
+	return ClaudePaneRemoteConnected(lastPaneLines(tmux, socket, session, claudeRemoteBodyScanLines))
 }
 
-// ClaudePaneRemoteConnected reports whether a captured Claude Code pane shows
-// Remote Control as connected in its bounded footer. It is exported for the
-// host-wide doctor so health checks and the per-instance self-heal use exactly
-// the same detection rule.
+// ClaudePaneRemoteConnected reports whether a captured Claude Code pane
+// shows Remote Control as connected. It is exported for the host-wide
+// doctor so health checks and the per-instance self-heal use exactly
+// the same detection rule. Accepts a bounded bottom-of-pane window of
+// up to claudeRemoteBodyScanLines lines so a single capture can power
+// both the legacy footer-token check and the newer body-substring
+// check; the footer check only inspects the last claudeFooterScanLines
+// of those, keeping the welcome box and conversation body well clear.
 func ClaudePaneRemoteConnected(pane string) bool {
 	lines := strings.Split(strings.TrimRight(pane, "\n"), "\n")
-	if len(lines) > claudeFooterScanLines {
-		lines = lines[len(lines)-claudeFooterScanLines:]
+	// Footer check: the /rc token in the bottom claudeFooterScanLines.
+	// When the pane is shorter than the window, use everything we have.
+	footerStart := len(lines) - claudeFooterScanLines
+	if footerStart < 0 {
+		footerStart = 0
 	}
-	for _, field := range strings.Fields(strings.Join(lines, "\n")) {
-		if field == claudeRemoteIndicator {
+	for _, field := range strings.Fields(strings.Join(lines[footerStart:], "\n")) {
+		if field == claudeRemoteFooterIndicator {
 			return true
 		}
 	}
-	return false
+	// 2.1.248+ moved the /rc token out of the footer; the body shows
+	// "/remote-control is active" when connected. Search the slightly
+	// broader window for that substring.
+	bodyStart := len(lines) - claudeRemoteBodyScanLines
+	if bodyStart < 0 {
+		bodyStart = 0
+	}
+	return strings.Contains(strings.Join(lines[bodyStart:], "\n"), claudeRemoteBodyIndicator)
 }
 
 // claudeRemoteMenuFooter is the prompt on Claude Code's Remote Control
