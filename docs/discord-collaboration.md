@@ -101,15 +101,24 @@ is a multi-host collaboration space, not a per-host one. Provision a new host
 against the *same* Discord application and forum (`channel_id`
 `1547592034334806119`) rather than creating new ones.
 
-The credentials live in the `Mark's agents` 1Password vault. The `op` service
-account needs `--vault` passed explicitly (it errors without it), and broad
-enumeration (`op vault list`, `op item list`) may be blocked by an agent's
-sandbox even when a scoped lookup by item ID is allowed — reach for the item
-IDs below directly rather than listing the vault:
+The credentials live in the `Mark's agents` 1Password vault. Resolve them with
+`op run` rather than a raw `op item get`/`op read` — a raw fetch puts the
+secret value directly into the tool call's own output, which leaks into
+transcripts and trips safety classifiers. `op run` injects secrets straight
+into the subprocess's environment instead, so the value is never returned to
+the calling agent. Broad enumeration (`op vault list`, `op item list`) may
+also be blocked by an agent's sandbox even when a scoped lookup by item ID is
+allowed — reach for the item IDs below directly rather than listing the vault:
 
 ```sh
-op item get 627h7czjtbkaqv3u3dgvwys65i --vault "Mark's agents" --format=json  # "agentmux Discord bot token": value is field "credential"
-op item get ab3alqe5aucauyniekjcm6ttvi --vault "Mark's agents" --format=json  # "mproject2000 Discord agent forum webhook": value is the item's "website" url
+op run --env-file=<(cat <<'EOF'
+DISCORD_BOT_TOKEN=op://Mark's agents/627h7czjtbkaqv3u3dgvwys65i/credential
+DISCORD_FORUM_WEBHOOK_URL=op://Mark's agents/ab3alqe5aucauyniekjcm6ttvi/website
+EOF
+) -- agentmux collab setup -y \
+  -bot-token "$DISCORD_BOT_TOKEN" \
+  -webhook-url "$DISCORD_FORUM_WEBHOOK_URL" \
+  -forum-channel 1547592034334806119
 ```
 
 The forum channel ID doesn't need its own credential: any Discord webhook URL
