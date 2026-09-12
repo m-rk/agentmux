@@ -59,6 +59,12 @@ RandomizedDelaySec=120
 WantedBy=timers.target
 `
 
+// ExecCondition skips this run (a clean no-op, not a failure) while the
+// nightly update is active for the same instance — see the identical
+// guard's doc comment on claudeCodeTickServiceTemplate in
+// claudecode_linux.go for why: the daemon's own per-instance tmux-input
+// lock (session.withTmuxInputLock) already makes an overlapping tick
+// harmless, this just avoids the wasted invocation and its log noise.
 const agentmuxTickServiceTemplate = `[Unit]
 Description=Periodic health check for agentmux instance %[1]s
 After=network-online.target
@@ -67,6 +73,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 User=%[2]s
+ExecCondition=/bin/sh -c '! systemctl is-active --quiet %[4]s'
 ExecStart=%[3]s session run --instance %[1]s
 TimeoutStartSec=90
 `
@@ -248,7 +255,7 @@ func installAgentmuxUnits(name, agent, provider, runUser, binPath, serviceName, 
 	unit := fmt.Sprintf(agentmuxUnitTemplate, name, agent, provider, runUser, binPath)
 	updateUnit := fmt.Sprintf(agentmuxUpdateUnitTemplate, name, binPath)
 	timer := fmt.Sprintf(agentmuxTimerTemplate, name, defaultOnCalendar)
-	tickService := fmt.Sprintf(agentmuxTickServiceTemplate, name, runUser, binPath)
+	tickService := fmt.Sprintf(agentmuxTickServiceTemplate, name, runUser, binPath, updateServiceName)
 	tickTimer := fmt.Sprintf(agentmuxTickTimerTemplate, name, defaultTickIntervalSecs)
 
 	if err := os.WriteFile("/etc/systemd/system/"+serviceName, []byte(unit), 0o644); err != nil {

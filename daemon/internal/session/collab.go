@@ -98,26 +98,43 @@ func syncCollaboration(name string) error {
 		}
 		return nil
 	}
-	if err := waitForPaneIdle(tmux, socket, session, collabIdleStable, collabIdleTimeout); err != nil {
-		// A busy session is healthy; leave cursors untouched and retry later.
+	delivered := false
+	// Non-blocking: the nightly compact, or a Remote Control reconnect from
+	// this same tick, may already be mid-send to this pane. Skip this tick
+	// rather than risk our digest text landing in its still-unsubmitted
+	// input line — the next tick, a few minutes away, retries with cursors
+	// untouched.
+	_, err = withTmuxInputLock(home, nil, name, false, func() error {
+		if err := waitForPaneIdle(tmux, socket, session, collabIdleStable, collabIdleTimeout); err != nil {
+			// A busy session is healthy; leave cursors untouched and retry later.
+			return nil
+		}
+		pane, err := tmux("-L", socket, "capture-pane", "-p", "-t", session).Output()
+		if err != nil || !collaborationPaneSafe(agent, string(pane)) {
+			// Stability alone is insufficient: a permission or selection dialog
+			// can sit unchanged too. Never let an automatic Enter answer one.
+			return nil
+		}
+		currentKey, err := tmux("-L", socket, "display-message", "-p", "-t", session, "#{session_created}").Output()
+		if err != nil || strings.TrimSpace(string(currentKey)) != strings.TrimSpace(string(sessionKeyBytes)) {
+			return nil
+		}
+		out, err := tmux(
+			"-L", socket,
+			"send-keys", "-t", session, "-l", delivery.Prompt,
+			";", "send-keys", "-t", session, "Enter",
+		).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("delivering Discord collaboration to %s: %w: %s", session, err, strings.TrimSpace(string(out)))
+		}
+		delivered = true
 		return nil
+	})
+	if err != nil {
+		return err
 	}
-	pane, err := tmux("-L", socket, "capture-pane", "-p", "-t", session).Output()
-	if err != nil || !collaborationPaneSafe(agent, string(pane)) {
-		// Stability alone is insufficient: a permission or selection dialog
-		// can sit unchanged too. Never let an automatic Enter answer one.
+	if !delivered {
 		return nil
-	}
-	currentKey, err := tmux("-L", socket, "display-message", "-p", "-t", session, "#{session_created}").Output()
-	if err != nil || strings.TrimSpace(string(currentKey)) != strings.TrimSpace(string(sessionKeyBytes)) {
-		return nil
-	}
-	if out, err := tmux(
-		"-L", socket,
-		"send-keys", "-t", session, "-l", delivery.Prompt,
-		";", "send-keys", "-t", session, "Enter",
-	).CombinedOutput(); err != nil {
-		return fmt.Errorf("delivering Discord collaboration to %s: %w: %s", session, err, strings.TrimSpace(string(out)))
 	}
 	return collab.SaveState(collab.StatePath(home, name), delivery.State)
 }

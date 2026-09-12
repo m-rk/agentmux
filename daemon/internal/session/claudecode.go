@@ -113,7 +113,7 @@ func RunClaudeCode(name string) error {
 
 	if hasSession(socket, session) {
 		ensureClaudeAuthNotified(name, fields["AGENTMUX_RUN_USER"], display)
-		return ensureClaudeRemoteControl(tmux, socket, session)
+		return ensureClaudeRemoteControl(tmux, name, socket, session)
 	}
 
 	claudeArgs := []string{"--remote-control", display}
@@ -134,7 +134,7 @@ func RunClaudeCode(name string) error {
 	// ensureClaudeRemoteControl already defers harmlessly (returns nil) if
 	// the pane is still busy replaying a large transcript, in which case the
 	// next tick covers it exactly as before.
-	return ensureClaudeRemoteControl(tmux, socket, session)
+	return ensureClaudeRemoteControl(tmux, name, socket, session)
 }
 
 // StopClaudeCode is the instance unit's ExecStop.
@@ -268,48 +268,59 @@ func lastPaneLines(tmux func(args ...string) *exec.Cmd, socket, session string, 
 // footer behind it and would otherwise report "disconnected" forever and
 // leave the pane visibly wedged on the menu. Dismissing it before and after
 // toggling makes this self-healing regardless of how the menu got there.
-func ensureClaudeRemoteControl(tmux func(args ...string) *exec.Cmd, socket, session string) error {
+func ensureClaudeRemoteControl(tmux func(args ...string) *exec.Cmd, name, socket, session string) error {
 	if claudeRemoteConnected(tmux, socket, session) {
 		return nil
 	}
-	if dismissed, err := dismissClaudeRemoteMenuIfOpen(tmux, socket, session); err != nil {
-		return err
-	} else if dismissed {
-		time.Sleep(500 * time.Millisecond)
-		if claudeRemoteConnected(tmux, socket, session) {
-			return nil // the menu was hiding an already-live connection
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolving home for %s: %w", session, err)
+	}
+	// Non-blocking: another routine (a Discord collab delivery, or the
+	// nightly compact) may already be mid-send to this pane. Skip this
+	// tick rather than risk our keystrokes landing in its still-unsubmitted
+	// input line — the next tick, a few minutes away, retries.
+	_, err = withTmuxInputLock(home, nil, name, false, func() error {
+		if dismissed, dismissErr := dismissClaudeRemoteMenuIfOpen(tmux, socket, session); dismissErr != nil {
+			return dismissErr
+		} else if dismissed {
+			time.Sleep(500 * time.Millisecond)
+			if claudeRemoteConnected(tmux, socket, session) {
+				return nil // the menu was hiding an already-live connection
+			}
 		}
-	}
-	// Never type into a pane mid-response; if it's busy, skip this tick and
-	// let the next one (a few minutes away) retry instead of blocking.
-	if err := waitForPaneIdle(tmux, socket, session, remoteControlIdleStable, remoteControlIdleTimeout); err != nil {
-		return nil
-	}
-	if claudeRemoteConnected(tmux, socket, session) {
-		return nil // reconnected on its own while we were checking idle
-	}
-	if err := tmux("-L", socket, "send-keys", "-t", session, "/remote-control", "Enter").Run(); err != nil {
-		return fmt.Errorf("sending /remote-control to %s: %w", session, err)
-	}
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if claudeRemoteConnected(tmux, socket, session) {
+		// Never type into a pane mid-response; if it's busy, skip this tick and
+		// let the next one (a few minutes away) retry instead of blocking.
+		if err := waitForPaneIdle(tmux, socket, session, remoteControlIdleStable, remoteControlIdleTimeout); err != nil {
 			return nil
 		}
-		// Disconnected really means disconnected here (unlike above), so
-		// invoking /remote-control should reconnect immediately with no
-		// menu. Seeing the menu instead means the state flipped to
-		// connected in the race between our checks and the send-keys above;
-		// dismissing leaves it connected, which is what we want.
-		if dismissed, err := dismissClaudeRemoteMenuIfOpen(tmux, socket, session); err != nil {
-			return err
-		} else if dismissed {
-			time.Sleep(300 * time.Millisecond)
-			continue
+		if claudeRemoteConnected(tmux, socket, session) {
+			return nil // reconnected on its own while we were checking idle
 		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	return fmt.Errorf("remote control still not connected in %s after toggling", session)
+		if err := tmux("-L", socket, "send-keys", "-t", session, "/remote-control", "Enter").Run(); err != nil {
+			return fmt.Errorf("sending /remote-control to %s: %w", session, err)
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if claudeRemoteConnected(tmux, socket, session) {
+				return nil
+			}
+			// Disconnected really means disconnected here (unlike above), so
+			// invoking /remote-control should reconnect immediately with no
+			// menu. Seeing the menu instead means the state flipped to
+			// connected in the race between our checks and the send-keys above;
+			// dismissing leaves it connected, which is what we want.
+			if dismissed, dismissErr := dismissClaudeRemoteMenuIfOpen(tmux, socket, session); dismissErr != nil {
+				return dismissErr
+			} else if dismissed {
+				time.Sleep(300 * time.Millisecond)
+				continue
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		return fmt.Errorf("remote control still not connected in %s after toggling", session)
+	})
+	return err
 }
 
 // ensureClaudeAuthNotified checks name's Claude Code OAuth token expiry
@@ -417,15 +428,29 @@ func compactAndResolveResume(tmux func(args ...string) *exec.Cmd, name, workdir,
 			return "", fmt.Errorf("checking whether %s is already compacted: %w", session, err)
 		}
 		if !alreadyCompacted {
-			if err := waitForPaneIdle(tmux, socket, session, idleStableWindow, idleWaitTimeout); err != nil {
-				return "", fmt.Errorf("waiting for %s to go idle before compacting: %w", session, err)
+			home, owner, err := tmuxLockHomeAndOwner(runUser)
+			if err != nil {
+				return "", err
 			}
-			if err := tmux("-L", socket, "send-keys", "-t", session, "/compact", "Enter").Run(); err != nil {
-				return "", fmt.Errorf("sending /compact to %s: %w", session, err)
-			}
-			time.Sleep(3 * time.Second) // let compaction visibly start before polling for idle again
-			if err := waitForPaneIdle(tmux, socket, session, idleStableWindow, compactTimeout); err != nil {
-				return "", fmt.Errorf("waiting for %s to finish compacting: %w", session, err)
+			// Blocking: unlike the periodic tick, this isn't time-boxed, and
+			// skipping isn't an option — compaction has to happen before the
+			// restart below. Waits out any Discord collab delivery or Remote
+			// Control reconnect already mid-send to this pane rather than
+			// racing it.
+			if _, err := withTmuxInputLock(home, owner, name, true, func() error {
+				if err := waitForPaneIdle(tmux, socket, session, idleStableWindow, idleWaitTimeout); err != nil {
+					return fmt.Errorf("waiting for %s to go idle before compacting: %w", session, err)
+				}
+				if err := tmux("-L", socket, "send-keys", "-t", session, "/compact", "Enter").Run(); err != nil {
+					return fmt.Errorf("sending /compact to %s: %w", session, err)
+				}
+				time.Sleep(3 * time.Second) // let compaction visibly start before polling for idle again
+				if err := waitForPaneIdle(tmux, socket, session, idleStableWindow, compactTimeout); err != nil {
+					return fmt.Errorf("waiting for %s to finish compacting: %w", session, err)
+				}
+				return nil
+			}); err != nil {
+				return "", err
 			}
 		}
 	}

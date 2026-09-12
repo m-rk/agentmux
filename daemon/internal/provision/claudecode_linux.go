@@ -61,6 +61,16 @@ RandomizedDelaySec=120
 WantedBy=timers.target
 `
 
+// ExecCondition skips this run (a clean no-op, not a failure) while the
+// nightly update/compact is active for the same instance: it can hold
+// this session's tmux pane for 10+ minutes (idleWaitTimeout +
+// compactTimeout in daemon/internal/session/claudecode.go), and the tick
+// timer's own 5-minute interval has no awareness of that window at all —
+// left unguarded, several ticks fire squarely inside it every single
+// night. The daemon's own per-instance tmux-input lock (withTmuxInputLock)
+// already makes that harmless — a tick that does fire mid-update just
+// skips its own send-keys and retries next time — but skipping the
+// attempt entirely here avoids the wasted invocation and its log noise.
 const claudeCodeTickServiceTemplate = `[Unit]
 Description=Periodic health check for %[1]s / %[2]s
 After=network-online.target
@@ -69,6 +79,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 User=%[3]s
+ExecCondition=/bin/sh -c '! systemctl is-active --quiet %[5]s'
 ExecStart=%[4]s session run --instance %[1]s
 TimeoutStartSec=30
 `
@@ -207,7 +218,7 @@ func installClaudeCodeUnits(name, sessionName, runUser, binPath, serviceName, up
 	unit := fmt.Sprintf(claudeCodeUnitTemplate, name, sessionName, runUser, binPath)
 	updateUnit := fmt.Sprintf(claudeCodeUpdateUnitTemplate, name, sessionName, binPath)
 	timer := fmt.Sprintf(claudeCodeTimerTemplate, name, sessionName, defaultOnCalendar)
-	tickService := fmt.Sprintf(claudeCodeTickServiceTemplate, name, sessionName, runUser, binPath)
+	tickService := fmt.Sprintf(claudeCodeTickServiceTemplate, name, sessionName, runUser, binPath, updateServiceName)
 	tickTimer := fmt.Sprintf(claudeCodeTickTimerTemplate, name, sessionName, defaultTickIntervalSecs)
 
 	if err := os.WriteFile("/etc/systemd/system/"+serviceName, []byte(unit), 0o644); err != nil {
