@@ -134,7 +134,33 @@ type digestItem struct {
 }
 
 func buildPrompt(opts SyncOptions, onboarding bool, items []digestItem) string {
-	if !onboarding && len(items) == 0 {
+	// Wake gate: a session only costs a real model turn when something is
+	// actually addressed to it. Pure-CONTEXT batches (every other
+	// instance's routine check-ins, status updates, handovers meant for
+	// someone else) are common — most polls see zero REQUEST items — and
+	// previously woke the session anyway just to read and dismiss them.
+	// Cursors still advance in BuildDelivery regardless of what buildPrompt
+	// returns here, so a suppressed CONTEXT-only batch is never replayed;
+	// it's simply absorbed into state without ever costing a turn. Found
+	// live 2026-09-13: a standby session burned real tokens/quota across
+	// 25 model calls in ~35h, purely reading and dismissing broadcasts —
+	// the delivered CONTEXT vs REQUEST label already existed for the
+	// session's own judgment, but nothing gated the wake itself on it.
+	kinds := make([]string, len(items))
+	hasRequest := false
+	for i, item := range items {
+		addressed := containsAddress(item.Message.Content, opts.Identity.Address())
+		for _, note := range item.AttachmentNotes {
+			addressed = addressed || containsAddress(note, opts.Identity.Address())
+		}
+		if addressed {
+			kinds[i] = "REQUEST"
+			hasRequest = true
+		} else {
+			kinds[i] = "CONTEXT"
+		}
+	}
+	if !onboarding && !hasRequest {
 		return ""
 	}
 	var b strings.Builder
@@ -147,17 +173,9 @@ func buildPrompt(opts SyncOptions, onboarding bool, items []digestItem) string {
 	}
 	if len(items) > 0 {
 		b.WriteString("Unread Discord collaboration:\n")
-		for _, item := range items {
-			kind := "CONTEXT"
-			addressed := containsAddress(item.Message.Content, opts.Identity.Address())
-			for _, note := range item.AttachmentNotes {
-				addressed = addressed || containsAddress(note, opts.Identity.Address())
-			}
-			if addressed {
-				kind = "REQUEST"
-			}
+		for i, item := range items {
 			content := compactUntrusted(item.Message.Content, 400)
-			fmt.Fprintf(&b, "- %s in %s (thread %s), from %s: %s\n", kind, compactUntrusted(item.ThreadName, 100), item.ThreadID, compactUntrusted(item.Message.Author.Username, 60), content)
+			fmt.Fprintf(&b, "- %s in %s (thread %s), from %s: %s\n", kinds[i], compactUntrusted(item.ThreadName, 100), item.ThreadID, compactUntrusted(item.Message.Author.Username, 60), content)
 			for _, note := range item.AttachmentNotes {
 				fmt.Fprintf(&b, "  Markdown attachment: %s\n", compactUntrusted(note, 900))
 			}
