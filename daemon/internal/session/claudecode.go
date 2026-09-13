@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"os"
@@ -268,6 +269,16 @@ func lastPaneLines(tmux func(args ...string) *exec.Cmd, socket, session string, 
 // footer behind it and would otherwise report "disconnected" forever and
 // leave the pane visibly wedged on the menu. Dismissing it before and after
 // toggling makes this self-healing regardless of how the menu got there.
+// errRemoteControlUnconfirmed marks ensureClaudeRemoteControl's own "gave
+// up waiting for the reconnect to show up" case, as distinct from a real
+// tmux/OS failure: claudeRemoteConnected can't see any indicator at all in
+// a long-scrolled pane (Claude Code only prints it once, right after the
+// welcome box, not as persistent footer chrome the way older versions
+// did), so this case is expected to fire on healthy, already-connected,
+// long-running sessions -- not just genuinely disconnected ones -- and
+// isn't reliable enough to fail the tick over.
+var errRemoteControlUnconfirmed = errors.New("remote control reconnect unconfirmed")
+
 func ensureClaudeRemoteControl(tmux func(args ...string) *exec.Cmd, name, socket, session string) error {
 	if claudeRemoteConnected(tmux, socket, session) {
 		return nil
@@ -318,8 +329,16 @@ func ensureClaudeRemoteControl(tmux func(args ...string) *exec.Cmd, name, socket
 			}
 			time.Sleep(500 * time.Millisecond)
 		}
-		return fmt.Errorf("remote control still not connected in %s after toggling", session)
+		return errRemoteControlUnconfirmed
 	})
+	if errors.Is(err, errRemoteControlUnconfirmed) {
+		// Not a failure: logged so it's still visible in the unit's journal
+		// if someone goes looking, but doesn't fail the tick or page anyone
+		// -- see errRemoteControlUnconfirmed's doc comment for why this
+		// specific case can't be trusted as a real signal.
+		fmt.Printf("warning: %s: remote control still not connected after toggling (detection is unreliable for long-scrolled sessions, not treated as a failure)\n", session)
+		return nil
+	}
 	return err
 }
 
