@@ -130,6 +130,8 @@ func Run(name string) error {
 		runErr = RunClaudeCode(name)
 	case "zero", "opencode", "kilo":
 		runErr = RunAgentmux(name)
+	case "amp":
+		runErr = RunAmp(name)
 	default:
 		return fmt.Errorf("unsupported agent %q for instance %q", agent, name)
 	}
@@ -160,6 +162,8 @@ func Update(name string) error {
 		return UpdateClaudeCode(name)
 	case "zero", "opencode", "kilo":
 		return UpdateAgentmux(name)
+	case "amp":
+		return UpdateAmp(name)
 	default:
 		return fmt.Errorf("unsupported agent %q for instance %q", agent, name)
 	}
@@ -175,6 +179,8 @@ func Stop(name string) error {
 		return StopClaudeCode(name)
 	case "zero", "opencode", "kilo":
 		return StopAgentmux(name)
+	case "amp":
+		return StopAmp(name)
 	default:
 		return fmt.Errorf("unsupported agent %q for instance %q", agent, name)
 	}

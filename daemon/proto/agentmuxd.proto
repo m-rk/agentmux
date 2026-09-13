@@ -136,7 +136,13 @@ message ControlResponse {
 
 message CreateInstanceRequest {
   string instance_name = 1;
-  string agent = 2;              // "claude-code" | "zero" | "opencode" | "kilo"
+  // "claude-code" | "zero" | "opencode" | "kilo" | "amp". "amp" takes none
+  // of the provider/model/resume/compact fields below: its headless runner
+  // (`amp --no-tui --runner-id <id> --remote-control-terminal`) gets its
+  // account and model from the signed-in Amp account, and its runner id is
+  // derived from instance_name. Passing any of them is rejected rather than
+  // ignored.
+  string agent = 2;
   string provider = 3;           // zero/opencode/kilo only; "ollama", or a custom provider id
   string model = 4;               // zero/opencode/kilo only
   string workdir = 5;             // empty = provisioner default

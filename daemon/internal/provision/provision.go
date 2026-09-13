@@ -52,8 +52,11 @@ func defaultInstanceName(agent, workdir string) string {
 	if workdir != "" {
 		return filepath.Base(workdir) + "-" + agent
 	}
-	if agent == "claude-code" {
+	switch agent {
+	case "claude-code":
 		return defaultClaudeCodeInstance
+	case "amp":
+		return defaultAmpInstance
 	}
 	return defaultAgentmuxInstance
 }
@@ -77,8 +80,10 @@ func Create(opts Options) (string, error) {
 		return createClaudeCode(opts)
 	case "zero", "opencode", "kilo":
 		return createAgentmux(opts)
+	case "amp":
+		return createAmp(opts)
 	default:
-		return "", fmt.Errorf("unsupported agent %q (want claude-code, zero, opencode, or kilo)", opts.Agent)
+		return "", fmt.Errorf("unsupported agent %q (want claude-code, zero, opencode, kilo, or amp)", opts.Agent)
 	}
 }
 

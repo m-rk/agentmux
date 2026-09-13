@@ -25,6 +25,13 @@ func CapabilitiesForAgent(agent string) Capabilities {
 		return Capabilities{DisplayHostName: true, Provider: true, ProviderAPIKey: true}
 	case "zero", "opencode":
 		return Capabilities{Provider: true}
+	case "amp":
+		// Nothing beyond the common instance/run-user/workdir fields. amp's
+		// headless runner takes its account and model from the signed-in Amp
+		// account, has no provider or API key to configure, and no
+		// resume/compact concept. Its --runner-id is derived from the
+		// instance name (provision.AmpRunnerID), not asked for separately.
+		return Capabilities{}
 	default:
 		return Capabilities{}
 	}
@@ -32,8 +39,11 @@ func CapabilitiesForAgent(agent string) Capabilities {
 
 // DefaultInstance returns the visible instance-name default for an agent.
 func DefaultInstance(agent string) string {
-	if agent == "claude-code" {
+	switch agent {
+	case "claude-code":
 		return "claude-code"
+	case "amp":
+		return "amp"
 	}
 	return "agentmux"
 }
@@ -72,6 +82,7 @@ func NewSelectionForm(hostNames []string, host, agent *string) *huh.Form {
 				huh.NewOption("zero", "zero"),
 				huh.NewOption("opencode", "opencode"),
 				huh.NewOption("kilo", "kilo"),
+				huh.NewOption("amp", "amp"),
 			).
 			Value(agent),
 	))

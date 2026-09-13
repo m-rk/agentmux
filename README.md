@@ -3,7 +3,8 @@
 Agents that are remote controlled, persistent, redundant and self-maintained.
 
 The idea: coding-agent CLIs (Claude Code, [Kilo](https://kilo.ai),
-[opencode](https://opencode.ai), [Zero](https://github.com/Gitlawb/zero), and
+[opencode](https://opencode.ai), [Zero](https://github.com/Gitlawb/zero),
+[Amp](https://ampcode.com), and
 whatever comes next) are most useful when there's always a live session you
 can drop into from anywhere — not just while a terminal happens to be open.
 agentmux keeps one running per instance, brings it back after a reboot, and
@@ -50,9 +51,14 @@ for `zero`, `opencode`, and `kilo` today is Ollama; provider and model remain
 separate parts of an instance rather than defining the backend itself.
 
 - **One binary, no installer scripts** — `agentmux new` provisions
-  `claude-code`, `zero`, `opencode`, and `kilo` instances end to end (registry
-  file, systemd unit/LaunchAgent, tmux session) on Linux or macOS.
+  `claude-code`, `zero`, `opencode`, `kilo`, and `amp` instances end to end
+  (registry file, systemd unit/LaunchAgent, tmux session) on Linux or macOS.
   `agentmux new -y ...` does the same non-interactively, for scripting.
+  An `amp` instance runs Amp's headless runner (`amp --no-tui --runner-id
+  <id> --remote-control-terminal`) so threads created at ampcode.com land in
+  this checkout; its runner id is derived from the instance name, and it
+  takes no provider/model flags — Amp supplies those from the account the
+  host is signed in to (`amp login`).
 - **Multi-host** — list other machines in `~/.config/agentmux/hosts.yaml`
   (e.g. reachable over Tailscale) and the TUI dials all of them at once,
   merged into one table.

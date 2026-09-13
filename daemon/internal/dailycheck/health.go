@@ -110,6 +110,15 @@ func coreHealthIssues(instance *pb.Instance, snapshot Snapshot) []HealthIssue {
 		} else if !session.KiloPaneRemoteConnected(snapshot.Pane) {
 			issues = append(issues, issue("remote-disconnected", "Kilo remote relay is not connected", "the Remote footer indicator is absent"))
 		}
+	case "amp":
+		// Only one check, deliberately: amp's headless runner exposes no
+		// connected/disconnected indicator to scrape (see the
+		// AmpPaneRemoteConnected comment in session/amp.go), so the single
+		// thing a pane capture can actually prove is that the CLI is stuck on
+		// its interactive login flow and will never register the runner.
+		if session.AmpPaneAwaitingLogin(snapshot.Pane) {
+			issues = append(issues, issue("auth-required", "amp is waiting at its interactive login prompt", "the runner has no stored API key; run `amp login` as the instance's run user, then restart the instance"))
+		}
 	}
 	return issues
 }

@@ -42,6 +42,9 @@ func syncCollaboration(name string) error {
 	}
 
 	agent := agentOf(fields)
+	if !collaborationSupported(agent) {
+		return nil
+	}
 	host := fields["AGENTMUX_HOST_NAME"]
 	if host == "" {
 		host = provision.DefaultHostName()
@@ -138,6 +141,22 @@ func syncCollaboration(name string) error {
 	return collab.SaveState(collab.StatePath(home, name), delivery.State)
 }
 
+// collaborationSupported reports whether an agent has an interactive pane a
+// Discord digest could be delivered into at all. Everything except amp does:
+// claude-code, zero, opencode and kilo all run a TUI whose input line
+// send-keys can type a prompt into.
+//
+// amp is the exception because agentmux launches it with --no-tui — a
+// headless runner that serves remotely created threads and never renders a
+// prompt. Text sent to that pane would land on the runner process's stdin as
+// noise, so there is no version of this that works, and no pane state that
+// would make it work later. Checked here as well as in
+// collaborationPaneSafe so an amp instance doesn't poll Discord on every
+// five-minute tick for a delivery that can never happen.
+func collaborationSupported(agent string) bool {
+	return agent != "amp"
+}
+
 func collaborationPaneSafe(agent, pane string) bool {
 	if strings.TrimSpace(pane) == "" {
 		return false
@@ -151,6 +170,11 @@ func collaborationPaneSafe(agent, pane string) bool {
 		if !KiloPaneReady(pane) {
 			return false
 		}
+	case "amp":
+		// Unconditional, unlike the readiness gates above: see
+		// collaborationSupported. No amp pane is ever a safe delivery target,
+		// however idle and dialog-free it looks.
+		return false
 	}
 	lines := strings.Split(strings.TrimRight(pane, "\n"), "\n")
 	if len(lines) > 14 {

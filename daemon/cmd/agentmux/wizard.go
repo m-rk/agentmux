@@ -34,7 +34,7 @@ func runWizard(args []string) {
 	nonInteractive := fs.Bool("y", false, "skip the interactive form; create directly from the flags below")
 	host := fs.String("host", "local", "device to create the instance on (a name from hosts.yaml, or \"local\"); -y only")
 	instance := fs.String("instance", "", "instance name; -y only")
-	agent := fs.String("agent", "", "claude-code | zero | opencode | kilo; -y only")
+	agent := fs.String("agent", "", "claude-code | zero | opencode | kilo | amp; -y only")
 	hostName := fs.String("host-name", "", "claude-code/kilo display hostname; blank = derive from the target device; -y only")
 	provider := fs.String("provider", "", "zero/opencode/kilo only; \"ollama\" or a custom provider id; -y only")
 	model := fs.String("model", "", "zero/opencode/kilo only; -y only")
