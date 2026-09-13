@@ -145,7 +145,7 @@ func TestAmpPaneAwaitingLogin(t *testing.T) {
 	// (amp 0.0.1789300838-gde32db).
 	awaiting := []string{
 		"No API key found. Starting login flow...\nWould you like to log in to Amp? [(y)es, (n)o]: ",
-		"No API key found. Starting login flow...\nTo log in, visit:\n\nhttps://auth.ampcode.com/device?user_code=DPFX-VRKF\n\nWaiting for confirmation in the browser...",
+		"No API key found. Starting login flow...\nTo log in, visit:\n\nhttps://auth.ampcode.com/device?user_code=AAAA-BBBB\n\nWaiting for confirmation in the browser...",
 		"No API key found. Starting login flow...\nWould you like to log in to Amp? [(y)es, (n)o]: n\nLogin cancelled. Run the command again to retry.",
 	}
 	for _, pane := range awaiting {
