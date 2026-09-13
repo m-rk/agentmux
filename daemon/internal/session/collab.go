@@ -84,10 +84,9 @@ func syncCollaboration(name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), collabSyncTimeout)
 	defer cancel()
 	delivery, err := collab.BuildDelivery(ctx, collab.NewClient(cfg.Collaboration), collab.SyncOptions{
-		Identity:   identity,
-		Project:    project,
-		SessionKey: strings.TrimSpace(string(sessionKeyBytes)),
-		StatePath:  collab.StatePath(home, name),
+		Identity:  identity,
+		Project:   project,
+		StatePath: collab.StatePath(home, name),
 	})
 	if err != nil {
 		return err

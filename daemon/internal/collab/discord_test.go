@@ -131,10 +131,9 @@ func TestBuildDeliveryRoutingAndCursors(t *testing.T) {
 
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	opts := SyncOptions{
-		Identity:   Identity{Instance: "kilo", Host: "host"},
-		Project:    "github.com/m-rk/agentmux",
-		SessionKey: "session-1",
-		StatePath:  statePath,
+		Identity:  Identity{Instance: "kilo", Host: "host"},
+		Project:   "github.com/m-rk/agentmux",
+		StatePath: statePath,
 	}
 	delivery, err := BuildDelivery(context.Background(), testClient(server.URL), opts)
 	if err != nil {

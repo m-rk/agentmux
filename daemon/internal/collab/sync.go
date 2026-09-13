@@ -15,10 +15,9 @@ const (
 )
 
 type SyncOptions struct {
-	Identity   Identity
-	Project    string
-	SessionKey string
-	StatePath  string
+	Identity  Identity
+	Project   string
+	StatePath string
 }
 
 // Delivery is a pending, transactional update. Callers save State only after
@@ -44,10 +43,10 @@ func BuildDelivery(ctx context.Context, client *Client, opts SyncOptions) (Deliv
 		return Delivery{}, err
 	}
 	initial := len(state.LastSeen) == 0
-	onboarding := opts.SessionKey != "" && opts.SessionKey != state.SessionKey
-	next := State{SessionKey: state.SessionKey, LastSeen: cloneCursors(state.LastSeen), UpdatedAt: state.UpdatedAt}
-	if opts.SessionKey != "" {
-		next.SessionKey = opts.SessionKey
+	onboarding := !state.Onboarded
+	next := State{Onboarded: state.Onboarded, LastSeen: cloneCursors(state.LastSeen), UpdatedAt: state.UpdatedAt}
+	if onboarding {
+		next.Onboarded = true
 	}
 
 	threads, err := client.ListRelevantThreads(ctx, opts.Project)
@@ -164,7 +163,11 @@ func buildPrompt(opts SyncOptions, onboarding bool, items []digestItem) string {
 			}
 		}
 	}
-	b.WriteString("Reminder: " + safety + "\n")
+	// The safety sentence appears once, up top — not repeated as a
+	// trailing "Reminder," which would be the first thing lost if
+	// truncateRunes below has to cut this digest down: it truncates from
+	// the end, so anything meant to survive truncation belongs at the
+	// start, not the end.
 	return truncateRunes(b.String(), maxPromptRunes)
 }
 

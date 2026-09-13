@@ -8,7 +8,7 @@ import (
 
 func TestStateRoundTripAndPermissions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "state.json")
-	want := State{SessionKey: "123", LastSeen: map[string]string{"thread": "456"}}
+	want := State{Onboarded: true, LastSeen: map[string]string{"thread": "456"}}
 	if err := SaveState(path, want); err != nil {
 		t.Fatal(err)
 	}
@@ -16,7 +16,7 @@ func TestStateRoundTripAndPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.SessionKey != want.SessionKey || got.LastSeen["thread"] != "456" {
+	if got.Onboarded != want.Onboarded || got.LastSeen["thread"] != "456" {
 		t.Fatalf("state = %#v", got)
 	}
 	info, err := os.Stat(path)

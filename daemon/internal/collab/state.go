@@ -13,9 +13,15 @@ import (
 // lives outside the instance registry: cursors are runtime state, not
 // provisioning configuration.
 type State struct {
-	SessionKey string            `json:"session_key,omitempty"`
-	LastSeen   map[string]string `json:"last_seen,omitempty"`
-	UpdatedAt  time.Time         `json:"updated_at,omitempty"`
+	// Onboarded marks whether this instance has ever been sent the
+	// collaboration-commands paragraph. Deliberately not tied to the tmux
+	// session's identity: a restart (nightly compact-and-restart included)
+	// changes that identity but doesn't make an established instance new
+	// again, so onboarding fires once per instance's lifetime, not once
+	// per restart.
+	Onboarded bool              `json:"onboarded,omitempty"`
+	LastSeen  map[string]string `json:"last_seen,omitempty"`
+	UpdatedAt time.Time         `json:"updated_at,omitempty"`
 }
 
 func StatePath(home, instance string) string {
