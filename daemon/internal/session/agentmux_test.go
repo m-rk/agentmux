@@ -143,6 +143,74 @@ func TestWriteOpencodeConfigPreservesHandAddedModels(t *testing.T) {
 	}
 }
 
+// TestConfigureAgentIfChangedPreservesInAppModelSwitch guards against the
+// bug this session diagnosed live: RunAgentmux used to call
+// configureAgent unconditionally on every restart, so switching models
+// inside the running opencode session (which rewrites the same
+// opencode.json) got silently reverted back to the registry's configured
+// default the moment the instance next restarted.
+func TestConfigureAgentIfChangedPreservesInAppModelSwitch(t *testing.T) {
+	dir := withEnvDir(t)
+	if err := os.WriteFile(filepath.Join(dir, "probe.env"), []byte("AGENTMUX_INSTANCE_NAME=probe\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	workdir := t.TempDir()
+	path := filepath.Join(workdir, "opencode.json")
+
+	fields := map[string]string{}
+	if err := configureAgentIfChanged("probe", fields, "opencode", "ken", "glm-5.2", "https://token.tan.gl/v1", "", workdir); err != nil {
+		t.Fatalf("initial configureAgentIfChanged: %v", err)
+	}
+	fields, err := registry("probe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fields["AGENTMUX_LAST_CONFIG_HASH"] == "" {
+		t.Fatal("configureAgentIfChanged did not record AGENTMUX_LAST_CONFIG_HASH after its first write")
+	}
+
+	// Simulate the running agent's own in-app model switch: it rewrites the
+	// same file's top-level "model" field directly.
+	if err := os.WriteFile(path, []byte(`{"model":"ken/MiniMax-M3","provider":{"ken":{"models":{"glm-5.2":{"name":"glm-5.2"}}}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Same registry fields, same provider/model args as before (the ordinary
+	// restart case) -- must NOT stomp the in-app switch back to glm-5.2.
+	if err := configureAgentIfChanged("probe", fields, "opencode", "ken", "glm-5.2", "https://token.tan.gl/v1", "", workdir); err != nil {
+		t.Fatalf("second configureAgentIfChanged: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Model != "ken/MiniMax-M3" {
+		t.Fatalf("configureAgentIfChanged stomped the in-app model switch: model = %q, want ken/MiniMax-M3 preserved", doc.Model)
+	}
+
+	// Now simulate an explicit `agentmux new -y -model ...`: the registry's
+	// own model field changes, so the next restart SHOULD apply it.
+	if err := configureAgentIfChanged("probe", fields, "opencode", "ken", "MiniMax-M3", "https://token.tan.gl/v1", "", workdir); err != nil {
+		t.Fatalf("third configureAgentIfChanged: %v", err)
+	}
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Model != "ken/MiniMax-M3" {
+		t.Fatalf("configureAgentIfChanged did not apply an explicit registry model change: model = %q, want ken/MiniMax-M3", doc.Model)
+	}
+}
+
 func TestLatestKiloSessionIDUsesProvidedEnv(t *testing.T) {
 	workdir := t.TempDir()
 	dataHome := filepath.Join(t.TempDir(), "isolated-data")

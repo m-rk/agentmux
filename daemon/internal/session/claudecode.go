@@ -237,6 +237,34 @@ func dismissClaudeRemoteMenuIfOpen(tmux func(args ...string) *exec.Cmd, socket, 
 	return true, nil
 }
 
+// claudeTrustDialogIndicator is the distinctive prompt text on Claude
+// Code's workspace-trust confirmation screen ("Do you trust the files in
+// this folder?"), shown on the very first launch against a workdir the
+// trust store (~/.claude.json's per-project hasTrustDialogAccepted) doesn't
+// yet recognize — e.g. right after the workdir is renamed/moved, which
+// changes its key in that store even though nothing about the project
+// itself changed. Unlike claudeRemoteMenuFooter this isn't confined to the
+// footer, so the check below scans the whole pane rather than a bounded
+// window.
+const claudeTrustDialogIndicator = "Is this a project you created or one you trust?"
+
+// claudeTrustDialogOpen reports whether session's pane is sitting on the
+// workspace-trust screen. See ensureClaudeRemoteControl's use of this: that
+// screen is a selection menu defaulted to "No, exit", not a running Claude
+// Code session, so blindly sending the reconnect keystrokes into it (as
+// happened before this check existed) submits Enter on that default and
+// kills the process outright — confirmed live as the actual cause of an
+// instance repeatedly, silently dying seconds after every restart with no
+// error, right after a workdir rename left it looking "dead" for reasons
+// that had nothing to do with Remote Control at all.
+func claudeTrustDialogOpen(tmux func(args ...string) *exec.Cmd, socket, session string) bool {
+	out, err := tmux("-L", socket, "capture-pane", "-p", "-t", session).Output()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), claudeTrustDialogIndicator)
+}
+
 func lastPaneLines(tmux func(args ...string) *exec.Cmd, socket, session string, count int) string {
 	if count <= 0 {
 		return ""
@@ -279,6 +307,48 @@ func lastPaneLines(tmux func(args ...string) *exec.Cmd, socket, session string, 
 // isn't reliable enough to fail the tick over.
 var errRemoteControlUnconfirmed = errors.New("remote control reconnect unconfirmed")
 
+// errClaudeTrustDialogOpen marks ensureClaudeRemoteControl's refusal to type
+// into a pane sitting on the workspace-trust screen — see
+// claudeTrustDialogOpen's doc comment for why sending keystrokes there is
+// actively dangerous rather than merely unhelpful.
+var errClaudeTrustDialogOpen = errors.New("claude workspace trust dialog is open")
+
+// claudeTrustDialogNotifyField debounces the Discord notification in
+// handleClaudeTrustDialog so a still-open trust dialog doesn't re-notify on
+// every few-minute tick, and gets cleared once the dialog is resolved so a
+// future occurrence notifies again instead of staying silenced forever —
+// mirroring ensureClaudeAuthNotified's own debounce fields below.
+const claudeTrustDialogNotifyField = "AGENTMUX_TRUST_DIALOG_NOTIFIED"
+
+// handleClaudeTrustDialog reports whether session's pane is on the
+// workspace-trust screen and, the first time it sees this for name, sends a
+// Discord notification if one is configured: unlike errRemoteControlUnconfirmed,
+// this genuinely blocks the instance until a human accepts the prompt once,
+// so it's worth surfacing rather than silently retrying forever.
+func handleClaudeTrustDialog(tmux func(args ...string) *exec.Cmd, name, socket, session string) bool {
+	open := claudeTrustDialogOpen(tmux, socket, session)
+	fields, err := registry(name)
+	if err != nil {
+		return open
+	}
+	notified := fields[claudeTrustDialogNotifyField] == "true"
+	switch {
+	case open && !notified:
+		cfg, cfgErr := discordnotify.Load(discordnotify.DefaultPath())
+		if cfgErr == nil && cfg.WebhookURL != "" {
+			msg := fmt.Sprintf("🟡 %s: stuck on Claude Code's workspace-trust prompt (often follows a workdir rename) — accept it once interactively (run `claude` in that workdir) to unblock.", session)
+			if sendErr := discordnotify.Send(cfg.WebhookURL, msg); sendErr != nil {
+				fmt.Printf("warning: sending Discord notification for %s: %v\n", name, sendErr)
+			} else {
+				_ = SetRegistryField(name, claudeTrustDialogNotifyField, "true")
+			}
+		}
+	case !open && notified:
+		_ = SetRegistryField(name, claudeTrustDialogNotifyField, "false")
+	}
+	return open
+}
+
 func ensureClaudeRemoteControl(tmux func(args ...string) *exec.Cmd, name, socket, session string) error {
 	if claudeRemoteConnected(tmux, socket, session) {
 		return nil
@@ -292,6 +362,9 @@ func ensureClaudeRemoteControl(tmux func(args ...string) *exec.Cmd, name, socket
 	// tick rather than risk our keystrokes landing in its still-unsubmitted
 	// input line — the next tick, a few minutes away, retries.
 	_, err = withTmuxInputLock(home, nil, name, false, func() error {
+		if handleClaudeTrustDialog(tmux, name, socket, session) {
+			return errClaudeTrustDialogOpen
+		}
 		if dismissed, dismissErr := dismissClaudeRemoteMenuIfOpen(tmux, socket, session); dismissErr != nil {
 			return dismissErr
 		} else if dismissed {
@@ -337,6 +410,13 @@ func ensureClaudeRemoteControl(tmux func(args ...string) *exec.Cmd, name, socket
 		// -- see errRemoteControlUnconfirmed's doc comment for why this
 		// specific case can't be trusted as a real signal.
 		fmt.Printf("warning: %s: remote control still not connected after toggling (detection is unreliable for long-scrolled sessions, not treated as a failure)\n", session)
+		return nil
+	}
+	if errors.Is(err, errClaudeTrustDialogOpen) {
+		// Also not a tick failure -- see errClaudeTrustDialogOpen's doc
+		// comment. Loud on purpose: unlike the case above, this one genuinely
+		// blocks the instance until a human accepts the prompt.
+		fmt.Printf("warning: %s: workspace trust dialog is open, refusing to send Remote Control keystrokes into it (would select the default \"No, exit\" and kill the session); accept the prompt once interactively to unblock\n", session)
 		return nil
 	}
 	return err

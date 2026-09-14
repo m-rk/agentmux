@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -78,7 +80,7 @@ func RunAgentmux(name string) error {
 	if err := waitForProvider(provider, waitSeconds); err != nil {
 		return err
 	}
-	if err := configureAgent(agent, provider, model, baseURL, apiKeyEnv, workdir); err != nil {
+	if err := configureAgentIfChanged(name, fields, agent, provider, model, baseURL, apiKeyEnv, workdir); err != nil {
 		return err
 	}
 
@@ -472,6 +474,60 @@ func configureAgent(agent, provider, model, baseURL, apiKeyEnv, workdir string) 
 	default:
 		return fmt.Errorf("unsupported agent: %s", agent)
 	}
+}
+
+// configPath returns the project-level config file configureAgent writes
+// for agent, or "" for an agent with no such file.
+func configPath(agent, workdir string) string {
+	switch agent {
+	case "opencode":
+		return filepath.Join(workdir, "opencode.json")
+	case "kilo":
+		return filepath.Join(workdir, "kilo.json")
+	case "zero":
+		return filepath.Join(workdir, ".zero", "config.json")
+	default:
+		return ""
+	}
+}
+
+// configHash fingerprints the registry fields that drive a generated
+// opencode.json/kilo.json/zero config, so configureAgentIfChanged can tell
+// "the user explicitly changed this instance's provider/model" (via
+// `agentmux new -y`, which changes the registry) apart from "the running
+// agent's own in-app model switcher just edited this same file" — the
+// latter must survive an ordinary restart instead of being stomped back to
+// the registry's default on every tick.
+func configHash(provider, model, baseURL, apiKeyEnv string) string {
+	h := fnv.New64a()
+	for _, s := range []string{provider, model, baseURL, apiKeyEnv} {
+		io.WriteString(h, s)
+		h.Write([]byte{0})
+	}
+	return strconv.FormatUint(h.Sum64(), 36)
+}
+
+// configureAgentIfChanged writes agent's project config only when it's
+// missing or the registry's provider/model/baseURL/apiKeyEnv fields have
+// changed since the last write (tracked via AGENTMUX_LAST_CONFIG_HASH).
+// Before this, RunAgentmux unconditionally regenerated the config file on
+// every single start/restart (including the periodic update tick), which
+// silently discarded any model switch made live inside the running
+// opencode/kilo session the moment the instance next restarted — confirmed
+// live: selecting a different model in-app, then hitting an ordinary
+// restart, always reverted to the registry's configured default.
+func configureAgentIfChanged(name string, fields map[string]string, agent, provider, model, baseURL, apiKeyEnv, workdir string) error {
+	hash := configHash(provider, model, baseURL, apiKeyEnv)
+	path := configPath(agent, workdir)
+	if path != "" && fields["AGENTMUX_LAST_CONFIG_HASH"] == hash {
+		if _, err := os.Stat(path); err == nil {
+			return nil
+		}
+	}
+	if err := configureAgent(agent, provider, model, baseURL, apiKeyEnv, workdir); err != nil {
+		return err
+	}
+	return SetRegistryField(name, "AGENTMUX_LAST_CONFIG_HASH", hash)
 }
 
 func launchCommand(agent string) (string, error) {

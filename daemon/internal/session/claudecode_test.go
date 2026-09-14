@@ -1,7 +1,9 @@
 package session
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 )
 
@@ -106,6 +108,74 @@ auto mode hint
 				t.Errorf("claudeRemoteMenuOpen(%q) = %v, want %v", tc.pane, got, tc.want)
 			}
 		})
+	}
+}
+
+// trustDialogPane is a real capture of Claude Code's workspace-trust screen
+// (from a workdir the trust store didn't recognize after a rename), used
+// below to confirm the detector and its caller's refusal to type into it.
+const trustDialogPane = `
+ Accessing workspace:
+
+ /Users/mark/hostel-harley-mini
+
+ Quick safety check: Is this a project you created or one you trust? (Like your
+ own code, a well-known open source project, or work from your team). If not,
+ take a moment to review what's in this folder first.
+
+ Claude Code'll be able to read, edit, and execute files here.
+
+ Security guide
+
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel
+`
+
+func TestClaudeTrustDialogOpen(t *testing.T) {
+	cases := []struct {
+		name string
+		pane string
+		want bool
+	}{
+		{"trust dialog open", trustDialogPane, true},
+		{"connected, no dialog", "workdir /rc\n", false},
+		{"remote control menu, not trust dialog", "   Enter to select · Esc to continue\n", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmux := fakeTmuxCapture(tc.pane, nil)
+			if got := claudeTrustDialogOpen(tmux, "sock", "sess"); got != tc.want {
+				t.Errorf("claudeTrustDialogOpen(%q) = %v, want %v", tc.pane, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEnsureClaudeRemoteControlRefusesTrustDialog guards against the actual
+// bug this session diagnosed live: a workdir rename left Claude Code
+// showing its workspace-trust screen (defaulted to "No, exit") instead of a
+// running session, and ensureClaudeRemoteControl blindly sent
+// "/remote-control" + Enter into it on every periodic tick — submitting
+// that default and killing the process seconds after every restart, with
+// no error anywhere. It must instead recognize the dialog and send nothing.
+func TestEnsureClaudeRemoteControlRefusesTrustDialog(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := withEnvDir(t)
+	if err := os.WriteFile(filepath.Join(dir, "probe.env"), []byte("AGENTMUX_INSTANCE_NAME=probe\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var sent []string
+	tmux := fakeTmuxCapture(trustDialogPane, &sent)
+
+	if err := ensureClaudeRemoteControl(tmux, "probe", "sock", "sess"); err != nil {
+		t.Fatalf("ensureClaudeRemoteControl on a trust-dialog pane: %v, want nil (skipped, not a failure)", err)
+	}
+	if len(sent) != 0 {
+		t.Fatalf("ensureClaudeRemoteControl sent keystrokes into an open trust dialog: %v -- this would confirm its default \"No, exit\" and kill the session", sent)
 	}
 }
 
