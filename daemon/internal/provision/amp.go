@@ -126,6 +126,40 @@ func ampAuthProblemVia(cmd *exec.Cmd) string {
 	return fmt.Sprintf("could not confirm amp's login state (`amp usage` failed: %v: %s)", err, firstLine(string(out), 200))
 }
 
+// ampInstallPackageProblemVia reports "" when amp is installed in a way its
+// own self-updater can maintain, or a description of the problem otherwise.
+//
+// `amp update`'s self-updater always runs `npm install -g @ampcode/cli@...`
+// (confirmed via `npm view @sourcegraph/amp dependencies`: @sourcegraph/amp
+// is a thin wrapper whose only dependency is @ampcode/cli, the package amp
+// actually manages). A host where amp was installed the seemingly obvious
+// way — `npm install -g @sourcegraph/amp` directly — ends up with its `amp`
+// bin symlink owned by the wrong top-level package, so every self-update
+// EEXIST's trying to reclaim that symlink under @ampcode/cli's name.
+// Confirmed live on mproject2000: two amp instances' update units both
+// failed with an identical EEXIST on every single run — not a race, since it
+// reproduced run after run even one at a time — until `npm uninstall -g
+// @sourcegraph/amp && npm install -g @ampcode/cli@latest` made the installed
+// package match what `amp update` itself manages. Checked at provisioning
+// time (like ampAuthProblemVia) so a host gets a clear, actionable error up
+// front instead of a permanently broken nightly update discovered later via
+// the doctor.
+//
+// cmd is `npm ls -g @sourcegraph/amp --depth=0`, which exits 0 (with the
+// package in its output) when that package is present and non-zero
+// otherwise — confirmed live in both states. A failure to even run npm
+// (missing binary, etc.) is treated as "could not confirm" rather than
+// "problem", the same fail-open posture ampAuthProblemVia takes for an
+// unrecognized amp failure: this check exists to catch one specific known
+// misinstall, not to gate provisioning on npm's general availability.
+func ampInstallPackageProblemVia(cmd *exec.Cmd) string {
+	_, err := cmd.CombinedOutput()
+	if err == nil {
+		return "amp is installed via the @sourcegraph/amp npm package, which amp's own self-updater does not manage (it always installs @ampcode/cli) — every `amp update` will EEXIST on the amp bin symlink forever; fix with: npm uninstall -g @sourcegraph/amp && npm install -g @ampcode/cli@latest"
+	}
+	return ""
+}
+
 // firstLine reduces a command's output to a single, length-capped line so an
 // error message stays readable in a systemd journal and can't smuggle
 // newlines into a multi-line report.

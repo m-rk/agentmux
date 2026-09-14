@@ -122,6 +122,9 @@ func createAmp(opts Options) (string, error) {
 	if err := checkAgentInstalledCurrentUser("amp"); err != nil {
 		return "", err
 	}
+	if problem := ampInstallPackageProblem(); problem != "" {
+		return "", fmt.Errorf("%s", problem)
+	}
 	if problem := ampAuthProblem(); problem != "" {
 		return "", fmt.Errorf("%s; run 'amp login', then retry", problem)
 	}
@@ -178,6 +181,13 @@ func createAmp(opts Options) (string, error) {
 // the shared parsing.
 func ampAuthProblem() string {
 	return ampAuthProblemVia(runas.CurrentUserCommand("amp", "usage"))
+}
+
+// ampInstallPackageProblem checks the npm-global install as the current
+// user, mirroring ampAuthProblem; see ampInstallPackageProblemVia for the
+// shared check.
+func ampInstallPackageProblem() string {
+	return ampInstallPackageProblemVia(runas.CurrentUserCommand("npm", "ls", "-g", "@sourcegraph/amp", "--depth=0"))
 }
 
 func installAmpAgents(name, label, updateLabel, binPath string) error {

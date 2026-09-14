@@ -239,3 +239,52 @@ func TestAmpUsageHelperProcess(t *testing.T) {
 	}
 	os.Exit(0)
 }
+
+// npmLsProbe builds an *exec.Cmd that replays a canned exit status,
+// standing in for the real `npm ls -g @sourcegraph/amp --depth=0` call each
+// platform wires up.
+func npmLsProbe(t *testing.T, exitCode int) *exec.Cmd {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestNpmLsHelperProcess$")
+	cmd.Env = append(os.Environ(),
+		"GO_WANT_NPM_LS_HELPER=1",
+		"GO_NPM_LS_EXIT="+strconv.Itoa(exitCode),
+	)
+	return cmd
+}
+
+// TestAmpInstallPackageProblemVia guards against the mproject2000 incident:
+// amp provisioned via `npm install -g @sourcegraph/amp` (the seemingly
+// obvious package name) instead of @ampcode/cli, the package amp's own
+// self-updater actually manages, so every `amp update` EEXIST'd on the amp
+// bin symlink forever — not a race, confirmed to reproduce run after run
+// even one at a time. See ampInstallPackageProblemVia's doc comment.
+func TestAmpInstallPackageProblemVia(t *testing.T) {
+	// @sourcegraph/amp present: `npm ls -g @sourcegraph/amp --depth=0`
+	// exits 0 — this is the broken install.
+	problem := ampInstallPackageProblemVia(npmLsProbe(t, 0))
+	if problem == "" {
+		t.Fatal("ampInstallPackageProblemVia with @sourcegraph/amp installed = \"\", want a problem")
+	}
+	if !strings.Contains(problem, "@sourcegraph/amp") || !strings.Contains(problem, "@ampcode/cli") {
+		t.Errorf("ampInstallPackageProblemVia = %q, want it to name both packages and the fix", problem)
+	}
+
+	// @sourcegraph/amp absent: `npm ls -g @sourcegraph/amp --depth=0` exits
+	// non-zero — this is the healthy install (amp installed via
+	// @ampcode/cli directly, or not installed at all, which
+	// checkAgentInstalled already gates separately).
+	if problem := ampInstallPackageProblemVia(npmLsProbe(t, 1)); problem != "" {
+		t.Errorf("ampInstallPackageProblemVia with @sourcegraph/amp absent = %q, want \"\"", problem)
+	}
+}
+
+func TestNpmLsHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_NPM_LS_HELPER") != "1" {
+		return
+	}
+	if os.Getenv("GO_NPM_LS_EXIT") != "0" {
+		os.Exit(1)
+	}
+	os.Exit(0)
+}

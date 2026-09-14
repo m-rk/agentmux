@@ -154,6 +154,9 @@ func createAmp(opts Options) (string, error) {
 	if err := checkAgentInstalled("amp", runUser); err != nil {
 		return "", err
 	}
+	if problem := ampInstallPackageProblem(runUser); problem != "" {
+		return "", fmt.Errorf("%s", problem)
+	}
 	if problem := ampAuthProblem(runUser); problem != "" {
 		return "", fmt.Errorf("%s; run 'amp login' as %s, then retry", problem, runUser)
 	}
@@ -216,6 +219,13 @@ func createAmp(opts Options) (string, error) {
 // provisioner runs as root; see ampAuthProblemVia for the shared parsing.
 func ampAuthProblem(runUser string) string {
 	return ampAuthProblemVia(runas.Command(runUser, "amp", "usage"))
+}
+
+// ampInstallPackageProblem checks the npm-global install by dropping
+// privileges to runUser, since this provisioner runs as root; see
+// ampInstallPackageProblemVia for the shared check.
+func ampInstallPackageProblem(runUser string) string {
+	return ampInstallPackageProblemVia(runas.Command(runUser, "npm", "ls", "-g", "@sourcegraph/amp", "--depth=0"))
 }
 
 func installAmpUnits(name, runnerID, runUser, binPath, serviceName, updateServiceName, timerName, tickServiceName, tickTimerName string) error {
