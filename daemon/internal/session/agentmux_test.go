@@ -211,6 +211,42 @@ func TestConfigureAgentIfChangedPreservesInAppModelSwitch(t *testing.T) {
 	}
 }
 
+// TestConfigureAgentIfChangedDegradesGracefullyOnRegistryPermissionError
+// guards against a fleet-wide incident: a registry file whose ownership
+// didn't allow the tick's own user to write it (root-owned from
+// provisioning, tick running as the instance's run user — see
+// provision.chownRegistryForUser) made SetRegistryField's hash-caching
+// write fail with EACCES. Before this test's fix, that error propagated
+// out of configureAgentIfChanged and failed the whole RunAgentmux tick
+// before it ever reached the hasSession/session-start check below it,
+// taking down every affected instance's actual liveness check over a
+// side-channel write it didn't need. Losing the cached hash must instead
+// be a logged no-op: the agent config still gets written, and the tick
+// still proceeds.
+func TestConfigureAgentIfChangedDegradesGracefullyOnRegistryPermissionError(t *testing.T) {
+	dir := withEnvDir(t)
+	regPath := filepath.Join(dir, "probe.env")
+	if err := os.WriteFile(regPath, []byte("AGENTMUX_INSTANCE_NAME=probe\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	workdir := t.TempDir()
+
+	// Simulate the registry file being unwritable by the current process.
+	if err := os.Chmod(regPath, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(regPath, 0o644) })
+
+	fields := map[string]string{}
+	if err := configureAgentIfChanged("probe", fields, "opencode", "ken", "glm-5.2", "https://token.tan.gl/v1", "", workdir); err != nil {
+		t.Fatalf("configureAgentIfChanged with an unwritable registry file = %v, want nil (must degrade gracefully)", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(workdir, "opencode.json")); err != nil {
+		t.Fatalf("configureAgentIfChanged did not write the agent config despite the registry write failure: %v", err)
+	}
+}
+
 func TestLatestKiloSessionIDUsesProvidedEnv(t *testing.T) {
 	workdir := t.TempDir()
 	dataHome := filepath.Join(t.TempDir(), "isolated-data")

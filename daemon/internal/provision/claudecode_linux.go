@@ -190,6 +190,9 @@ func createClaudeCode(opts Options) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := chownRegistryForUser(name, u); err != nil {
+		return "", err
+	}
 
 	self, err := os.Executable()
 	if err != nil {

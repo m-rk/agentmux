@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -527,7 +528,21 @@ func configureAgentIfChanged(name string, fields map[string]string, agent, provi
 	if err := configureAgent(agent, provider, model, baseURL, apiKeyEnv, workdir); err != nil {
 		return err
 	}
-	return SetRegistryField(name, "AGENTMUX_LAST_CONFIG_HASH", hash)
+	if err := SetRegistryField(name, "AGENTMUX_LAST_CONFIG_HASH", hash); err != nil {
+		// Caching the hash is purely an optimization — skipping it just
+		// means the next tick regenerates an identical config file instead
+		// of a no-op stat. Failing the whole tick over it would be worse:
+		// it would also skip RunAgentmux's hasSession/session-start check
+		// below this call, taking down the instance's actual liveness
+		// check because of a side-channel write it doesn't need. Confirmed
+		// live: a registry file whose ownership didn't yet match its run
+		// user (root-owned from provisioning, tick running as the instance
+		// user) hit exactly this and took out opencode/kilo instances'
+		// ticks fleet-wide — see chownRegistryForUser, which fixes the
+		// ownership at the source; this is the defense-in-depth half.
+		log.Printf("configureAgentIfChanged: caching config hash for %s: %v", name, err)
+	}
+	return nil
 }
 
 func launchCommand(agent string) (string, error) {

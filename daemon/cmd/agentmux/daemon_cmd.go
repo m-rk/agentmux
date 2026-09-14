@@ -14,6 +14,7 @@ import (
 	"github.com/m-rk/agentmux/daemon/internal/daemonserver"
 	"github.com/m-rk/agentmux/daemon/internal/discovery"
 	"github.com/m-rk/agentmux/daemon/internal/pb"
+	"github.com/m-rk/agentmux/daemon/internal/provision"
 )
 
 func runDaemonCmd(args []string) {
@@ -57,6 +58,12 @@ func runDaemon(args []string) {
 	envDir := fs.String("env-dir", discovery.EnvDir, "directory to read instance *.env files from (override for testing without root)")
 	fs.Parse(args)
 	discovery.EnvDir = *envDir
+
+	// One-time self-heal for registry files left root-owned by
+	// provisioning that predates chownRegistryForUser, so hosts that
+	// already existed before that fix shipped don't stay broken — see
+	// registry_owner_linux.go.
+	provision.SelfHealRegistryOwnership()
 
 	if err := os.Remove(*socketPath); err != nil && !os.IsNotExist(err) {
 		log.Fatalf("removing stale socket %s: %v", *socketPath, err)
