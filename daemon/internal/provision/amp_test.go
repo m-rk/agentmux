@@ -42,6 +42,46 @@ func TestAmpRunnerID(t *testing.T) {
 	}
 }
 
+// TestAmpRunnerIDDerivation documents the createAmp derivation: the runner
+// id is the instance name with any trailing -<agent> suffix stripped, so
+// the runner shown on ampcode.com is the clean project name rather than
+// the redundant agentmux-suffixed instance name. The sanitizer itself
+// (AmpRunnerID) is tested above; this asserts the *trim* step the
+// provisioner applies before calling it.
+func TestAmpRunnerIDDerivation(t *testing.T) {
+	cases := []struct {
+		name, agent, instance, want string
+	}{
+		// The default agentmux naming: instance is <workdir>-<agent>; the
+		// redundant agent suffix is dropped for the runner id.
+		{"34-surada-amp", "amp", "34-surada-amp", "34-surada"},
+		{"34-surada-kilo", "kilo", "34-surada-kilo", "34-surada"},
+		// An instance the operator named without the agent suffix: nothing
+		// to strip; the runner id is the instance name itself.
+		{"34-surada", "amp", "34-surada", "34-surada"},
+		// A hand-picked instance name that doesn't end in -<agent>: also
+		// left as-is.
+		{"myproj", "amp", "myproj", "myproj"},
+		// A hand-picked name that *does* end in -amp is treated as the
+		// agentmux-appended suffix and trimmed; documented trade-off.
+		{"myproj-amp", "amp", "myproj-amp", "myproj"},
+		// But a name that merely *contains* -amp is left alone.
+		{"my-amp-project", "amp", "my-amp-project", "my-amp-project"},
+		// A different agent's suffix is NOT stripped — the trim only fires
+		// when the suffix matches the current agent.
+		{"34-surada-kilo", "amp", "34-surada-kilo", "34-surada-kilo"},
+	}
+	for _, tc := range cases {
+		got, err := AmpRunnerID(strings.TrimSuffix(tc.instance, "-"+tc.agent))
+		if err != nil {
+			t.Errorf("derive(name=%q agent=%q) = error %v, want %q", tc.instance, tc.agent, err, tc.want)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("derive(name=%q agent=%q) = %q, want %q", tc.instance, tc.agent, got, tc.want)
+		}
+	}
+}
 // TestAmpRunnerIDIsIdempotent is what lets ampRunnerIDFor push a registry
 // value it didn't compute through the same function without having to tell
 // "already sanitized" apart from "needs sanitizing".

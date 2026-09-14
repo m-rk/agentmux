@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 
 	"github.com/m-rk/agentmux/daemon/internal/runas"
 )
@@ -116,11 +117,13 @@ func createAmp(opts Options) (string, error) {
 		return "", err
 	}
 
-	// The runner ID is the instance name, sanitized into a valid hostname.
+	// The runner ID is the instance name with any trailing -<agent> suffix
+	// stripped (so the runner on ampcode.com is the clean project name, not
+	// the agentmux-suffixed instance name), sanitized into a valid hostname.
 	// Computed (and stored) once here rather than re-derived on every
 	// session run so a future change to the sanitizer can never silently
 	// re-register a long-lived instance under a different runner ID.
-	runnerID, err := AmpRunnerID(name)
+	runnerID, err := AmpRunnerID(strings.TrimSuffix(name, "-"+opts.Agent))
 	if err != nil {
 		return "", err
 	}

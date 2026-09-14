@@ -4,6 +4,14 @@ Guidance for a coding agent (e.g. a Claude Code instance) either developing
 this repo or *operating* a live agentmux deployment — managing instances on
 a host where `agentmuxd` is running.
 
+## This host is `harley-mini`
+
+When the user says "this host" / "the local box" / `harley-mini`, they mean
+the same machine — there is no remote hop. `~/.ssh/id_ed25519_harley-mini` is
+this host's identity. The `local` entry in `~/.config/agentmux/hosts.yaml`
+IS harley-mini; do not try to SSH to it, and treat any reference to
+"harley-mini" as a request to operate the local daemon, not a remote one.
+
 ## Prefer the CLI over the TUI or raw tmux
 
 `agentmux`'s default UI is an interactive TUI (`agentmux` with no args) built

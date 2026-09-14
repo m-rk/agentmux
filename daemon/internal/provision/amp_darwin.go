@@ -7,6 +7,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/m-rk/agentmux/daemon/internal/runas"
 )
@@ -99,7 +100,7 @@ func createAmp(opts Options) (string, error) {
 		return "", err
 	}
 
-	runnerID, err := AmpRunnerID(name)
+	runnerID, err := AmpRunnerID(strings.TrimSuffix(name, "-"+opts.Agent))
 	if err != nil {
 		return "", err
 	}
