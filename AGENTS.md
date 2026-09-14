@@ -105,16 +105,35 @@ names so no local or private details can reach a public artifact.
   system `protoc` (even a 2017-era 3.5.0) is fine, only the version comment
   in the generated header differs.
 - Build/test from `daemon/`: `go build ./...`, `go test ./...`.
-- Deploying a locally built binary to this host:
-  `go build -o agentmux ./cmd/agentmux && sudo ./agentmux daemon install &&
-  sudo systemctl restart agentmuxd.service` — `daemon install` alone does
-  *not* restart an already-running daemon, the explicit restart is required.
-  Restarting `agentmuxd` is safe to do at will: it doesn't touch the
-  independently-managed per-instance tmux sessions/systemd units, only the
-  supervising daemon process itself (confirm with
-  `systemctl show agentmuxd.service -p KillMode,Type` — expect
-  `Type=simple`, `KillMode=control-group` — and `ps --ppid <daemon-pid>`
-  showing no children, if in doubt).
+- Deploying a locally built binary. `agentmux daemon install` does most
+  of the work: it copies itself (atomically, via temp+rename — which is
+  what sidesteps macOS's codesign SIGKILL when overwriting a running
+  binary in place) to a stable path, writes the unit/plist, and starts
+  the service. The sudo split below is enforced by `daemon install`
+  itself: it returns an error if run as root on macOS, and if not run
+  as root on Linux. Run from `daemon/`:
+
+  Linux (host-scoped systemd unit under `/etc/systemd/system`):
+  ```sh
+  go build -o agentmux ./cmd/agentmux
+  sudo ./agentmux daemon install
+  # only on upgrade — install's `enable --now` does not pick up the
+  # replaced binary on its own
+  sudo systemctl restart agentmuxd.service
+  ```
+
+  macOS (per-user LaunchAgent under `~/Library/LaunchAgents`; this host,
+  `harley-mini`, is macOS — do not prefix with sudo). Install does
+  `launchctl kickstart -k` itself, which restarts the running daemon on
+  upgrade:
+  ```sh
+  go build -o agentmux ./cmd/agentmux
+  ./agentmux daemon install
+  ```
+
+  Restarting `agentmuxd` is safe to do at will — it doesn't touch the
+  independently-managed per-instance tmux sessions (or, on Linux, the
+  per-instance systemd units) — only the supervising daemon process.
 - Kilo instances can isolate their data and state directories, but existing
   instances require an explicit, one-at-a-time migration. Follow
   [`docs/kilo-xdg-isolation.md`](docs/kilo-xdg-isolation.md); never create the
