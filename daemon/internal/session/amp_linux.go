@@ -20,6 +20,17 @@ import (
 // the npm route would be wrong for a curl-installed amp. The unrepairable-
 // install failure mode is still real; it surfaces as the explicit error
 // below rather than being silently papered over.
+//
+// `amp update` itself shells out through npm when amp was installed via the
+// npm wrapper (the common case here), so it hits the same shared
+// ~/.npm-global prefix opencode's install does. Confirmed live on
+// mproject2000: agentmux-agentmux-amp-update.service and
+// agentmux-ken-amp-update.service — two amp instances under the same run
+// user's HOME — both failed within about a minute of each other with `npm
+// error EEXIST: file already exists: /home/ubuntu/.npm-global/bin/amp`, the
+// exact race withNpmGlobalLock exists to serialize away for opencode. amp
+// just never got wired into that lock when it was added as a newer runner
+// type. Locked here the same way.
 func updateAmp(name string) error {
 	fields, err := registry(name)
 	if err != nil {
@@ -33,7 +44,17 @@ func updateAmp(name string) error {
 	session := sessionNameOf(fields, name)
 	socket := tmuxSocket(name)
 
-	out, err := runAs(runUser, "amp", "update", "--porcelain").CombinedOutput()
+	u, err := userLookup(runUser)
+	if err != nil {
+		return fmt.Errorf("looking up run user %q for npm update lock: %w", runUser, err)
+	}
+
+	var out []byte
+	err = withNpmGlobalLock(u.HomeDir, u, func() error {
+		var lockErr error
+		out, lockErr = runAs(runUser, "amp", "update", "--porcelain").CombinedOutput()
+		return lockErr
+	})
 	if err != nil {
 		return fmt.Errorf("amp update failed, leaving existing session running untouched: %w: %s", err, out)
 	}

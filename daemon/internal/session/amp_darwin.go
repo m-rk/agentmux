@@ -1,6 +1,9 @@
 package session
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+)
 
 // updateAmp runs as the instance's own user already (macOS LaunchAgents are
 // per-user; no privilege drop needed) and restarts by calling StopAmp/RunAmp
@@ -8,7 +11,10 @@ import "fmt"
 // re-kickstarting the LaunchAgent instead wouldn't work (RunAmp is
 // intentionally idempotent, a no-op against a still-running stale session).
 // See amp_linux.go's updateAmp for why `amp update --porcelain` is the
-// refresh mechanism rather than an npm install.
+// refresh mechanism rather than an npm install, and for why it still needs
+// withNpmGlobalLock: amp update shells out through npm under the hood, and
+// every local instance on this host shares one npm global prefix (see
+// updateAgent's matching opencode comment in agentmux_darwin.go).
 func updateAmp(name string) error {
 	fields, err := registry(name)
 	if err != nil {
@@ -17,7 +23,16 @@ func updateAmp(name string) error {
 	session := sessionNameOf(fields, name)
 	socket := tmuxSocket(name)
 
-	out, err := withPath("amp", "update", "--porcelain").CombinedOutput()
+	home, herr := os.UserHomeDir()
+	if herr != nil {
+		return fmt.Errorf("resolving HOME for npm update lock: %w", herr)
+	}
+	var out []byte
+	err = withNpmGlobalLock(home, nil, func() error {
+		var lockErr error
+		out, lockErr = withPath("amp", "update", "--porcelain").CombinedOutput()
+		return lockErr
+	})
 	if err != nil {
 		return fmt.Errorf("amp update failed, leaving existing session running untouched: %w: %s", err, out)
 	}
