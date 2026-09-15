@@ -50,9 +50,6 @@ EOF
 ) -- command-that-uses-$SOME_KEY
 ```
 
-Only fall back to unlocking 1Password desktop for biometric auth if
-the service account token is missing or revoked.
-
 ## Prefer the CLI over the TUI or raw tmux
 
 `agentmux`'s default UI is an interactive TUI (`agentmux` with no args) built
