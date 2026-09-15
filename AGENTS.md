@@ -12,6 +12,34 @@ this host's identity. The `local` entry in `~/.config/agentmux/hosts.yaml`
 IS harley-mini; do not try to SSH to it, and treat any reference to
 "harley-mini" as a request to operate the local daemon, not a remote one.
 
+## Reading secrets from 1Password
+
+Secrets (Discord tokens, API keys, etc.) live in 1Password and must be
+read without ever being printed, logged, or committed. Use `op run`
+with a scoped `op://` reference so the value is injected straight into
+the subprocess's environment and never returns to the calling agent:
+
+```sh
+op run --env-file=<(cat <<'EOF'
+SOME_KEY=op://<vault>/<item>/<field>
+EOF
+) -- command-that-uses-$SOME_KEY
+```
+
+Raw `op item get` / `op read` puts the secret into the tool call's own
+output, which leaks into transcripts and trips safety classifiers.
+`op run` avoids that. Broad enumeration (`op vault list`, `op item list`,
+`op account list`) is usually blocked by an agent's sandbox — reach
+for the specific item ID rather than listing the vault. A worked
+example for the Discord collab credentials lives in
+[`docs/discord-collaboration.md`](docs/discord-collaboration.md); reuse
+that pattern (item IDs and field names) rather than re-deriving them.
+
+If `op run` itself hangs (no output, no error): `op` is waiting for
+the 1Password desktop app's biometric prompt, not for the secret.
+Unlock 1Password and retry — there is no headless way for the CLI to
+satisfy that prompt from a non-tty shell.
+
 ## Prefer the CLI over the TUI or raw tmux
 
 `agentmux`'s default UI is an interactive TUI (`agentmux` with no args) built
