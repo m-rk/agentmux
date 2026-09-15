@@ -19,8 +19,12 @@ func TestCollaborationPaneSafe(t *testing.T) {
 	if pane := "Useful response complete.\n\n❯ \n/rc"; !collaborationPaneSafe("claude-code", pane) {
 		t.Fatalf("idle pane was considered unsafe:\n%s", pane)
 	}
-	if collaborationPaneSafe("claude-code", "shell prompt only") {
-		t.Fatal("Claude pane without /rc was considered safe")
+	// ClaudePaneRemoteConnected is currently always true (see its doc
+	// comment: claude-code 2.1.271 shows no known indicator even when
+	// genuinely connected), so a plain idle-looking pane with no /rc and no
+	// dialog markers is correctly treated as safe rather than unsafe.
+	if !collaborationPaneSafe("claude-code", "shell prompt only") {
+		t.Fatal("idle Claude pane without /rc was considered unsafe")
 	}
 	if !collaborationPaneSafe("kilo", "Ask anything\nctrl+p commands\n◆ Remote") {
 		t.Fatal("ready Kilo pane was considered unsafe")

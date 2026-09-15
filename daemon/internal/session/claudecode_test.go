@@ -37,48 +37,31 @@ func contains(args []string, want string) bool {
 	return false
 }
 
-func TestClaudeRemoteConnected(t *testing.T) {
-	const connectedWithModeHint = `  /remote-control is active · Continue here, on your phone, or at
-  https://claude.ai/code/session_example
-                                                               ● high · /effort
-────────────────────────────────────────────────────────────────────────────────
-❯
-────────────────────────────────────────────────────────────────────────────────
-  user ⚠ git:(main) ↑12  ✏️  +0/-0                                           /rc
-  🤖 Sonnet 5  🪟  5%
-  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
-`
-	const indicatorOutsideFooter = `/rc
-footer one
-footer two
-footer three
-footer four
-footer five
-footer six
-`
-	cases := []struct {
-		name string
-		pane string
-		want bool
-	}{
-		{"connected footer", "some output\n  workdir  \U0001F4DD +0/-0                                                 /rc\n", true},
-		{"connected above mode hint", connectedWithModeHint, true},
-		{"disconnected, no indicator", "some output\n❯ \n", false},
-		{"menu open hides the footer", "   Enter to select · Esc to continue\n", false},
-		{"indicator outside footer window", indicatorOutsideFooter, false},
-		{"lookalike footer text", "status /rc-old\nmodel\nauto mode\n", false},
-		// 2.1.248+ moved /rc out of the footer. The "/remote-control is
-		// active" body text confirms the connection instead.
-		{"connected via body indicator (no footer /rc)", "/remote-control is active · Continue here, on your phone, or at\nhttps://claude.ai/code/session_example\n\n\n───\n❯\n───\n  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents\n", true},
-		{"body indicator absent, no footer /rc", "Sonnet 5 · Claude Pro\nworkdir\n\n\n\n───\n❯\n───\n  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents\n", false},
+// TestClaudeRemoteConnectedAlwaysTrue guards the current, deliberate
+// fail-open contract of ClaudePaneRemoteConnected (see its doc comment):
+// neither known indicator renders in claude-code 2.1.271 even for a
+// genuinely connected session (confirmed live on mproject2000,
+// 2026-09-15), and reporting "disconnected" in that case caused confirmed
+// active harm (spurious /remote-control keystrokes into every live
+// session on every idle tick, plus a false doctor alert and blocked
+// Discord collaboration delivery). So every case here — including the
+// realistic "no known indicator at all" pane — must return true.
+func TestClaudeRemoteConnectedAlwaysTrue(t *testing.T) {
+	panes := []string{
+		"",
+		"some output\n❯ \n",
+		"   Enter to select · Esc to continue\n",
+		// The exact shape of a real, genuinely-connected 2.1.271 pane: no
+		// /rc, no /remote-control, anywhere.
+		"Sonnet 5 · Claude Pro\nworkdir\n\n\n\n───\n❯\n───\n  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents\n",
+		// Still recognized, in case a mixed-fleet host ever shows it again.
+		"some output\n  workdir  \U0001F4DD +0/-0                                                 /rc\n",
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			tmux := fakeTmuxCapture(tc.pane, nil)
-			if got := claudeRemoteConnected(tmux, "sock", "sess"); got != tc.want {
-				t.Errorf("claudeRemoteConnected(%q) = %v, want %v", tc.pane, got, tc.want)
-			}
-		})
+	for _, pane := range panes {
+		tmux := fakeTmuxCapture(pane, nil)
+		if got := claudeRemoteConnected(tmux, "sock", "sess"); got != true {
+			t.Errorf("claudeRemoteConnected(%q) = %v, want true", pane, got)
+		}
 	}
 }
 

@@ -173,33 +173,45 @@ func claudeRemoteConnected(tmux func(args ...string) *exec.Cmd, socket, session 
 
 // ClaudePaneRemoteConnected reports whether a captured Claude Code pane
 // shows Remote Control as connected. It is exported for the host-wide
-// doctor so health checks and the per-instance self-heal use exactly
-// the same detection rule. Accepts a bounded bottom-of-pane window of
-// up to claudeRemoteBodyScanLines lines so a single capture can power
-// both the legacy footer-token check and the newer body-substring
-// check; the footer check only inspects the last claudeFooterScanLines
-// of those, keeping the welcome box and conversation body well clear.
+// doctor so health checks and the per-instance self-heal use exactly the
+// same detection rule.
+//
+// Currently always true — both known indicators (claudeRemoteFooterIndicator
+// for claude-code <= 2.1.247, claudeRemoteBodyIndicator for 2.1.248 through
+// roughly 2.1.268) have stopped appearing. Confirmed live against
+// claude-code 2.1.271 on mproject2000 (2026-09-15): three genuinely
+// Remote-Control-connected sessions (verified with their own user) showed
+// NEITHER indicator anywhere in a full-width (220-column), 200-line
+// scrollback capture, well past every scan window either constant was ever
+// bounded to. 2.1.269-2.1.271's changelogs record ongoing Remote Control UI
+// churn with no line calling out a removed indicator, so this is presumed
+// an undocumented rendering change rather than Remote Control itself going
+// away.
+//
+// Returning false here instead (the pre-2026-09-15 behavior, and the
+// naive-looking "fix" of resurrecting the old footer/body scan) reproduced
+// as confirmed active production harm rather than a mere false alarm: this
+// function also gates ensureClaudeRemoteControl's reconnect attempt, so
+// every up-to-date instance looked permanently disconnected and got real
+// `/remote-control` keystrokes sent into its live, already-connected
+// session on every idle tick — confirmed via journalctl: "remote control
+// still not connected after toggling" logged every 5 minutes for every
+// claude-code instance on this host, all day. Non-destructive (the
+// resulting confirmation menu dismisses via Escape/"Continue", per
+// claudeRemoteMenuFooter) but real, visible disruption for anyone watching
+// live via phone or browser — and the same false "disconnected" also
+// silently blocked Discord collaboration delivery (collaborationPaneSafe)
+// and false-alarmed the doctor (remote-disconnected) on every host running
+// a current CLI.
+//
+// This trades away the ability to detect a genuine disconnect until a
+// reliable current-version indicator is found, in exchange for stopping
+// that confirmed active harm now. Whoever restores real detection can
+// reintroduce a bounded footer/body scan for the new indicator (if any) the
+// same way claudeRemoteMenuOpen still does for the still-working menu
+// check below.
 func ClaudePaneRemoteConnected(pane string) bool {
-	lines := strings.Split(strings.TrimRight(pane, "\n"), "\n")
-	// Footer check: the /rc token in the bottom claudeFooterScanLines.
-	// When the pane is shorter than the window, use everything we have.
-	footerStart := len(lines) - claudeFooterScanLines
-	if footerStart < 0 {
-		footerStart = 0
-	}
-	for _, field := range strings.Fields(strings.Join(lines[footerStart:], "\n")) {
-		if field == claudeRemoteFooterIndicator {
-			return true
-		}
-	}
-	// 2.1.248+ moved the /rc token out of the footer; the body shows
-	// "/remote-control is active" when connected. Search the slightly
-	// broader window for that substring.
-	bodyStart := len(lines) - claudeRemoteBodyScanLines
-	if bodyStart < 0 {
-		bodyStart = 0
-	}
-	return strings.Contains(strings.Join(lines[bodyStart:], "\n"), claudeRemoteBodyIndicator)
+	return true
 }
 
 // claudeRemoteMenuFooter is the prompt on Claude Code's Remote Control

@@ -45,10 +45,20 @@ func TestRunDoesNotCallClaudeForHealthySessions(t *testing.T) {
 }
 
 func TestCoreHealthIssuesAreBackendAware(t *testing.T) {
+	// claude-code's remote-disconnected check is currently a no-op: it
+	// hinges on session.ClaudePaneRemoteConnected, which is deliberately
+	// always true right now (see that function's doc comment — no known
+	// indicator renders even when genuinely connected on claude-code
+	// 2.1.271, and reporting false alarms here caused confirmed active
+	// harm). The still-working "stuck-menu" check is what's left to verify
+	// claude-code gets its own agent-specific handling.
 	claude := &pb.Instance{Name: "claude", Agent: "claude-code", Status: pb.Status_STATUS_IDLE, TmuxSession: "claude", Pid: 1}
-	issues := coreHealthIssues(claude, Snapshot{Pane: "❯\n"})
-	if len(issues) != 1 || issues[0].Code != "remote-disconnected" {
-		t.Fatalf("Claude issues = %+v", issues)
+	if issues := coreHealthIssues(claude, Snapshot{Pane: "❯\n"}); len(issues) != 0 {
+		t.Fatalf("Claude issues for a plain idle pane = %+v, want none", issues)
+	}
+	issues := coreHealthIssues(claude, Snapshot{Pane: "   Enter to select · Esc to continue\n"})
+	if len(issues) != 1 || issues[0].Code != "stuck-menu" {
+		t.Fatalf("Claude issues for an open Remote Control menu = %+v", issues)
 	}
 	kilo := &pb.Instance{Name: "kilo", Agent: "kilo", Status: pb.Status_STATUS_IDLE, TmuxSession: "kilo", Pid: 1}
 	issues = coreHealthIssues(kilo, Snapshot{Pane: "ctrl+p commands\n"})
@@ -176,15 +186,21 @@ func TestRunRejectsUnsafeRestart(t *testing.T) {
 }
 
 func TestRunReprobesBeforeApplyingRepair(t *testing.T) {
+	// kilo (not claude-code) drives this: it's the vehicle for a
+	// deterministic, pane-content-based remote-disconnected issue that
+	// toggles on a mutation between diagnosis and repair. claude-code's own
+	// remote-disconnected check is currently a permanent no-op — see
+	// session.ClaudePaneRemoteConnected's doc comment — so it can no
+	// longer produce the issue this test needs to flip.
 	client := &fakeClient{
-		instances: []*pb.Instance{{Name: "one", Agent: "claude-code", Status: pb.Status_STATUS_IDLE, TmuxSession: "one", Pid: 42}},
-		panes:     map[string]string{"one": "fatal: relay disconnected"},
+		instances: []*pb.Instance{{Name: "one", Agent: "kilo", Status: pb.Status_STATUS_IDLE, TmuxSession: "one", Pid: 42}},
+		panes:     map[string]string{"one": "ctrl+p commands\nfatal: relay disconnected"},
 	}
 	analyzer := &fakeAnalyzer{
 		plan: Plan{Findings: []Finding{{
 			Instance: "one", Finding: "relay failed", Evidence: "fatal: relay disconnected", Action: ActionRestart,
 		}}},
-		onAnalyze: func() { client.panes["one"] = "fatal: relay disconnected\n/rc" },
+		onAnalyze: func() { client.panes["one"] = "ctrl+p commands\nfatal: relay disconnected\n◆ Remote" },
 	}
 	report, err := Run(context.Background(), client, analyzer, Options{})
 	if err != nil {
