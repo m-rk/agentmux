@@ -35,10 +35,23 @@ example for the Discord collab credentials lives in
 [`docs/discord-collaboration.md`](docs/discord-collaboration.md); reuse
 that pattern (item IDs and field names) rather than re-deriving them.
 
-If `op run` itself hangs (no output, no error): `op` is waiting for
-the 1Password desktop app's biometric prompt, not for the secret.
-Unlock 1Password and retry — there is no headless way for the CLI to
-satisfy that prompt from a non-tty shell.
+If `op run` itself hangs (no output, no error) and the secret's
+`op://` reference is correctly scoped, the CLI is waiting on a human
+auth path it can't satisfy from a non-tty shell. The fast unblock is
+the per-host service account token at
+`~/.config/op/service_account_token` (mode 0600): export it inline so
+`op run` never falls back to the interactive account:
+
+```sh
+OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.config/op/service_account_token) \
+  op run --env-file=<(cat <<'EOF'
+SOME_KEY=op://<vault>/<item>/<field>
+EOF
+) -- command-that-uses-$SOME_KEY
+```
+
+Only fall back to unlocking 1Password desktop for biometric auth if
+the service account token is missing or revoked.
 
 ## Prefer the CLI over the TUI or raw tmux
 
