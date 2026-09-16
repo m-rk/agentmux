@@ -108,9 +108,13 @@ transcripts and trips safety classifiers. `op run` injects secrets straight
 into the subprocess's environment instead, so the value is never returned to
 the calling agent. Broad enumeration (`op vault list`, `op item list`) may
 also be blocked by an agent's sandbox even when a scoped lookup by item ID is
-allowed — reach for the item IDs below directly rather than listing the vault:
+allowed — reach for the item IDs below directly rather than listing the vault.
+The invocation form (including the service-account token export that keeps
+`op` non-interactive) is documented in AGENTS.md ("Reading secrets from
+1Password"); the item IDs below are the Discord-specific part:
 
 ```sh
+OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.config/op/service_account_token) \
 op run --env-file=<(cat <<'EOF'
 DISCORD_BOT_TOKEN=op://Mark's agents/627h7czjtbkaqv3u3dgvwys65i/credential
 DISCORD_FORUM_WEBHOOK_URL=op://Mark's agents/ab3alqe5aucauyniekjcm6ttvi/website

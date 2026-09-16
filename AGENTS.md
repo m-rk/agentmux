@@ -17,30 +17,10 @@ IS harley-mini; do not try to SSH to it, and treat any reference to
 Secrets (Discord tokens, API keys, etc.) live in 1Password and must be
 read without ever being printed, logged, or committed. Use `op run`
 with a scoped `op://` reference so the value is injected straight into
-the subprocess's environment and never returns to the calling agent:
-
-```sh
-op run --env-file=<(cat <<'EOF'
-SOME_KEY=op://<vault>/<item>/<field>
-EOF
-) -- command-that-uses-$SOME_KEY
-```
-
-Raw `op item get` / `op read` puts the secret into the tool call's own
-output, which leaks into transcripts and trips safety classifiers.
-`op run` avoids that. Broad enumeration (`op vault list`, `op item list`,
-`op account list`) is usually blocked by an agent's sandbox — reach
-for the specific item ID rather than listing the vault. A worked
-example for the Discord collab credentials lives in
-[`docs/discord-collaboration.md`](docs/discord-collaboration.md); reuse
-that pattern (item IDs and field names) rather than re-deriving them.
-
-If `op run` itself hangs (no output, no error) and the secret's
-`op://` reference is correctly scoped, the CLI is waiting on a human
-auth path it can't satisfy from a non-tty shell. The fast unblock is
-the per-host service account token at
-`~/.config/op/service_account_token` (mode 0600): export it inline so
-`op run` never falls back to the interactive account:
+the subprocess's environment and never returns to the calling agent.
+Always export the per-host service account token inline — without it
+`op` falls back to the interactive account and hangs with no output and
+no error on a non-tty shell:
 
 ```sh
 OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.config/op/service_account_token) \
@@ -49,6 +29,40 @@ SOME_KEY=op://<vault>/<item>/<field>
 EOF
 ) -- command-that-uses-$SOME_KEY
 ```
+
+The token file lives at `~/.config/op/service_account_token`,
+provisioned per-host by the operator. Check it with
+`stat -f '%Lp %z %N' ~/.config/op/service_account_token` (macOS) or
+`stat -c '%a %s %n' ~/.config/op/service_account_token` (Linux) —
+expect mode `600` and a non-zero size.
+
+Raw `op item get` / `op read` puts the secret into the tool call's own
+output, which leaks into transcripts and trips safety classifiers.
+`op run` avoids that. Never enumerate (`op vault list`, `op item list`,
+`op account list`): a sandbox block and an interactive-auth hang look
+identical — no output, no error — so listing can neither succeed nor
+usefully fail. Always reach for the specific item ID instead. A worked
+example for the Discord collab credentials lives in
+[`docs/discord-collaboration.md`](docs/discord-collaboration.md); reuse
+that pattern (item IDs and field names) rather than re-deriving them.
+
+When the input is a 1Password share URL
+(`https://start.1password.com/open/i?a=<account>&v=<vault-id>&i=<item-id>&h=...`),
+derive the reference as `op://<vault-id>/<item-id>/<field>`: the `v=`
+param is the vault, `i=` is the item. The field name is not in the URL —
+try `credential` first (the conventional primary-secret field), then the
+field label shown in the 1Password UI.
+
+If `op run` still hangs, triage in this order and stop at the first
+failure:
+1. Re-check the constructed `op://` reference against the source IDs —
+   a wrong vault, item, or field fails exactly as silently as an auth
+   problem.
+2. Check the token file exists, is mode `600`, and is non-empty (see
+   the `stat` commands above).
+3. Stop and report to the operator: the host's 1Password setup is
+   broken. Do not ask for biometric unlock, do not paste secrets into
+   the session.
 
 ## Prefer the CLI over the TUI or raw tmux
 
