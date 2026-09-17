@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/m-rk/agentmux/daemon/internal/discovery"
+	"github.com/m-rk/agentmux/daemon/internal/pb"
 )
 
 func TestLaunchdLastExitCode(t *testing.T) {
@@ -81,5 +84,41 @@ func TestReloadLaunchdJobReturnsErrorWhenBootstrapFails(t *testing.T) {
 
 	if err := reloadLaunchdJob(context.Background(), "com.agentmux.test.update"); err == nil {
 		t.Fatal("expected an error when launchctl bootstrap fails")
+	}
+}
+
+func hasIssueCode(issues []HealthIssue, code string) bool {
+	for _, issue := range issues {
+		if issue.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+// TestProbeSkipsRefreshChecksWhenAmpUpdateOff guards the self-updating
+// host-runner shape: with AGENTMUX_AMP_UPDATE=off in the registry there is
+// no update LaunchAgent by design, so Probe must not report refresh-*
+// issues for it — while an identical instance without the opt-out still
+// gets refresh-missing when its update agent is not loaded.
+func TestProbeSkipsRefreshChecksWhenAmpUpdateOff(t *testing.T) {
+	dir := t.TempDir()
+	prev := discovery.EnvDir
+	discovery.EnvDir = dir
+	t.Cleanup(func() { discovery.EnvDir = prev })
+	fakeLaunchctl(t, ".update") // main agent loads; update agent fails to print
+
+	inst := &pb.Instance{Name: "probe", Agent: "amp"}
+	if got := (platformProber{}).Probe(context.Background(), inst); !hasIssueCode(got, "refresh-missing") {
+		t.Fatalf("Probe without opt-out reported %v, want a refresh-missing issue", got)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "probe.env"), []byte("AGENTMUX_AGENT=amp\nAGENTMUX_AMP_UPDATE=off\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, got := range (platformProber{}).Probe(context.Background(), inst) {
+		if strings.HasPrefix(got.Code, "refresh-") {
+			t.Errorf("Probe with AGENTMUX_AMP_UPDATE=off reported %v, want no refresh-* issues", got)
+		}
 	}
 }

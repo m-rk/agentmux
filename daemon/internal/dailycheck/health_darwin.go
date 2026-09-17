@@ -34,24 +34,29 @@ func (platformProber) Probe(ctx context.Context, instance *pb.Instance) []Health
 		issues = append(issues, platformIssue(instance, "service-failed", "managed LaunchAgent last exited unsuccessfully", fmt.Sprintf("exit=%d", code)))
 	}
 	updateLabel := label + ".update"
-	if output, err := launchdState(ctx, domain+updateLabel); err != nil {
-		issues = append(issues, platformIssue(instance, "refresh-missing", "daily refresh LaunchAgent is not loaded", err.Error()))
-	} else if launchdRunning(output) {
-		issues = append(issues, platformIssue(instance, "refresh-running", "daily refresh is still running", "the update LaunchAgent has not exited yet"))
-	} else if code, ok := launchdLastExitCode(output); ok && code != 0 {
-		detail := fmt.Sprintf("exit=%d", code)
-		if code == exConfigExitCode {
-			// Reload only (no kickstart): this repairs the wedged
-			// registration so the job's next legitimate scheduled tick
-			// succeeds, without forcing an unscheduled compact+restart of
-			// the live session the way kickstarting it now would.
-			if repairErr := reloadLaunchdJob(ctx, updateLabel); repairErr != nil {
-				detail += fmt.Sprintf(" (auto-repair failed: %s)", repairErr)
-			} else {
-				detail += " (auto-repaired: launchd registration reloaded; will confirm at its next scheduled run)"
+	// No update unit exists by design for self-updating runners
+	// (AGENTMUX_AMP_UPDATE=off): skip the refresh checks entirely rather
+	// than flagging its deliberate absence every day.
+	if !ampUpdateDisabled(instance.Name) {
+		if output, err := launchdState(ctx, domain+updateLabel); err != nil {
+			issues = append(issues, platformIssue(instance, "refresh-missing", "daily refresh LaunchAgent is not loaded", err.Error()))
+		} else if launchdRunning(output) {
+			issues = append(issues, platformIssue(instance, "refresh-running", "daily refresh is still running", "the update LaunchAgent has not exited yet"))
+		} else if code, ok := launchdLastExitCode(output); ok && code != 0 {
+			detail := fmt.Sprintf("exit=%d", code)
+			if code == exConfigExitCode {
+				// Reload only (no kickstart): this repairs the wedged
+				// registration so the job's next legitimate scheduled tick
+				// succeeds, without forcing an unscheduled compact+restart of
+				// the live session the way kickstarting it now would.
+				if repairErr := reloadLaunchdJob(ctx, updateLabel); repairErr != nil {
+					detail += fmt.Sprintf(" (auto-repair failed: %s)", repairErr)
+				} else {
+					detail += " (auto-repaired: launchd registration reloaded; will confirm at its next scheduled run)"
+				}
 			}
+			issues = append(issues, platformIssue(instance, "refresh-failed", "daily refresh failed", detail))
 		}
-		issues = append(issues, platformIssue(instance, "refresh-failed", "daily refresh failed", detail))
 	}
 	issues = append(issues, processIdentityIssue(ctx, instance)...)
 	return issues

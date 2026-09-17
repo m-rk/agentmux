@@ -7,10 +7,13 @@ package dailycheck
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/m-rk/agentmux/daemon/internal/discovery"
 	"github.com/m-rk/agentmux/daemon/internal/pb"
 )
 
@@ -20,6 +23,24 @@ const (
 	ActionRestart    = "restart"
 	ActionSendEscape = "send_escape"
 )
+
+// ampUpdateDisabled reports whether name's registry opts the instance out
+// of the agentmux-driven nightly update (AGENTMUX_AMP_UPDATE=off): a
+// self-updating runner has no update unit by design, so the refresh-*
+// platform checks must not fire for it. Only the exact value "off" opts
+// out; a missing or unreadable registry means updates are on.
+func ampUpdateDisabled(name string) bool {
+	data, err := os.ReadFile(filepath.Join(discovery.EnvDir, name+".env"))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "AGENTMUX_AMP_UPDATE=off" {
+			return true
+		}
+	}
+	return false
+}
 
 // Snapshot is the deliberately small amount of session state sent to the
 // analyzer. Workdirs and registry values are omitted; pane text is capped by

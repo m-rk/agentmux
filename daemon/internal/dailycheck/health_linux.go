@@ -26,14 +26,19 @@ func (platformProber) Probe(ctx context.Context, instance *pb.Instance) []Health
 	}
 
 	updateService := "agentmux-" + instance.Name + "-update.service"
-	if props, err := systemdProperties(ctx, updateService); err != nil {
-		issues = append(issues, platformIssue(instance, "refresh-unreadable", "daily refresh state could not be inspected", err.Error()))
-	} else if props["LoadState"] != "loaded" {
-		issues = append(issues, platformIssue(instance, "refresh-missing", "daily refresh unit is not loaded", updateService))
-	} else if props["ActiveState"] == "active" || props["ActiveState"] == "activating" {
-		issues = append(issues, platformIssue(instance, "refresh-running", "daily refresh is still running", describeProperties(props)))
-	} else if failedResult(props["Result"], props["ExecMainStatus"]) {
-		issues = append(issues, platformIssue(instance, "refresh-failed", "daily refresh failed", describeFailure(ctx, updateService, props)))
+	// No update unit exists by design for self-updating runners
+	// (AGENTMUX_AMP_UPDATE=off): skip the refresh checks entirely rather
+	// than flagging its deliberate absence every day.
+	if !ampUpdateDisabled(instance.Name) {
+		if props, err := systemdProperties(ctx, updateService); err != nil {
+			issues = append(issues, platformIssue(instance, "refresh-unreadable", "daily refresh state could not be inspected", err.Error()))
+		} else if props["LoadState"] != "loaded" {
+			issues = append(issues, platformIssue(instance, "refresh-missing", "daily refresh unit is not loaded", updateService))
+		} else if props["ActiveState"] == "active" || props["ActiveState"] == "activating" {
+			issues = append(issues, platformIssue(instance, "refresh-running", "daily refresh is still running", describeProperties(props)))
+		} else if failedResult(props["Result"], props["ExecMainStatus"]) {
+			issues = append(issues, platformIssue(instance, "refresh-failed", "daily refresh failed", describeFailure(ctx, updateService, props)))
+		}
 	}
 
 	issues = append(issues, processIdentityIssue(ctx, instance)...)

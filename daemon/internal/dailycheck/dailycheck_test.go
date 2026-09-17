@@ -3,9 +3,12 @@ package dailycheck
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/m-rk/agentmux/daemon/internal/discovery"
 	"github.com/m-rk/agentmux/daemon/internal/pb"
 )
 
@@ -308,5 +311,29 @@ func TestFormatNotificationNeutralizesMentions(t *testing.T) {
 	message := FormatNotification("host", report, nil)
 	if strings.Contains(message, "@everyone") || strings.Contains(message, "@here") {
 		t.Fatalf("Discord mentions were not neutralized: %q", message)
+	}
+}
+
+func TestAmpUpdateDisabled(t *testing.T) {
+	dir := t.TempDir()
+	prev := discovery.EnvDir
+	discovery.EnvDir = dir
+	t.Cleanup(func() { discovery.EnvDir = prev })
+
+	write := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name+".env"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("off", "AGENTMUX_AGENT=amp\nAGENTMUX_AMP_UPDATE=off\n")
+	write("on", "AGENTMUX_AGENT=amp\nAGENTMUX_AMP_UPDATE=on\n")
+	write("blank", "AGENTMUX_AGENT=amp\nAGENTMUX_AMP_UPDATE=\n")
+	write("other", "AGENTMUX_AGENT=amp\n")
+
+	for name, want := range map[string]bool{"off": true, "on": false, "blank": false, "other": false, "missing": false} {
+		if got := ampUpdateDisabled(name); got != want {
+			t.Errorf("ampUpdateDisabled(%q) = %v, want %v", name, got, want)
+		}
 	}
 }
