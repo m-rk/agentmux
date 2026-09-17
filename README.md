@@ -120,7 +120,7 @@ one checkout: it runs
 tmux session, and threads created at ampcode.com land in that workdir.
 
 ```sh
-./agentmux new -y -instance kartography-amp -agent amp -workdir /home/ubuntu/kartography -run-user ubuntu
+./agentmux new -y -instance site-amp -agent amp -workdir /home/dev/site -run-user dev
 ```
 
 Two prerequisites are checked before creating one, because both fail badly
@@ -133,8 +133,8 @@ must be installed via the `@ampcode/cli` npm package rather than the
 Amp takes no `-provider`/`-model`/`-resume`/`-compact` flags — model and
 account come entirely from the signed-in Amp account, and those flags are
 refused rather than silently ignored. The runner id is derived from the
-instance name: a trailing `-amp` is stripped (`kartography-amp` runs as
-runner `kartography`), then lowercased and sanitized to a valid hostname.
+instance name: a trailing `-amp` is stripped (`site-amp` runs as
+runner `site`), then lowercased and sanitized to a valid hostname.
 Nightly maintenance runs `amp update` and restarts the session only when the
 CLI version actually changed; unrecognized updater output leaves the session
 alone, since amp has no resume and a needless restart would drop whatever
