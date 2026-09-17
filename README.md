@@ -112,6 +112,36 @@ separate parts of an instance rather than defining the backend itself.
   existing health tick only when the pane is idle. See
   [Discord collaboration](docs/discord-collaboration.md).
 
+### Amp (ampcode) runners
+
+An `amp` instance is a headless [Amp](https://ampcode.com) runner pointed at
+one checkout: it runs
+`amp --no-tui --runner-id <id> --remote-control-terminal` in the instance's
+tmux session, and threads created at ampcode.com land in that workdir.
+
+```sh
+./agentmux new -y -instance kartography-amp -agent amp -workdir /home/ubuntu/kartography -run-user ubuntu
+```
+
+Two prerequisites are checked before creating one, because both fail badly
+later: the run user must already be signed in (`amp login` — otherwise the
+runner sits at an interactive login prompt nobody will answer), and the CLI
+must be installed via the `@ampcode/cli` npm package rather than the
+`@sourcegraph/amp` wrapper, which amp's own self-updater cannot maintain
+(every update would fail on the `amp` bin symlink).
+
+Amp takes no `-provider`/`-model`/`-resume`/`-compact` flags — model and
+account come entirely from the signed-in Amp account, and those flags are
+refused rather than silently ignored. The runner id is derived from the
+instance name: a trailing `-amp` is stripped (`kartography-amp` runs as
+runner `kartography`), then lowercased and sanitized to a valid hostname.
+Nightly maintenance runs `amp update` and restarts the session only when the
+CLI version actually changed; unrecognized updater output leaves the session
+alone, since amp has no resume and a needless restart would drop whatever
+thread the runner is serving. There is no remote-control indicator to watch,
+so the health tick is liveness-only — if the account gets logged out later,
+the doctor reports the login-prompt wedge instead of restarting into it.
+
 ### Session doctor
 
 `agentmux daemon install` also installs one daily doctor for the host: a
