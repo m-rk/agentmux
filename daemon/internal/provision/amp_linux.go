@@ -128,6 +128,21 @@ func createAmp(opts Options) (string, error) {
 		return "", err
 	}
 
+	// Explicit extra --dir entries must be absolute: a relative path would
+	// resolve against the daemon's own working directory, never the
+	// operator's intent. Callers expand ~ themselves (an unquoted ~
+	// in the shell already does).
+	serveDirs := AmpSplitDirs(opts.AmpDirs)
+	for _, d := range serveDirs {
+		if !filepath.IsAbs(d) {
+			return "", fmt.Errorf("amp dir %q is not absolute — pass absolute paths (expand ~ first)", d)
+		}
+	}
+	managedUpdate, err := ampManagedUpdate(opts.AmpUpdate)
+	if err != nil {
+		return "", err
+	}
+
 	// Captured before writeRegistry below overwrites the file — same reason
 	// as createAgentmux: it decides whether there's a live process to stop
 	// first.
@@ -181,6 +196,9 @@ func createAmp(opts Options) (string, error) {
 		{"AGENTMUX_INSTANCE_NAME", name},
 		{"AGENTMUX_AGENT", "amp"},
 		{"AGENTMUX_AMP_RUNNER_ID", runnerID},
+		{"AGENTMUX_AMP_DIRS", strings.Join(serveDirs, ",")},
+		{"AGENTMUX_AMP_DISCOVER_DIRS", discoverFlag(opts.AmpDiscoverDirs)},
+		{"AGENTMUX_AMP_UPDATE", opts.AmpUpdate},
 		{"AGENTMUX_SESSION_NAME", sessionName},
 		{"AGENTMUX_TMUX_SESSION_NAME", sessionName},
 		{"AGENTMUX_HOST_NAME", hostName},
@@ -203,7 +221,7 @@ func createAmp(opts Options) (string, error) {
 		self = resolved
 	}
 
-	if err := installAmpUnits(name, runnerID, runUser, self, serviceName, updateServiceName, timerName, tickServiceName, tickTimerName); err != nil {
+	if err := installAmpUnits(name, runnerID, runUser, self, serviceName, updateServiceName, timerName, tickServiceName, tickTimerName, managedUpdate); err != nil {
 		return "", err
 	}
 
@@ -211,8 +229,12 @@ func createAmp(opts Options) (string, error) {
 	if alreadyExisted {
 		verb = "Updated"
 	}
-	return fmt.Sprintf("%s instance %q (registry: %s, amp runner-id: %s). Reattach with: sudo -u %s tmux -L agentmux-%s attach -t %s",
-		verb, name, regPath, runnerID, runUser, name, sessionName), nil
+	msg := fmt.Sprintf("%s instance %q (registry: %s, amp runner-id: %s). Reattach with: sudo -u %s tmux -L agentmux-%s attach -t %s",
+		verb, name, regPath, runnerID, runUser, name, sessionName)
+	if !managedUpdate {
+		msg += " (agentmux updater off; runner self-updates)"
+	}
+	return msg, nil
 }
 
 // ampAuthProblem checks login by dropping privileges to runUser, since this
@@ -228,20 +250,13 @@ func ampInstallPackageProblem(runUser string) string {
 	return ampInstallPackageProblemVia(runas.Command(runUser, "npm", "ls", "-g", "@sourcegraph/amp", "--depth=0"))
 }
 
-func installAmpUnits(name, runnerID, runUser, binPath, serviceName, updateServiceName, timerName, tickServiceName, tickTimerName string) error {
+func installAmpUnits(name, runnerID, runUser, binPath, serviceName, updateServiceName, timerName, tickServiceName, tickTimerName string, managedUpdate bool) error {
 	unit := fmt.Sprintf(ampUnitTemplate, name, runnerID, runUser, binPath)
-	updateUnit := fmt.Sprintf(ampUpdateUnitTemplate, name, binPath)
 	timer := fmt.Sprintf(ampTimerTemplate, name, defaultOnCalendar)
 	tickService := fmt.Sprintf(ampTickServiceTemplate, name, runUser, binPath, updateServiceName)
 	tickTimer := fmt.Sprintf(ampTickTimerTemplate, name, defaultTickIntervalSecs)
 
 	if err := os.WriteFile("/etc/systemd/system/"+serviceName, []byte(unit), 0o644); err != nil {
-		return err
-	}
-	if err := os.WriteFile("/etc/systemd/system/"+updateServiceName, []byte(updateUnit), 0o644); err != nil {
-		return err
-	}
-	if err := os.WriteFile("/etc/systemd/system/"+timerName, []byte(timer), 0o644); err != nil {
 		return err
 	}
 	if err := os.WriteFile("/etc/systemd/system/"+tickServiceName, []byte(tickService), 0o644); err != nil {
@@ -250,14 +265,38 @@ func installAmpUnits(name, runnerID, runUser, binPath, serviceName, updateServic
 	if err := os.WriteFile("/etc/systemd/system/"+tickTimerName, []byte(tickTimer), 0o644); err != nil {
 		return err
 	}
+	if managedUpdate {
+		updateUnit := fmt.Sprintf(ampUpdateUnitTemplate, name, binPath)
+		if err := os.WriteFile("/etc/systemd/system/"+updateServiceName, []byte(updateUnit), 0o644); err != nil {
+			return err
+		}
+		if err := os.WriteFile("/etc/systemd/system/"+timerName, []byte(timer), 0o644); err != nil {
+			return err
+		}
+	} else {
+		// The runner self-updates; an agentmux-driven update would fight
+		// its own updater. Stop and remove a stale update unit/timer left
+		// by an earlier provisioning that had updates on, so the nightly
+		// `session update` stops firing. Missing units are fine (fresh
+		// instance that never had updates on).
+		_ = runSystemctl("disable", "--now", updateServiceName)
+		_ = runSystemctl("disable", "--now", timerName)
+		for _, path := range []string{"/etc/systemd/system/" + updateServiceName, "/etc/systemd/system/" + timerName} {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("removing stale %s: %w", path, err)
+			}
+		}
+	}
 	if err := runSystemctl("daemon-reload"); err != nil {
 		return err
 	}
 	if err := runSystemctl("enable", "--now", serviceName); err != nil {
 		return err
 	}
-	if err := runSystemctl("enable", "--now", timerName); err != nil {
-		return err
+	if managedUpdate {
+		if err := runSystemctl("enable", "--now", timerName); err != nil {
+			return err
+		}
 	}
 	return runSystemctl("enable", "--now", tickTimerName)
 }

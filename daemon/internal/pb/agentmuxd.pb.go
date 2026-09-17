@@ -875,7 +875,21 @@ type CreateInstanceRequest struct {
 	ProviderApiKeyEnv string `protobuf:"bytes,10,opt,name=provider_api_key_env,json=providerApiKeyEnv,proto3" json:"provider_api_key_env,omitempty"`
 	// claude-code/kilo only. Host portion of the remote display name; empty
 	// derives it from the target device.
-	HostName      string `protobuf:"bytes,11,opt,name=host_name,json=hostName,proto3" json:"host_name,omitempty"`
+	HostName string `protobuf:"bytes,11,opt,name=host_name,json=hostName,proto3" json:"host_name,omitempty"`
+	// amp only. Extra directories for a multi-directory runner to serve, in
+	// addition to its workdir: passed as repeatable `--dir` flags.
+	// Comma-separated; empty = workdir only (plus --discover-dirs below).
+	AmpDirs string `protobuf:"bytes,12,opt,name=amp_dirs,json=ampDirs,proto3" json:"amp_dirs,omitempty"`
+	// amp only. Pass `--discover-dirs`: serve every Git checkout up to two
+	// levels beneath the workdir (plus any amp_dirs), picking up new clones
+	// without a restart.
+	AmpDiscoverDirs bool `protobuf:"varint,13,opt,name=amp_discover_dirs,json=ampDiscoverDirs,proto3" json:"amp_discover_dirs,omitempty"`
+	// amp only. "", "on", or "off" — empty means "use the default" (on).
+	// Off skips the nightly update unit entirely (removing a stale one if
+	// present): for runners that self-update via
+	// amp.runner.autoUpdate.enabled, where an agentmux-driven `amp update`
+	// would fight the runner's own updater.
+	AmpUpdate     string `protobuf:"bytes,14,opt,name=amp_update,json=ampUpdate,proto3" json:"amp_update,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -983,6 +997,27 @@ func (x *CreateInstanceRequest) GetProviderApiKeyEnv() string {
 func (x *CreateInstanceRequest) GetHostName() string {
 	if x != nil {
 		return x.HostName
+	}
+	return ""
+}
+
+func (x *CreateInstanceRequest) GetAmpDirs() string {
+	if x != nil {
+		return x.AmpDirs
+	}
+	return ""
+}
+
+func (x *CreateInstanceRequest) GetAmpDiscoverDirs() bool {
+	if x != nil {
+		return x.AmpDiscoverDirs
+	}
+	return false
+}
+
+func (x *CreateInstanceRequest) GetAmpUpdate() string {
+	if x != nil {
+		return x.AmpUpdate
 	}
 	return ""
 }
@@ -1628,7 +1663,7 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\x06action\x18\x02 \x01(\x0e2\x1b.agentmuxd.v1.ControlActionR\x06action\";\n" +
 	"\x0fControlResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\x8b\x03\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xf1\x03\n" +
 	"\x15CreateInstanceRequest\x12#\n" +
 	"\rinstance_name\x18\x01 \x01(\tR\finstanceName\x12\x14\n" +
 	"\x05agent\x18\x02 \x01(\tR\x05agent\x12\x1a\n" +
@@ -1641,7 +1676,11 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\x11provider_base_url\x18\t \x01(\tR\x0fproviderBaseUrl\x12/\n" +
 	"\x14provider_api_key_env\x18\n" +
 	" \x01(\tR\x11providerApiKeyEnv\x12\x1b\n" +
-	"\thost_name\x18\v \x01(\tR\bhostName\"B\n" +
+	"\thost_name\x18\v \x01(\tR\bhostName\x12\x19\n" +
+	"\bamp_dirs\x18\f \x01(\tR\aampDirs\x12*\n" +
+	"\x11amp_discover_dirs\x18\r \x01(\bR\x0fampDiscoverDirs\x12\x1d\n" +
+	"\n" +
+	"amp_update\x18\x0e \x01(\tR\tampUpdate\"B\n" +
 	"\x16CreateInstanceResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"\x19\n" +

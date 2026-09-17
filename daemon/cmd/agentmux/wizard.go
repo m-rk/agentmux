@@ -44,6 +44,9 @@ func runWizard(args []string) {
 	runUser := fs.String("run-user", "", "Linux only, required there; -y only")
 	resume := fs.String("resume", "", "claude-code only, a session ID; -y only")
 	compact := fs.String("compact", "", "claude-code only: \"\" (default/on) or \"off\"; -y only")
+	ampDirs := fs.String("amp-dirs", "", "amp only; comma-separated absolute paths served as extra --dir entries; -y only")
+	ampDiscoverDirs := fs.Bool("amp-discover-dirs", false, "amp only; pass --discover-dirs to serve git checkouts under the workdir; -y only")
+	ampUpdate := fs.String("amp-update", "", "amp only: \"\" (default/on) or \"off\"; off skips the nightly update unit for self-updating runners; -y only")
 	force := fs.Bool("force", false, "allow re-provisioning the instance this process is currently running inside of; -y only")
 	fs.Parse(args)
 
@@ -90,6 +93,9 @@ func runWizard(args []string) {
 		CompactOnUpdate:   *compact,
 		ProviderBaseUrl:   *providerBaseURL,
 		ProviderApiKeyEnv: *providerAPIKeyEnv,
+		AmpDirs:           *ampDirs,
+		AmpDiscoverDirs:   *ampDiscoverDirs,
+		AmpUpdate:         *ampUpdate,
 	})
 	if err != nil {
 		log.Fatalf("new: %v", err)

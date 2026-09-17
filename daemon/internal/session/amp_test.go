@@ -10,15 +10,39 @@ import (
 )
 
 func TestAmpLaunchArgs(t *testing.T) {
-	got := ampLaunchArgs("kartography")
-	want := []string{"--no-tui", "--runner-id", "kartography", "--remote-control-terminal"}
-	if len(got) != len(want) {
-		t.Fatalf("ampLaunchArgs = %v, want %v", got, want)
+	cases := []struct {
+		name     string
+		runnerID string
+		dirs     []string
+		discover bool
+		want     []string
+	}{
+		{
+			name:     "single directory runner is unchanged",
+			runnerID: "kartography",
+			want:     []string{"--no-tui", "--runner-id", "kartography", "--remote-control-terminal"},
+		},
+		{
+			name:     "discover and explicit dirs slot in before remote-control-terminal",
+			runnerID: "mark-harley-mini",
+			dirs:     []string{"/Users/mark/hostel-harley-mini"},
+			discover: true,
+			want:     []string{"--no-tui", "--runner-id", "mark-harley-mini", "--discover-dirs", "--dir", "/Users/mark/hostel-harley-mini", "--remote-control-terminal"},
+		},
+		{
+			name:     "empty and relative dirs are skipped",
+			runnerID: "probe",
+			dirs:     []string{"", "  ", "relative/path", "/abs/ok"},
+			want:     []string{"--no-tui", "--runner-id", "probe", "--dir", "/abs/ok", "--remote-control-terminal"},
+		},
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("ampLaunchArgs = %v, want %v", got, want)
-		}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ampLaunchArgs(tc.runnerID, tc.dirs, tc.discover)
+			if strings.Join(got, " ") != strings.Join(tc.want, " ") {
+				t.Errorf("ampLaunchArgs = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -103,6 +127,65 @@ func TestRunAmpLaunchesTheDocumentedCommand(t *testing.T) {
 	want := []string{
 		"-L", "agentmux-probe", "new-session", "-d", "-s", "probe", "-c", workdir,
 		"amp", "--no-tui", "--runner-id", "probe", "--remote-control-terminal",
+	}
+	if strings.Join(launch, " ") != strings.Join(want, " ") {
+		t.Errorf("RunAmp launched\n  %v\nwant\n  %v", launch, want)
+	}
+}
+
+// TestRunAmpLaunchesMultiDirFlags pins the host-runner shape: discover plus
+// explicit --dir entries from the registry land in amp's argv in order.
+func TestRunAmpLaunchesMultiDirFlags(t *testing.T) {
+	dir := withEnvDir(t)
+	workdir := t.TempDir()
+	registryFile := "" +
+		"AGENTMUX_INSTANCE_NAME=probe\n" +
+		"AGENTMUX_AGENT=amp\n" +
+		"AGENTMUX_AMP_RUNNER_ID=probe\n" +
+		"AGENTMUX_AMP_DIRS=/srv/hostel, /srv/extra\n" +
+		"AGENTMUX_AMP_DISCOVER_DIRS=1\n" +
+		"AGENTMUX_TMUX_SESSION_NAME=probe\n" +
+		"AGENTMUX_WORKDIR=" + workdir + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "probe.env"), []byte(registryFile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls [][]string
+	prevWithPath := withPath
+	withPath = func(name string, args ...string) *exec.Cmd {
+		if name != "tmux" {
+			t.Fatalf("withPath called with unexpected command %q", name)
+		}
+		calls = append(calls, args)
+		for _, a := range args {
+			if a == "has-session" {
+				return exec.Command("false") // not running yet
+			}
+		}
+		return exec.Command("true")
+	}
+	t.Cleanup(func() { withPath = prevWithPath })
+
+	if err := RunAmp("probe"); err != nil {
+		t.Fatalf("RunAmp: %v", err)
+	}
+
+	var launch []string
+	for _, args := range calls {
+		for _, a := range args {
+			if a == "new-session" {
+				launch = args
+			}
+		}
+	}
+	if launch == nil {
+		t.Fatalf("RunAmp never issued a tmux new-session; calls: %v", calls)
+	}
+	want := []string{
+		"-L", "agentmux-probe", "new-session", "-d", "-s", "probe", "-c", workdir,
+		"amp", "--no-tui", "--runner-id", "probe",
+		"--discover-dirs", "--dir", "/srv/hostel", "--dir", "/srv/extra",
+		"--remote-control-terminal",
 	}
 	if strings.Join(launch, " ") != strings.Join(want, " ") {
 		t.Errorf("RunAmp launched\n  %v\nwant\n  %v", launch, want)

@@ -171,6 +171,20 @@ message CreateInstanceRequest {
   // claude-code/kilo only. Host portion of the remote display name; empty
   // derives it from the target device.
   string host_name = 11;
+  // amp only. Extra directories for a multi-directory runner to serve, in
+  // addition to its workdir: passed as repeatable `--dir` flags.
+  // Comma-separated; empty = workdir only (plus --discover-dirs below).
+  string amp_dirs = 12;
+  // amp only. Pass `--discover-dirs`: serve every Git checkout up to two
+  // levels beneath the workdir (plus any amp_dirs), picking up new clones
+  // without a restart.
+  bool amp_discover_dirs = 13;
+  // amp only. "", "on", or "off" — empty means "use the default" (on).
+  // Off skips the nightly update unit entirely (removing a stale one if
+  // present): for runners that self-update via
+  // amp.runner.autoUpdate.enabled, where an agentmux-driven `amp update`
+  // would fight the runner's own updater.
+  string amp_update = 14;
 }
 
 message CreateInstanceResponse {

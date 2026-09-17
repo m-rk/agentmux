@@ -31,6 +31,9 @@ type Options struct {
 	CompactOnUpdate string // claude-code only: "", "on", or "off" — see proto doc
 	BaseURL         string // zero/opencode/kilo only; see proto doc
 	APIKeyEnv       string // kilo/opencode only, not zero; see proto doc
+	AmpDirs         string // amp only; comma-separated absolute extra --dir paths — see proto doc
+	AmpDiscoverDirs bool   // amp only; pass --discover-dirs — see proto doc
+	AmpUpdate       string // amp only: "", "on", or "off" — see proto doc
 }
 
 var identifierRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
@@ -73,6 +76,9 @@ func Create(opts Options) (string, error) {
 	}
 	if err := guardAgentMismatch(name, opts.Agent); err != nil {
 		return "", err
+	}
+	if opts.Agent != "amp" && (opts.AmpDirs != "" || opts.AmpDiscoverDirs || opts.AmpUpdate != "") {
+		return "", fmt.Errorf("amp-only options (-amp-dirs, -amp-discover-dirs, -amp-update) are not supported for the %q agent", opts.Agent)
 	}
 
 	switch opts.Agent {

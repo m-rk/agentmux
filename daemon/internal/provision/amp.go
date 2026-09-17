@@ -65,6 +65,47 @@ func AmpRunnerID(instance string) (string, error) {
 	return id, nil
 }
 
+// AmpSplitDirs splits a comma-separated --dir list into trimmed non-empty
+// paths, in order. Exported so the session layer resolves the same registry
+// value the provisioner wrote, without either side reimplementing the
+// split (see ampLaunchArgs). It does not validate: the provisioner rejects
+// non-absolute paths up front, and the session layer skips them defensively
+// for hand-edited registries that bypassed provisioning.
+func AmpSplitDirs(dirs string) []string {
+	var out []string
+	for _, d := range strings.Split(dirs, ",") {
+		if d = strings.TrimSpace(d); d != "" {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// discoverFlag renders AmpDiscoverDirs for the registry: "1" or "". The
+// session layer treats "1" as on, anything else as off.
+func discoverFlag(discover bool) string {
+	if discover {
+		return "1"
+	}
+	return ""
+}
+
+// ampManagedUpdate reports whether the nightly agentmux-driven `amp
+// update` unit should be installed for the instance: "" or "on" (the
+// default, current behavior) means yes; "off" means the runner
+// self-updates via amp.runner.autoUpdate.enabled and an agentmux-driven
+// update would fight its own updater. Anything else is a caller error,
+// refused here rather than silently treated as on.
+func ampManagedUpdate(update string) (bool, error) {
+	switch update {
+	case "", "on":
+		return true, nil
+	case "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("amp update mode must be \"\", \"on\", or \"off\", got %q", update)
+	}
+}
 // rejectUnsupportedAmpOptions refuses the provider-family knobs on an amp
 // instance instead of silently ignoring them. amp's headless runner takes
 // its model and account entirely from the signed-in Amp account

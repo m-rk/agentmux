@@ -76,8 +76,9 @@ const ampUpdatePlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 `
 
 // createAmp is the macOS counterpart of amp_linux.go's createAmp: never runs
-// as root, needs no run_user, and installs two per-instance LaunchAgents
-// instead of five systemd units. See the Linux version's doc comment for why
+// as root, needs no run_user, and installs the per-instance LaunchAgent
+// (plus its update companion, unless updates are off) instead of systemd
+// units. See the Linux version's doc comment for why
 // this family exists separately from createAgentmux.
 func createAmp(opts Options) (string, error) {
 	if os.Geteuid() == 0 {
@@ -101,6 +102,21 @@ func createAmp(opts Options) (string, error) {
 	}
 
 	runnerID, err := AmpRunnerID(strings.TrimSuffix(name, "-"+opts.Agent))
+	if err != nil {
+		return "", err
+	}
+
+	// Explicit extra --dir entries must be absolute: a relative path would
+	// resolve against the daemon's own working directory, never the
+	// operator's intent. Callers expand ~ themselves (an unquoted ~
+	// in the shell already does).
+	serveDirs := AmpSplitDirs(opts.AmpDirs)
+	for _, d := range serveDirs {
+		if !filepath.IsAbs(d) {
+			return "", fmt.Errorf("amp dir %q is not absolute — pass absolute paths (expand ~ first)", d)
+		}
+	}
+	managedUpdate, err := ampManagedUpdate(opts.AmpUpdate)
 	if err != nil {
 		return "", err
 	}
@@ -142,6 +158,9 @@ func createAmp(opts Options) (string, error) {
 		{"AGENTMUX_INSTANCE_NAME", name},
 		{"AGENTMUX_AGENT", "amp"},
 		{"AGENTMUX_AMP_RUNNER_ID", runnerID},
+		{"AGENTMUX_AMP_DIRS", strings.Join(serveDirs, ",")},
+		{"AGENTMUX_AMP_DISCOVER_DIRS", discoverFlag(opts.AmpDiscoverDirs)},
+		{"AGENTMUX_AMP_UPDATE", opts.AmpUpdate},
 		{"AGENTMUX_SESSION_NAME", sessionName},
 		{"AGENTMUX_TMUX_SESSION_NAME", sessionName},
 		{"AGENTMUX_HOST_NAME", hostName},
@@ -164,7 +183,7 @@ func createAmp(opts Options) (string, error) {
 	// installAmpAgents always boots the old LaunchAgent out before
 	// bootstrapping the new one, so — as on the agentmux family's macOS path
 	// — no separate stop-before-update step is needed here.
-	if err := installAmpAgents(name, label, updateLabel, self); err != nil {
+	if err := installAmpAgents(name, label, updateLabel, self, managedUpdate); err != nil {
 		return "", err
 	}
 
@@ -172,8 +191,12 @@ func createAmp(opts Options) (string, error) {
 	if alreadyExisted {
 		verb = "Updated"
 	}
-	return fmt.Sprintf("%s instance %q (registry: %s, amp runner-id: %s). Reattach with: tmux -L agentmux-%s attach -t %s",
-		verb, name, regPath, runnerID, name, sessionName), nil
+	msg := fmt.Sprintf("%s instance %q (registry: %s, amp runner-id: %s). Reattach with: tmux -L agentmux-%s attach -t %s",
+		verb, name, regPath, runnerID, name, sessionName)
+	if !managedUpdate {
+		msg += " (agentmux updater off; runner self-updates)"
+	}
+	return msg, nil
 }
 
 // ampAuthProblem checks login as the current user, since a macOS instance
@@ -190,7 +213,7 @@ func ampInstallPackageProblem() string {
 	return ampInstallPackageProblemVia(runas.CurrentUserCommand("npm", "ls", "-g", "@sourcegraph/amp", "--depth=0"))
 }
 
-func installAmpAgents(name, label, updateLabel, binPath string) error {
+func installAmpAgents(name, label, updateLabel, binPath string, managedUpdate bool) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("resolving home directory: %w", err)
@@ -211,18 +234,33 @@ func installAmpAgents(name, label, updateLabel, binPath string) error {
 	if err := os.WriteFile(plistPath, []byte(plist), 0o644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(updatePlistPath, []byte(updatePlist), 0o644); err != nil {
-		return err
-	}
 
 	domain := "gui/" + strconv.Itoa(os.Getuid())
+	if !managedUpdate {
+		// The runner self-updates; an agentmux-driven update would fight
+		// its own updater. Boot out and remove a stale update agent left
+		// by an earlier provisioning that had updates on, so the nightly
+		// `session update` stops firing.
+		_ = exec.Command("launchctl", "bootout", domain, updatePlistPath).Run()
+		if err := os.Remove(updatePlistPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("removing stale %s: %w", updatePlistPath, err)
+		}
+	} else {
+		if err := os.WriteFile(updatePlistPath, []byte(updatePlist), 0o644); err != nil {
+			return err
+		}
+	}
+
 	_ = exec.Command("launchctl", "bootout", domain, plistPath).Run()
-	_ = exec.Command("launchctl", "bootout", domain, updatePlistPath).Run()
 	if err := exec.Command("launchctl", "bootstrap", domain, plistPath).Run(); err != nil {
 		return fmt.Errorf("bootstrapping %s: %w", label, err)
 	}
-	if err := exec.Command("launchctl", "bootstrap", domain, updatePlistPath).Run(); err != nil {
-		return fmt.Errorf("bootstrapping %s: %w", updateLabel, err)
+	if managedUpdate {
+		// Booted out and removed above when off; (re)load only when on.
+		_ = exec.Command("launchctl", "bootout", domain, updatePlistPath).Run()
+		if err := exec.Command("launchctl", "bootstrap", domain, updatePlistPath).Run(); err != nil {
+			return fmt.Errorf("bootstrapping %s: %w", updateLabel, err)
+		}
 	}
 	if err := exec.Command("launchctl", "kickstart", "-k", domain+"/"+label).Run(); err != nil {
 		return fmt.Errorf("starting %s: %w", label, err)

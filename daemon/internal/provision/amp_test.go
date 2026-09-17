@@ -131,6 +131,70 @@ func TestAmpRunnerIDRejectsUnusableNames(t *testing.T) {
 	}
 }
 
+func TestAmpSplitDirs(t *testing.T) {
+	cases := []struct {
+		name, in string
+		want     []string
+	}{
+		{"empty", "", nil},
+		{"single", "/srv/hostel", []string{"/srv/hostel"}},
+		{"trims spaces and drops empties", " /srv/a , ,/srv/b ", []string{"/srv/a", "/srv/b"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := AmpSplitDirs(tc.in)
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("AmpSplitDirs(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAmpManagedUpdate(t *testing.T) {
+	for _, update := range []string{"", "on"} {
+		if got, err := ampManagedUpdate(update); err != nil || !got {
+			t.Errorf("ampManagedUpdate(%q) = (%v, %v), want (true, nil)", update, got, err)
+		}
+	}
+	if got, err := ampManagedUpdate("off"); err != nil || got {
+		t.Errorf("ampManagedUpdate(off) = (%v, %v), want (false, nil)", got, err)
+	}
+	if _, err := ampManagedUpdate("sometimes"); err == nil {
+		t.Error("ampManagedUpdate(sometimes) = nil error, want an error rather than a silent default")
+	}
+}
+
+// TestCreateRejectsAmpOptionsForNonAmp guards the central Create check:
+// amp-only knobs on another agent must fail before dispatch, with no
+// platform provisioner (and its side effects) ever running.
+func TestCreateRejectsAmpOptionsForNonAmp(t *testing.T) {
+	withEnvDir(t)
+	withUnitFileExists(t, nil)
+
+	bases := []Options{
+		{InstanceName: "probe", Agent: "kilo"},
+		{InstanceName: "probe", Agent: "opencode"},
+		{InstanceName: "probe", Agent: "zero"},
+		{InstanceName: "probe", Agent: "claude-code"},
+	}
+	variants := []Options{
+		{AmpDirs: "/srv/hostel"},
+		{AmpDiscoverDirs: true},
+		{AmpUpdate: "off"},
+	}
+	for _, base := range bases {
+		for _, v := range variants {
+			opts := base
+			opts.AmpDirs, opts.AmpDiscoverDirs, opts.AmpUpdate = v.AmpDirs, v.AmpDiscoverDirs, v.AmpUpdate
+			if _, err := Create(opts); err == nil {
+				t.Errorf("Create(%s with amp options) = nil error, want an amp-only rejection", base.Agent)
+			} else if !strings.Contains(err.Error(), "amp-only") {
+				t.Errorf("Create(%s with amp options) error = %q, want it to name the amp-only options", base.Agent, err)
+			}
+		}
+	}
+}
+
 func TestRejectUnsupportedAmpOptions(t *testing.T) {
 	if err := rejectUnsupportedAmpOptions(Options{
 		InstanceName: "probe",

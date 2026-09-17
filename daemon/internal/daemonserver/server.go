@@ -134,6 +134,9 @@ func (s *Server) CreateInstance(ctx context.Context, req *pb.CreateInstanceReque
 		CompactOnUpdate: req.CompactOnUpdate,
 		BaseURL:         req.ProviderBaseUrl,
 		APIKeyEnv:       req.ProviderApiKeyEnv,
+		AmpDirs:         req.AmpDirs,
+		AmpDiscoverDirs: req.AmpDiscoverDirs,
+		AmpUpdate:       req.AmpUpdate,
 	})
 	if err != nil {
 		return &pb.CreateInstanceResponse{Ok: false, Message: err.Error()}, nil

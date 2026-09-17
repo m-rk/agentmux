@@ -3,6 +3,7 @@ package session
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -73,10 +74,33 @@ func AmpPaneAwaitingLogin(pane string) bool {
 //   - --runner-id <id>      stable identity for this machine/checkout
 //   - --remote-control-terminal  let ampcode.com drive this runner's terminal
 //
+// Since "one runner is now enough" (ampcode.com/news/one-runner-is-now-enough),
+// a runner can also serve more than its start directory: --discover-dirs
+// serves every Git checkout up to two levels beneath it (picking up new
+// clones), and each --dir adds one more directory explicitly. dirs comes
+// from the AGENTMUX_AMP_DIRS registry value (already split); non-absolute
+// entries are skipped defensively — the provisioner rejects them up front,
+// so one here means a hand-edited registry, and handing amp a relative
+// path would silently serve somewhere unintended.
+//
 // Returned as an argv slice, not a shell string, so nothing here needs
 // quoting (see RunClaudeCode's matching note).
-func ampLaunchArgs(runnerID string) []string {
-	return []string{"--no-tui", "--runner-id", runnerID, "--remote-control-terminal"}
+func ampLaunchArgs(runnerID string, dirs []string, discoverDirs bool) []string {
+	args := []string{"--no-tui", "--runner-id", runnerID}
+	if discoverDirs {
+		args = append(args, "--discover-dirs")
+	}
+	for _, d := range dirs {
+		if d == "" {
+			continue
+		}
+		if !filepath.IsAbs(d) {
+			fmt.Printf("warning: skipping non-absolute amp dir %q (expand ~ to an absolute path)\n", d)
+			continue
+		}
+		args = append(args, "--dir", d)
+	}
+	return append(args, "--remote-control-terminal")
 }
 
 // ampRunnerIDFor resolves the runner ID for an instance: the one the
@@ -117,6 +141,7 @@ func RunAmp(name string) error {
 	if err != nil {
 		return fmt.Errorf("resolving amp runner id for %s: %w", name, err)
 	}
+	launchArgs := ampLaunchArgs(runnerID, provision.AmpSplitDirs(fields["AGENTMUX_AMP_DIRS"]), fields["AGENTMUX_AMP_DISCOVER_DIRS"] == "1")
 
 	if err := os.MkdirAll(workdir, 0o755); err != nil {
 		return fmt.Errorf("creating workdir %s: %w", workdir, err)
@@ -126,7 +151,7 @@ func RunAmp(name string) error {
 		return nil
 	}
 
-	tmuxArgs := append([]string{"-L", socket, "new-session", "-d", "-s", session, "-c", workdir, "amp"}, ampLaunchArgs(runnerID)...)
+	tmuxArgs := append([]string{"-L", socket, "new-session", "-d", "-s", session, "-c", workdir, "amp"}, launchArgs...)
 	if out, err := withPath("tmux", tmuxArgs...).CombinedOutput(); err != nil {
 		return fmt.Errorf("starting tmux session %s: %w: %s", session, err, out)
 	}
