@@ -179,7 +179,7 @@ func claudeRemoteConnected(tmux func(args ...string) *exec.Cmd, socket, session 
 // Currently always true — both known indicators (claudeRemoteFooterIndicator
 // for claude-code <= 2.1.247, claudeRemoteBodyIndicator for 2.1.248 through
 // roughly 2.1.268) have stopped appearing. Confirmed live against
-// claude-code 2.1.271 on mproject2000 (2026-09-15): three genuinely
+// claude-code 2.1.271 on a Linux host (2026-09-15): three genuinely
 // Remote-Control-connected sessions (verified with their own user) showed
 // NEITHER indicator anywhere in a full-width (220-column), 200-line
 // scrollback capture, well past every scan window either constant was ever

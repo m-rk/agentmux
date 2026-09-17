@@ -104,7 +104,7 @@ func TestWriteOpencodeConfigPreservesHandAddedModels(t *testing.T) {
 	path := filepath.Join(workdir, "opencode.json")
 	existing := `{
 		"provider": {
-			"token-tan-gl": {
+			"my-gateway": {
 				"models": {
 					"glm-5.2": {"name": "glm-5.2"},
 					"kimi-k2.6": {"name": "kimi-k2.6"}
@@ -116,7 +116,7 @@ func TestWriteOpencodeConfigPreservesHandAddedModels(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := writeOpencodeConfig("token-tan-gl", "glm-5.2", "https://token.tan.gl/v1", "", workdir); err != nil {
+	if err := writeOpencodeConfig("my-gateway", "glm-5.2", "https://gateway.example/v1", "", workdir); err != nil {
 		t.Fatalf("writeOpencodeConfig: %v", err)
 	}
 
@@ -134,7 +134,7 @@ func TestWriteOpencodeConfigPreservesHandAddedModels(t *testing.T) {
 	if err := json.Unmarshal(data, &doc); err != nil {
 		t.Fatalf("unmarshaling written config: %v", err)
 	}
-	models := doc.Provider["token-tan-gl"].Models
+	models := doc.Provider["my-gateway"].Models
 	if _, ok := models["kimi-k2.6"]; !ok {
 		t.Errorf("writeOpencodeConfig dropped the hand-added model kimi-k2.6, got models: %v", models)
 	}
@@ -158,7 +158,7 @@ func TestConfigureAgentIfChangedPreservesInAppModelSwitch(t *testing.T) {
 	path := filepath.Join(workdir, "opencode.json")
 
 	fields := map[string]string{}
-	if err := configureAgentIfChanged("probe", fields, "opencode", "ken", "glm-5.2", "https://token.tan.gl/v1", "", workdir); err != nil {
+	if err := configureAgentIfChanged("probe", fields, "opencode", "my-gateway", "glm-5.2", "https://gateway.example/v1", "", workdir); err != nil {
 		t.Fatalf("initial configureAgentIfChanged: %v", err)
 	}
 	fields, err := registry("probe")
@@ -171,13 +171,13 @@ func TestConfigureAgentIfChangedPreservesInAppModelSwitch(t *testing.T) {
 
 	// Simulate the running agent's own in-app model switch: it rewrites the
 	// same file's top-level "model" field directly.
-	if err := os.WriteFile(path, []byte(`{"model":"ken/MiniMax-M3","provider":{"ken":{"models":{"glm-5.2":{"name":"glm-5.2"}}}}}`), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(`{"model":"my-gateway/MiniMax-M3","provider":{"my-gateway":{"models":{"glm-5.2":{"name":"glm-5.2"}}}}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	// Same registry fields, same provider/model args as before (the ordinary
 	// restart case) -- must NOT stomp the in-app switch back to glm-5.2.
-	if err := configureAgentIfChanged("probe", fields, "opencode", "ken", "glm-5.2", "https://token.tan.gl/v1", "", workdir); err != nil {
+	if err := configureAgentIfChanged("probe", fields, "opencode", "my-gateway", "glm-5.2", "https://gateway.example/v1", "", workdir); err != nil {
 		t.Fatalf("second configureAgentIfChanged: %v", err)
 	}
 	data, err := os.ReadFile(path)
@@ -190,13 +190,13 @@ func TestConfigureAgentIfChangedPreservesInAppModelSwitch(t *testing.T) {
 	if err := json.Unmarshal(data, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if doc.Model != "ken/MiniMax-M3" {
-		t.Fatalf("configureAgentIfChanged stomped the in-app model switch: model = %q, want ken/MiniMax-M3 preserved", doc.Model)
+	if doc.Model != "my-gateway/MiniMax-M3" {
+		t.Fatalf("configureAgentIfChanged stomped the in-app model switch: model = %q, want my-gateway/MiniMax-M3 preserved", doc.Model)
 	}
 
 	// Now simulate an explicit `agentmux new -y -model ...`: the registry's
 	// own model field changes, so the next restart SHOULD apply it.
-	if err := configureAgentIfChanged("probe", fields, "opencode", "ken", "MiniMax-M3", "https://token.tan.gl/v1", "", workdir); err != nil {
+	if err := configureAgentIfChanged("probe", fields, "opencode", "my-gateway", "MiniMax-M3", "https://gateway.example/v1", "", workdir); err != nil {
 		t.Fatalf("third configureAgentIfChanged: %v", err)
 	}
 	data, err = os.ReadFile(path)
@@ -206,8 +206,8 @@ func TestConfigureAgentIfChangedPreservesInAppModelSwitch(t *testing.T) {
 	if err := json.Unmarshal(data, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if doc.Model != "ken/MiniMax-M3" {
-		t.Fatalf("configureAgentIfChanged did not apply an explicit registry model change: model = %q, want ken/MiniMax-M3", doc.Model)
+	if doc.Model != "my-gateway/MiniMax-M3" {
+		t.Fatalf("configureAgentIfChanged did not apply an explicit registry model change: model = %q, want my-gateway/MiniMax-M3", doc.Model)
 	}
 }
 
@@ -238,7 +238,7 @@ func TestConfigureAgentIfChangedDegradesGracefullyOnRegistryPermissionError(t *t
 	t.Cleanup(func() { os.Chmod(regPath, 0o644) })
 
 	fields := map[string]string{}
-	if err := configureAgentIfChanged("probe", fields, "opencode", "ken", "glm-5.2", "https://token.tan.gl/v1", "", workdir); err != nil {
+	if err := configureAgentIfChanged("probe", fields, "opencode", "my-gateway", "glm-5.2", "https://gateway.example/v1", "", workdir); err != nil {
 		t.Fatalf("configureAgentIfChanged with an unwritable registry file = %v, want nil (must degrade gracefully)", err)
 	}
 

@@ -50,11 +50,11 @@ func TestChownRegistryForUserChownsToTheGivenUser(t *testing.T) {
 func TestReadRegistryRunUser(t *testing.T) {
 	dir := withEnvDir(t)
 	path := filepath.Join(dir, "probe.env")
-	content := "AGENTMUX_INSTANCE_NAME=probe\nAGENTMUX_RUN_USER=ubuntu\nAGENTMUX_WORKDIR=/home/ubuntu/.agentmux/probe\n"
+	content := "AGENTMUX_INSTANCE_NAME=probe\nAGENTMUX_RUN_USER=dev\nAGENTMUX_WORKDIR=/home/dev/.agentmux/probe\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := readRegistryRunUser(path), "ubuntu"; got != want {
+	if got, want := readRegistryRunUser(path), "dev"; got != want {
 		t.Errorf("readRegistryRunUser = %q, want %q", got, want)
 	}
 

@@ -132,9 +132,9 @@ cutover is explicitly marked ready; follow the
 ### Scripting: non-interactive create, rename, resume lookup, status, view, and control
 
 ```sh
-./agentmux new -y -instance myinstance -agent claude-code -run-user ubuntu -host-name build-box
+./agentmux new -y -instance myinstance -agent claude-code -run-user dev -host-name build-box
 ./agentmux rename -instance myinstance -tmux-name renamed -display-name "new name"
-./agentmux resume-list -workdir /path/to/project -run-user ubuntu
+./agentmux resume-list -workdir /path/to/project -run-user dev
 ./agentmux list -json
 ./agentmux control -instance myinstance -action restart
 ./agentmux view -instance myinstance -lines 50

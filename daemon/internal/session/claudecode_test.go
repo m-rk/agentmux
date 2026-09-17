@@ -40,7 +40,7 @@ func contains(args []string, want string) bool {
 // TestClaudeRemoteConnectedAlwaysTrue guards the current, deliberate
 // fail-open contract of ClaudePaneRemoteConnected (see its doc comment):
 // neither known indicator renders in claude-code 2.1.271 even for a
-// genuinely connected session (confirmed live on mproject2000,
+// genuinely connected session (confirmed live on a Linux host,
 // 2026-09-15), and reporting "disconnected" in that case caused confirmed
 // active harm (spurious /remote-control keystrokes into every live
 // session on every idle tick, plus a false doctor alert and blocked
@@ -100,7 +100,7 @@ auto mode hint
 const trustDialogPane = `
  Accessing workspace:
 
- /Users/mark/hostel-harley-mini
+  /Users/dev/example-project
 
  Quick safety check: Is this a project you created or one you trust? (Like your
  own code, a well-known open source project, or work from your team). If not,

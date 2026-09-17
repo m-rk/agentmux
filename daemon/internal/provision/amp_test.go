@@ -54,11 +54,11 @@ func TestAmpRunnerIDDerivation(t *testing.T) {
 	}{
 		// The default agentmux naming: instance is <workdir>-<agent>; the
 		// redundant agent suffix is dropped for the runner id.
-		{"34-surada-amp", "amp", "34-surada-amp", "34-surada"},
-		{"34-surada-kilo", "kilo", "34-surada-kilo", "34-surada"},
+		{"site-amp", "amp", "site-amp", "site"},
+		{"site-kilo", "kilo", "site-kilo", "site"},
 		// An instance the operator named without the agent suffix: nothing
 		// to strip; the runner id is the instance name itself.
-		{"34-surada", "amp", "34-surada", "34-surada"},
+		{"site", "amp", "site", "site"},
 		// A hand-picked instance name that doesn't end in -<agent>: also
 		// left as-is.
 		{"myproj", "amp", "myproj", "myproj"},
@@ -69,7 +69,7 @@ func TestAmpRunnerIDDerivation(t *testing.T) {
 		{"my-amp-project", "amp", "my-amp-project", "my-amp-project"},
 		// A different agent's suffix is NOT stripped — the trim only fires
 		// when the suffix matches the current agent.
-		{"34-surada-kilo", "amp", "34-surada-kilo", "34-surada-kilo"},
+		{"site-kilo", "amp", "site-kilo", "site-kilo"},
 	}
 	for _, tc := range cases {
 		got, err := AmpRunnerID(strings.TrimSuffix(tc.instance, "-"+tc.agent))
@@ -82,6 +82,7 @@ func TestAmpRunnerIDDerivation(t *testing.T) {
 		}
 	}
 }
+
 // TestAmpRunnerIDIsIdempotent is what lets ampRunnerIDFor push a registry
 // value it didn't compute through the same function without having to tell
 // "already sanitized" apart from "needs sanitizing".
@@ -317,7 +318,7 @@ func npmLsProbe(t *testing.T, exitCode int) *exec.Cmd {
 	return cmd
 }
 
-// TestAmpInstallPackageProblemVia guards against the mproject2000 incident:
+// TestAmpInstallPackageProblemVia guards against a production incident:
 // amp provisioned via `npm install -g @sourcegraph/amp` (the seemingly
 // obvious package name) instead of @ampcode/cli, the package amp's own
 // self-updater actually manages, so every `amp update` EEXIST'd on the amp

@@ -16,8 +16,8 @@ import (
 // StartCalendarInterval/cron schedule -- don't race on the same
 // ~/.npm-global/lib/node_modules/opencode-ai directory.
 //
-// Confirmed live on harley-mini: every local instance runs as the same
-// user (macOS LaunchAgents don't drop privilege the way the Linux hosts'
+// Confirmed live on a macOS host: every local instance runs as the same
+// user (LaunchAgents don't drop privilege the way the Linux hosts'
 // per-instance runUser does), so all of that host's opencode instances
 // share one npm-global prefix. Six of them refreshing at once stomped on
 // each other's in-progress postinstall (its own node_modules and temp

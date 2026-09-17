@@ -176,12 +176,12 @@ func TestResolveHostName(t *testing.T) {
 	})
 
 	t.Run("an explicit value is remembered for the next blank call", func(t *testing.T) {
-		if _, err := resolveHostName("mproject2000"); err != nil {
+		if _, err := resolveHostName("probe-host"); err != nil {
 			t.Fatalf("resolveHostName: %v", err)
 		}
 		got, err := resolveHostName("")
-		if err != nil || got != "mproject2000" {
-			t.Errorf("resolveHostName(\"\") after an explicit call = %q, %v, want %q, nil", got, err, "mproject2000")
+		if err != nil || got != "probe-host" {
+			t.Errorf("resolveHostName(\"\") after an explicit call = %q, %v, want %q, nil", got, err, "probe-host")
 		}
 	})
 

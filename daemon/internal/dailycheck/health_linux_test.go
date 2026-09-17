@@ -16,12 +16,12 @@ import (
 func TestDescribeFailureIncludesAppsOwnLogLine(t *testing.T) {
 	previous := lastAppLogLine
 	lastAppLogLine = func(ctx context.Context, unit string) (string, error) {
-		return "2026/08/20 19:00:55 session update ken: opencode update/check failed, leaving existing session running untouched: fork/exec /home/ubuntu/.npm-global/bin/opencode: exec format error", nil
+		return "2026/08/20 19:00:55 session update site: opencode update/check failed, leaving existing session running untouched: fork/exec /home/dev/.npm-global/bin/opencode: exec format error", nil
 	}
 	t.Cleanup(func() { lastAppLogLine = previous })
 
 	props := map[string]string{"ActiveState": "inactive", "SubState": "dead", "Result": "exit-code", "ExecMainStatus": "1", "NRestarts": "0"}
-	detail := describeFailure(context.Background(), "agentmux-ken-update.service", props)
+	detail := describeFailure(context.Background(), "agentmux-site-update.service", props)
 
 	if !strings.Contains(detail,"exec format error") {
 		t.Errorf("describeFailure = %q, want it to include the app's own log line", detail)
@@ -42,7 +42,7 @@ func TestDescribeFailureFallsBackWithoutALogLine(t *testing.T) {
 	t.Cleanup(func() { lastAppLogLine = previous })
 
 	props := map[string]string{"ActiveState": "inactive", "SubState": "dead", "Result": "exit-code", "ExecMainStatus": "1", "NRestarts": "0"}
-	detail := describeFailure(context.Background(), "agentmux-ken-update.service", props)
+	detail := describeFailure(context.Background(), "agentmux-site-update.service", props)
 
 	if detail != describeProperties(props) {
 		t.Errorf("describeFailure = %q, want the plain property summary when no log line is available", detail)

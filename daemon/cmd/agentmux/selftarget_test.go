@@ -12,7 +12,7 @@ func TestRefuseIfSelfTarget(t *testing.T) {
 		wantErr  bool
 	}{
 		{"not in tmux", "local", "agentmux-kilo", false, "", false},
-		{"different socket", "local", "agentmux-kilo", false, "/tmp/tmux-1000/agentmux-family-llm-kilo,123,0", false},
+		{"different socket", "local", "agentmux-kilo", false, "/tmp/tmux-1000/agentmux-other-kilo,123,0", false},
 		{"same socket", "local", "agentmux-kilo", false, "/tmp/tmux-1000/agentmux-agentmux-kilo,123,0", true},
 		{"same socket but forced", "local", "agentmux-kilo", true, "/tmp/tmux-1000/agentmux-agentmux-kilo,123,0", false},
 		{"remote host", "other-box", "agentmux-kilo", false, "/tmp/tmux-1000/agentmux-agentmux-kilo,123,0", false},

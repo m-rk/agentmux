@@ -4,13 +4,14 @@ Guidance for a coding agent (e.g. a Claude Code instance) either developing
 this repo or *operating* a live agentmux deployment — managing instances on
 a host where `agentmuxd` is running.
 
-## This host is `harley-mini`
+## Operating the local host
 
-When the user says "this host" / "the local box" / `harley-mini`, they mean
-the same machine — there is no remote hop. `~/.ssh/id_ed25519_harley-mini` is
-this host's identity. The `local` entry in `~/.config/agentmux/hosts.yaml`
-IS harley-mini; do not try to SSH to it, and treat any reference to
-"harley-mini" as a request to operate the local daemon, not a remote one.
+When the user says "this host" / "the local box", they mean the machine the
+daemon is running on — there is no remote hop. Do not try to SSH to it;
+operate the local daemon directly instead. If the user names a host alias
+(a Tailscale name, a `hosts.yaml` entry, or similar) that resolves to this
+same machine, treat the reference as a request to operate the local daemon,
+not a remote one.
 
 ## Reading secrets from 1Password
 
@@ -174,8 +175,8 @@ names so no local or private details can reach a public artifact.
   sudo systemctl restart agentmuxd.service
   ```
 
-  macOS (per-user LaunchAgent under `~/Library/LaunchAgents`; this host,
-  `harley-mini`, is macOS — do not prefix with sudo). Install does
+  macOS (per-user LaunchAgent under `~/Library/LaunchAgents` — do not prefix
+  with sudo). Install does
   `launchctl kickstart -k` itself, which restarts the running daemon on
   upgrade:
   ```sh

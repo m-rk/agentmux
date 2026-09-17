@@ -24,10 +24,10 @@ func TestAmpLaunchArgs(t *testing.T) {
 		},
 		{
 			name:     "discover and explicit dirs slot in before remote-control-terminal",
-			runnerID: "mark-harley-mini",
-			dirs:     []string{"/Users/mark/hostel-harley-mini"},
+			runnerID: "site",
+			dirs:     []string{"/srv/site"},
 			discover: true,
-			want:     []string{"--no-tui", "--runner-id", "mark-harley-mini", "--discover-dirs", "--dir", "/Users/mark/hostel-harley-mini", "--remote-control-terminal"},
+			want:     []string{"--no-tui", "--runner-id", "site", "--discover-dirs", "--dir", "/srv/site", "--remote-control-terminal"},
 		},
 		{
 			name:     "empty and relative dirs are skipped",
@@ -343,7 +343,7 @@ func TestAmpUpdateTargetVersion(t *testing.T) {
 		name, out, want string
 	}{
 		{
-			// Captured verbatim shape from harley-mini: the version pin
+			// Captured verbatim shape from a live host: the version pin
 			// precedes the failing pnpm invocation.
 			name: "pinned version",
 			out:  "Updating to version 0.0.1789603265-ge0868f...\nRunning: pnpm add -g @ampcode/cli@0.0.1789603265-ge0868f\n",

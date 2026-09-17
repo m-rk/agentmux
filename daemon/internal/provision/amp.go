@@ -106,6 +106,7 @@ func ampManagedUpdate(update string) (bool, error) {
 		return false, fmt.Errorf("amp update mode must be \"\", \"on\", or \"off\", got %q", update)
 	}
 }
+
 // rejectUnsupportedAmpOptions refuses the provider-family knobs on an amp
 // instance instead of silently ignoring them. amp's headless runner takes
 // its model and account entirely from the signed-in Amp account
@@ -177,7 +178,7 @@ func ampAuthProblemVia(cmd *exec.Cmd) string {
 // way — `npm install -g @sourcegraph/amp` directly — ends up with its `amp`
 // bin symlink owned by the wrong top-level package, so every self-update
 // EEXIST's trying to reclaim that symlink under @ampcode/cli's name.
-// Confirmed live on mproject2000: two amp instances' update units both
+// Confirmed live on a Linux host: two amp instances' update units both
 // failed with an identical EEXIST on every single run — not a race, since it
 // reproduced run after run even one at a time — until `npm uninstall -g
 // @sourcegraph/amp && npm install -g @ampcode/cli@latest` made the installed

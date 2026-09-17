@@ -27,14 +27,13 @@ import (
 //
 // `amp update` itself shells out through npm when amp was installed via the
 // npm wrapper (the common case here), so it hits the same shared
-// ~/.npm-global prefix opencode's install does. Confirmed live on
-// mproject2000: agentmux-agentmux-amp-update.service and
-// agentmux-ken-amp-update.service — two amp instances under the same run
-// user's HOME — both failed within about a minute of each other with `npm
-// error EEXIST: file already exists: /home/ubuntu/.npm-global/bin/amp`, the
-// exact race withNpmGlobalLock exists to serialize away for opencode. amp
-// just never got wired into that lock when it was added as a newer runner
-// type. Locked here the same way.
+// ~/.npm-global prefix opencode's install does. Confirmed live on a Linux
+// host: two amp instances under the same run user's HOME had their nightly
+// update timers land within about a minute of each other, and both failed
+// with `npm error EEXIST: file already exists:
+// /home/dev/.npm-global/bin/amp`, the exact race withNpmGlobalLock exists
+// to serialize away for opencode. amp just never got wired into that lock
+// when it was added as a newer runner type. Locked here the same way.
 func updateAmp(name string) error {
 	fields, err := registry(name)
 	if err != nil {

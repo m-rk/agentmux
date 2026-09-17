@@ -196,7 +196,7 @@ func UpdateAmp(name string) error {
 // pnpmNoGlobalBinDir is the pnpm error code emitted when pnpm is on PATH
 // (so amp's updater picks it as the package manager) but `pnpm setup` was
 // never run / PNPM_HOME is unset, leaving pnpm with no global bin
-// directory. Confirmed live on harley-mini: every `amp update` — nightly
+// directory. Confirmed live on a Linux host: every `amp update` — nightly
 // unit and manual alike — failed with `ERR_PNPM_NO_GLOBAL_BIN_DIR` while
 // `npm install -g @ampcode/cli@latest` for the same package worked fine.
 const pnpmNoGlobalBinDir = "ERR_PNPM_NO_GLOBAL_BIN_DIR"

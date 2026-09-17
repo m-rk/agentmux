@@ -14,11 +14,10 @@ import (
 )
 
 // TestUpdateAmpLocksAcrossInstancesSharingHome reproduces a real incident on
-// mproject2000: two amp instances under the same run user's HOME
-// (agentmux-agentmux-amp-update.service and agentmux-ken-amp-update.service)
-// had their nightly update timers land within a minute of each other, and
-// both failed with `npm error EEXIST: file already exists:
-// /home/ubuntu/.npm-global/bin/amp` — `amp update` shells out through npm
+// a Linux host: two amp instances under the same run user's HOME had their
+// nightly update timers land within a minute of each other, and both failed
+// with `npm error EEXIST: file already exists:
+// /home/dev/.npm-global/bin/amp` — `amp update` shells out through npm
 // under the hood, hitting the same shared ~/.npm-global prefix opencode's
 // install does, but amp (a newer runner type) never got wired into
 // withNpmGlobalLock the way opencode/kilo/zero are in updateAgent. This
