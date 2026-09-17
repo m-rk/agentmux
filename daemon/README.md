@@ -99,15 +99,10 @@ agent (`claude-code`, `zero`, `opencode`, `kilo`, or `amp`), then shows only the
 settings relevant to that agent. Provider/model fields appear for
 zero/opencode/kilo, the custom-provider URL appears only after choosing a
 custom provider, the API-key environment variable appears only for Kilo, and
-nightly compaction appears only for Claude Code. Amp instead takes none of
-those fields — its model and account come from the signed-in Amp account, so
-provider/model/resume/compact flags are refused — and its runner id is
-derived from the instance name (a trailing `-amp` is stripped, then
-sanitized to a valid hostname). Creating an amp instance also preflights two
-things that fail badly later: the run user must already be signed in
-(`amp login`), and the CLI must be installed via the `@ampcode/cli` npm
-package rather than the `@sourcegraph/amp` wrapper its self-updater cannot
-maintain. Claude Code and Kilo also
+nightly compaction appears only for Claude Code. Amp takes none of those
+fields — model and account come from the signed-in Amp account — and its
+runner id is derived from the instance name; see
+[Supported agents](../README.md#supported-agents). Claude Code and Kilo also
 offer an editable host name for their remote display label, prefilled from the
 target device's derived host name. Common settings are the instance name,
 run-as user (Linux only — a macOS instance always runs as whoever ran the

@@ -50,15 +50,25 @@ leaves their installation and sign-in to you. The provider adapter included
 for `zero`, `opencode`, and `kilo` today is Ollama; provider and model remain
 separate parts of an instance rather than defining the backend itself.
 
+### Supported agents
+
+| Agent | Model & account | Notes |
+|---|---|---|
+| `claude-code` | Your Claude Code login | Resume picker in the wizard (`-resume`); nightly compact-before-resume |
+| `zero`, `opencode`, `kilo` | `-provider`/`-model` flags — Ollama by default, or any OpenAI-compatible endpoint | API-key env var for Kilo custom providers |
+| `amp` | The signed-in Amp account (`amp login`); takes no provider/model flags | Runner id derived from the instance name (`site-amp` → `site`); threads created at ampcode.com land in the workdir |
+
+Creating an `amp` instance preflights two things that fail badly later: the
+run user must already be signed in, and the CLI must be installed via the
+`@ampcode/cli` npm package rather than the `@sourcegraph/amp` wrapper its
+self-updater cannot maintain.
+
+### Features
+
 - **One binary, no installer scripts** — `agentmux new` provisions
   `claude-code`, `zero`, `opencode`, `kilo`, and `amp` instances end to end
   (registry file, systemd unit/LaunchAgent, tmux session) on Linux or macOS.
   `agentmux new -y ...` does the same non-interactively, for scripting.
-  An `amp` instance runs Amp's headless runner (`amp --no-tui --runner-id
-  <id> --remote-control-terminal`) so threads created at ampcode.com land in
-  this checkout; its runner id is derived from the instance name, and it
-  takes no provider/model flags — Amp supplies those from the account the
-  host is signed in to (`amp login`).
 - **Multi-host** — list other machines in `~/.config/agentmux/hosts.yaml`
   (e.g. reachable over Tailscale) and the TUI dials all of them at once,
   merged into one table.
@@ -111,36 +121,6 @@ separate parts of an instance rather than defining the backend itself.
   for example `kilo-minecraft · build-box.example.net`. New context is delivered on the
   existing health tick only when the pane is idle. See
   [Discord collaboration](docs/discord-collaboration.md).
-
-### Amp (ampcode) runners
-
-An `amp` instance is a headless [Amp](https://ampcode.com) runner pointed at
-one checkout: it runs
-`amp --no-tui --runner-id <id> --remote-control-terminal` in the instance's
-tmux session, and threads created at ampcode.com land in that workdir.
-
-```sh
-./agentmux new -y -instance site-amp -agent amp -workdir /home/dev/site -run-user dev
-```
-
-Two prerequisites are checked before creating one, because both fail badly
-later: the run user must already be signed in (`amp login` — otherwise the
-runner sits at an interactive login prompt nobody will answer), and the CLI
-must be installed via the `@ampcode/cli` npm package rather than the
-`@sourcegraph/amp` wrapper, which amp's own self-updater cannot maintain
-(every update would fail on the `amp` bin symlink).
-
-Amp takes no `-provider`/`-model`/`-resume`/`-compact` flags — model and
-account come entirely from the signed-in Amp account, and those flags are
-refused rather than silently ignored. The runner id is derived from the
-instance name: a trailing `-amp` is stripped (`site-amp` runs as
-runner `site`), then lowercased and sanitized to a valid hostname.
-Nightly maintenance runs `amp update` and restarts the session only when the
-CLI version actually changed; unrecognized updater output leaves the session
-alone, since amp has no resume and a needless restart would drop whatever
-thread the runner is serving. There is no remote-control indicator to watch,
-so the health tick is liveness-only — if the account gets logged out later,
-the doctor reports the login-prompt wedge instead of restarting into it.
 
 ### Session doctor
 
