@@ -63,6 +63,22 @@ run user must already be signed in, and the CLI must be installed via the
 `@ampcode/cli` npm package rather than the `@sourcegraph/amp` wrapper its
 self-updater cannot maintain.
 
+### Four properties
+
+Every backend here aims for:
+
+- **Persistence** — the session lives in `tmux`, detached, so SSH drops and
+  network blips don't kill it.
+- **Remote access** — reattach from anywhere (`tmux attach`, the `agentmux`
+  TUI, or a backend's own remote-control feature if it has one).
+- **Self-maintenance** — a scheduled job updates the CLI and restarts the
+  session according to that backend's maintenance policy, so it doesn't go
+  stale.
+- **Redundancy** — running more than one backend side by side on the same
+  box (different CLIs, different model providers) so an outage or degraded
+  provider doesn't take out your only agent, and gives you a choice of
+  agent/model for the task at hand.
+
 ### Features
 
 - **One binary, no installer scripts** — `agentmux new` provisions
@@ -190,29 +206,15 @@ not properties the README quietly assumes already exist.
 See [`daemon/README.md`](daemon/README.md) to build and run it, and
 [`docs/design/daemon-tui.md`](docs/design/daemon-tui.md) for the full design.
 
-## Four properties
-
-Every backend here aims for:
-
-- **Persistence** — the session lives in `tmux`, detached, so SSH drops and
-  network blips don't kill it.
-- **Remote access** — reattach from anywhere (`tmux attach`, the `agentmux`
-  TUI, or a backend's own remote-control feature if it has one).
-- **Self-maintenance** — a scheduled job updates the CLI and restarts the
-  session according to that backend's maintenance policy, so it doesn't go
-  stale.
-- **Redundancy** — running more than one backend side by side on the same
-  box (different CLIs, different model providers) so an outage or degraded
-  provider doesn't take out your only agent, and gives you a choice of
-  agent/model for the task at hand.
-
 ## Manual install (no daemon)
 
 `agentmux new` creates instances through a running agentmux daemon. If you
 only need local instances and don't want the daemon or TUI, the installer
 scripts below provide the same basic host-supervisor shape directly. They are
 not exact feature equivalents: in particular, the native daemon path has
-Kilo session resume and remote-relay setup that the manual scripts do not.
+Kilo session resume and remote-relay setup that the manual scripts do not,
+and there is no manual installer for `amp` — amp runners are daemon-only
+(`agentmux new`).
 
 | Installer | Agent CLIs | Included provider adapter | Linux | macOS |
 |---|---|---|---|---|
