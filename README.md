@@ -31,6 +31,10 @@ The wizard preview is generated from its real form code with fixed synthetic
 data. See [deterministic UX screenshots](docs/design/ux-screenshots.md) to
 regenerate every state or add another one.
 
+The Linux daemon runs as root and the local API has no authentication yet —
+see [Trust model](#trust-model). Only install where every local user is
+trusted.
+
 ```sh
 git clone https://github.com/m-rk/agentmux.git
 cd agentmux/daemon
@@ -43,7 +47,8 @@ sudo ./agentmux daemon install   # Linux: daemon + doctor systemd timer
 ./agentmux                       # TUI: attach, rename, restart, create — across every host
 ```
 
-Building currently requires Go 1.26.5. Each host also needs `tmux`, the agent
+Building requires the Go toolchain pinned in `daemon/go.mod`. Each host also
+needs `tmux`, the agent
 CLI you plan to run, and whatever runtime, credentials, or network access your
 selected model provider requires. agentmux checks those prerequisites but
 leaves their installation and sign-in to you. The provider adapter included
@@ -52,11 +57,12 @@ separate parts of an instance rather than defining the backend itself.
 
 ### Supported agents
 
-| Agent | Model & account | Notes |
-|---|---|---|
-| `claude-code` | Your Claude Code login | Resume picker in the wizard (`-resume`); nightly compact-before-resume |
-| `zero`, `opencode`, `kilo` | `-provider`/`-model` flags — Ollama by default, or any OpenAI-compatible endpoint | API-key env var for Kilo custom providers |
-| `amp` | The signed-in Amp account (`amp login`); takes no provider/model flags | Runner id derived from the instance name (`site-amp` → `site`); threads created at ampcode.com land in the workdir |
+| Agent | Account & billing | Reach it from | Notes |
+|---|---|---|---|
+| `claude-code` | Your Claude account | Mobile app via Remote Control, or tmux/TUI | Wizard resume picker (`-resume`); nightly compact-before-resume |
+| `zero`, `opencode` | Your provider: `-provider`/`-model` flags — self-hosted Ollama by default, or any OpenAI-compatible endpoint | tmux/TUI attach | Re-run `new -y` to change provider/model in place |
+| `kilo` | Same provider model as zero/opencode, plus `-provider-api-key-env` for custom endpoints | Kilo remote relay, or tmux/TUI | Per-instance state isolation ([runbook](docs/kilo-xdg-isolation.md)) |
+| `amp` | Your Amp account (`amp login`); takes no provider/model flags | Threads at ampcode.com land in the workdir; tmux/TUI | Runner id derived from the instance name (`site-amp` → `site`) |
 
 Creating an `amp` instance preflights two things that fail badly later: the
 run user must already be signed in, and the CLI must be installed via the
@@ -93,12 +99,9 @@ Every backend here aims for:
   requires a restart; see [Known limitations](#known-limitations) if keeping
   one exact transcript is important.
 - **Headless view/send-keys** — `agentmux view -instance NAME` prints a
-  read-only snapshot of an instance's tmux pane, and
-  `agentmux send-keys -instance NAME KEY...` types into it (literal text
-  and/or key names like `Escape`, `Enter`, `C-c`) — both without opening an
-  interactive Attach session. This is the headless counterpart to attaching
-  just to look or type a command; see [AGENTS.md](AGENTS.md) for why this
-  matters for a coding agent driving another agentmux instance.
+  read-only snapshot of a tmux pane and `agentmux send-keys` types into it,
+  without attaching. See [AGENTS.md](AGENTS.md) for why this matters to
+  coding agents driving other instances.
 - **Resume lookup** — `agentmux resume-list` shows what Claude Code sessions
   are resumable for a workdir; the wizard offers the same as a picker.
 - **Per-instance Kilo state** — prepared Kilo instances can keep their SQLite
@@ -118,72 +121,23 @@ Every backend here aims for:
   doesn't get stuck behind Claude Code's own huge-session prompt. If the
   transcript already ends at a compact boundary, agentmux skips the redundant
   `/compact`. This is configurable per instance.
-- **A doctor after refresh** — at 03:30, shortly after the default 03:00
-  refresh, one host-wide doctor checks each service, tmux process, session
-  identity, refresh result, pane readiness, and backend remote-control state.
-  Healthy runs stop there. Problems escalate to Claude for a bounded repair
-  plan, which agentmux validates and verifies before reporting the result.
-- **Discord notifications (early)** — Discord is agentmux's outbound channel
-  for anything it or its managed sessions need to tell you. `agentmux notify
-  discord setup` stores a webhook for the current OS user; setup is also
-  available from the wizard and the TUI's `D` key. Built-in messages now cover
-  notable doctor findings and repairs, plus Linux Claude Code warnings
-  around 48 hours before a refresh token expires and again when it does. See
-  [Known limitations](#known-limitations) for the current scope.
-- **Discord collaboration (early)** — managed sessions can share findings,
-  decisions, blockers, and handovers through one Discord forum, even when
-  they're running on different hosts or in different agent CLIs. A read-only
-  bot follows relevant threads; a webhook speaks as the individual session,
-  for example `kilo-minecraft · build-box.example.net`. New context is delivered on the
-  existing health tick only when the pane is idle. See
+- **A doctor after refresh** — one host-wide check daily at 03:30 verifies
+  every session and escalates troubled ones to Claude for bounded repair.
+  See [Doctor](docs/doctor.md).
+- **Discord** — one outbound channel for everything agentmux needs to tell
+  you: doctor findings and repairs plus Claude token-expiry warnings
+  (`agentmux notify discord setup`), and cross-session collaboration through
+  one shared forum. See
   [Discord collaboration](docs/discord-collaboration.md).
 
 ### Session doctor
 
-`agentmux daemon install` also installs one daily doctor for the host: a
-systemd timer on Linux and a per-user LaunchAgent on macOS. It runs at 03:30
-(Australia/Perth on Linux, local time on macOS), giving the default 03:00
-per-instance refresh half an hour to finish. Choose another post-refresh time
-when installing with `agentmux daemon install -doctor-time HH:MM`. Run the
-same pass whenever you want with:
-
-```sh
-agentmux doctor -dry-run   # preview locally; no repair or Discord post
-agentmux doctor            # diagnose, recover safely, and verify
-```
-
-The first stage is deterministic and backend-aware: it checks the service
-manager, tmux/process identity, the latest refresh result, whether the pane is
-interactive, and Claude/Kilo remote-control indicators where applicable. If
-those checks are healthy, no model is called and no pane content leaves the
-host.
-
-When the first stage finds trouble, Claude Code is the escalation agent by
-default and uses the existing Claude login for the session owner; `-model` can
-pin a model when that is useful. On Linux, agentmux drops privileges before
-launching Claude and normally chooses the owner of the first Claude Code
-instance. `-run-user USER` makes that explicit on an unusual multi-user host.
-
-Claude gets no tools and never types into a session itself. It receives only
-the affected sessions' structured findings and capped pane snapshots, then
-returns JSON for agentmux to validate. A dead session may be started; Escape
-may be sent only when the visible pane advertises an Escape action; an idle
-session may be restarted only with a verbatim pane excerpt as evidence. A
-running session cannot be restarted, and no lifecycle repair runs while the
-daily refresh is still active. agentmux refreshes the affected session's state
-immediately before acting, then probes again afterward rather than treating a
-successful command as proof of recovery. Pane text is still session content,
-so use an account you trust with that small excerpt.
-
-No Discord message is sent for an uneventful pass. Repairs, meaningful
-observations, escalation failures, and inspection failures go to the webhook
-configured for the same OS user with `agentmux notify discord setup`. Each
-message includes the before/after state, including successful auto-recovery.
-An unchanged unresolved incident is debounced; recovery or a changed/new
-incident produces a fresh message. If the same repair leaves exactly the same
-problem behind twice, later attempts are suppressed until the session state
-changes, and that suppression is reported once rather than causing silent
-daily restart churn.
+One host-wide check runs daily at 03:30, after the 03:00 per-instance
+refresh: deterministic probes first — no model called, nothing leaves the
+host when healthy — then Claude escalation only for troubled sessions, with
+repairs and notable findings reported to Discord. See
+[Doctor](docs/doctor.md), or run it anytime with
+`agentmux doctor -dry-run`.
 
 ## Trust model
 
@@ -226,143 +180,22 @@ combines an agent CLI, a model provider, a model, a workdir, and host
 supervisor wiring, so new agents/providers/models can be mixed without
 cloning whole directories. `backends/claude-code` is a dedicated installer
 predating that generalization, kept for its Remote Control-specific
-defaults. The worked commands below use Ollama because it is the provider
+defaults. Their examples use Ollama because it is the provider
 adapter currently included in the repository, not because the configurable
 backend is inherently tied to it.
 
-### Quickstart example: Zero + Ollama
+Worked install commands for both backends live in their own READMEs —
+[`backends/agentmux`](backends/agentmux#macos) (Zero + Ollama example) and
+[`backends/claude-code`](backends/claude-code#macos) — including flags,
+multi-instance setups, and unit templates.
 
-#### macOS
+### Removing instances and agentmux
 
-```sh
-# one-time, manual:
-brew install tmux ollama
-brew services start ollama
-ollama signin
-npm install -g @gitlawb/zero
-
-git clone https://github.com/m-rk/agentmux.git
-cd agentmux/backends/agentmux
-./install-macos.sh \
-  --instance work-zero \
-  --agent zero \
-  --provider ollama \
-  --model gpt-oss:20b-cloud \
-  --yes
-```
-
-This creates `com.agentmux.work-zero` and
-`com.agentmux.work-zero.update` LaunchAgents, plus a dedicated workdir at
-`~/.agentmux/work-zero`. Reattach with:
-
-```sh
-tmux -L agentmux-work-zero attach -t work-zero
-```
-
-Use another instance name, agent, model, or workdir to run multiple agentmux
-instances side by side on the same machine.
-
-#### Linux systemd
-
-```sh
-git clone https://github.com/m-rk/agentmux.git
-cd agentmux/backends/agentmux
-sudo ./install.sh \
-  --instance work-zero \
-  --agent zero \
-  --provider ollama \
-  --model gpt-oss:20b-cloud
-```
-
-See [`backends/agentmux`](backends/agentmux) for supported agent/provider
-combinations and all install flags.
-
-### Quickstart (Claude Code backend)
-
-#### macOS
-
-```sh
-git clone https://github.com/m-rk/agentmux.git
-cd agentmux/backends/claude-code
-./install-macos.sh
-```
-
-When run from a terminal, the installer prompts for the tmux session name,
-Claude display name, update time, final confirmation, and whether to attach
-to the tmux session immediately. The default tmux name is
-`<machine-slug>-claude-YYYY-MM-DD`; the default display name is
-`<user>:<host> 🤹 <workdir-basename>`. For unattended installs, pass flags
-instead:
-
-```sh
-./install-macos.sh \
-  --tmux-session work-claude \
-  --display-name "Work Claude" \
-  --update-time 03:00 \
-  --yes
-```
-
-Claude Code must already be authenticated: run `claude` once and complete
-login before installing. The installer verifies authentication and
-pre-accepts workspace trust for the configured workdir. Add `--attach` to
-enter the tmux session immediately after installing.
-
-Use `./install-macos.sh --plan` to preview the LaunchAgents and settings
-without writing files. A normal install creates two user LaunchAgents,
-without `sudo`:
-
-- `com.agentmux.claude-code` runs `rc-start.sh` at login and every five
-  minutes by default, creating the tmux session if it is missing.
-- `com.agentmux.claude-code.update` runs nightly at 03:00 local time by
-  default, updates Claude Code, and restarts the tmux session only when the
-  version changed.
-
-Logs go to `~/Library/Logs/agentmux`. Reattach with
-`tmux -L agentmux-<instance> attach -t <tmux-session>`, or from the Claude
-Code mobile app via Remote Control.
-
-Pass `--instance NAME` (default: `claude-code`) to install a second, third,
-... instance side by side, each with its own workdir, tmux session, and
-LaunchAgent/systemd names — see
-[`backends/claude-code`](backends/claude-code#multiple-instances).
-
-To remove the LaunchAgents: `./uninstall-macos.sh` (leaves any running tmux
-session alone).
-
-#### Linux systemd
-
-```sh
-git clone https://github.com/m-rk/agentmux.git
-cd agentmux/backends/claude-code
-sudo AGENTMUX_SESSION_NAME="my-session" \
-     AGENTMUX_ON_CALENDAR="*-*-* 03:00:00 Australia/Perth" \
-     ./install.sh
-```
-
-(`install.sh` also accepts flags, e.g. `--session-name`/`--on-calendar`, and
-defaults the Remote Control display name to `<user>:<host> 🤹 <workdir-basename>`
-— see [`backends/claude-code`](backends/claude-code) for the full list.)
-
-This sets up two systemd units (running as whichever user invoked `sudo`,
-override with `AGENTMUX_RUN_USER`):
-
-- `agentmux-claude-code.service` — starts (and restarts, on boot) a `tmux`
-  session named `$AGENTMUX_SESSION_NAME` running `claude --remote-control`
-  in `~/.agentmux/claude-code`.
-- `agentmux-claude-code-update.timer` — nightly (default 03:00 in the
-  configured `Australia/Perth` timezone, override with
-  `AGENTMUX_ON_CALENDAR`) checks for a new Claude Code version, and only
-  restarts the session if one was installed.
-
-Reattach any time with
-`tmux -L agentmux-<instance> attach -t <tmux-session>`, or from the Claude
-Code mobile app via Remote Control, where it appears under the configured
-display name.
-
-To remove: `sudo ./uninstall.sh` (leaves any running tmux session alone).
-
-See [`backends/claude-code`](backends/claude-code) for the scripts,
-LaunchAgent templates, and systemd unit templates.
+Manual installs remove per instance — each backend README documents its own
+removal (`uninstall-macos.sh` / `uninstall.sh`; running tmux sessions are
+left alone). The daemon itself comes out with `agentmux daemon uninstall`
+(sudo on Linux) — this removes the daemon and doctor units, not your
+instances' checkouts.
 
 ## Tests
 
@@ -429,9 +262,10 @@ AGENTMUX_LIVE_OPENCODE=1 tests/smoke.sh
 
 ## Roadmap
 
+- Authentication for the daemon API, tighter local socket permissions, and
+  TLS for TCP instead of relying solely on tailnet ACLs (see
+  [Trust model](#trust-model))
+- Add richer refresh diagnostics to the doctor beyond service exit state
 - More backends (Codex CLI, Gemini CLI, whatever comes next) — each one
   running side by side adds to the redundancy/variety this repo is going
   for
-- Add richer refresh diagnostics to the doctor beyond service exit state
-- Authentication for the daemon API, tighter local socket permissions, and
-  TLS for TCP instead of relying solely on tailnet ACLs
