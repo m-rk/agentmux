@@ -21,7 +21,7 @@ Tailscale IP), and the TUI can connect to several hosts at once via
 real instance (registry file + systemd unit/LaunchAgent + tmux session) on
 any configured device — is native Go end to end (no bash) for every
 agent/platform combination this repo supports: `claude-code`, `zero`,
-`opencode`, and `kilo`, on both Linux and macOS.
+`opencode`, `kilo`, and `amp`, on both Linux and macOS.
 
 ## Build
 
@@ -95,11 +95,14 @@ rather than falling back to root.
 ```
 
 First prompts for the device (any host from `hosts.yaml`, or `local`) and
-agent (`claude-code`, `zero`, `opencode`, or `kilo`), then shows only the
+agent (`claude-code`, `zero`, `opencode`, `kilo`, or `amp`), then shows only the
 settings relevant to that agent. Provider/model fields appear for
 zero/opencode/kilo, the custom-provider URL appears only after choosing a
 custom provider, the API-key environment variable appears only for Kilo, and
-nightly compaction appears only for Claude Code. Claude Code and Kilo also
+nightly compaction appears only for Claude Code. Amp takes none of those
+fields — model and account come from the signed-in Amp account — and its
+runner id is derived from the instance name; see
+[Supported agents](../README.md#supported-agents). Claude Code and Kilo also
 offer an editable host name for their remote display label, prefilled from the
 target device's derived host name. Common settings are the instance name,
 run-as user (Linux only — a macOS instance always runs as whoever ran the
