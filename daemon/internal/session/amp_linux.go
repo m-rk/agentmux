@@ -19,7 +19,11 @@ import (
 // wrapper whose postinstall merely hardlinks a platform binary into place, so
 // the npm route would be wrong for a curl-installed amp. The unrepairable-
 // install failure mode is still real; it surfaces as the explicit error
-// below rather than being silently papered over.
+// below rather than being silently papered over. The one exception is
+// runAmpUpdate's npm fallback, which only fires when amp itself chose the
+// npm-wrapper route (its output names the `pnpm add -g @ampcode/cli`
+// command it tried) — a curl-installed amp can never reach it, so the
+// distinction above still holds.
 //
 // `amp update` itself shells out through npm when amp was installed via the
 // npm wrapper (the common case here), so it hits the same shared
@@ -50,15 +54,18 @@ func updateAmp(name string) error {
 	}
 
 	var out []byte
+	var changed, recognized bool
 	err = withNpmGlobalLock(u.HomeDir, u, func() error {
+		run := func(name string, args ...string) ([]byte, error) {
+			return runAs(runUser, name, args...).CombinedOutput()
+		}
 		var lockErr error
-		out, lockErr = runAs(runUser, "amp", "update", "--porcelain").CombinedOutput()
+		out, changed, recognized, lockErr = runAmpUpdate(run)
 		return lockErr
 	})
 	if err != nil {
 		return fmt.Errorf("amp update failed, leaving existing session running untouched: %w: %s", err, out)
 	}
-	changed, recognized := ampUpdateChanged(string(out))
 	if !recognized {
 		// Not an error: amp exited 0, so the update itself is fine. Treated
 		// as "no change" (see ampUpdateChanged) and logged so a wording

@@ -28,15 +28,18 @@ func updateAmp(name string) error {
 		return fmt.Errorf("resolving HOME for npm update lock: %w", herr)
 	}
 	var out []byte
+	var changed, recognized bool
 	err = withNpmGlobalLock(home, nil, func() error {
+		run := func(name string, args ...string) ([]byte, error) {
+			return withPath(name, args...).CombinedOutput()
+		}
 		var lockErr error
-		out, lockErr = withPath("amp", "update", "--porcelain").CombinedOutput()
+		out, changed, recognized, lockErr = runAmpUpdate(run)
 		return lockErr
 	})
 	if err != nil {
 		return fmt.Errorf("amp update failed, leaving existing session running untouched: %w: %s", err, out)
 	}
-	changed, recognized := ampUpdateChanged(string(out))
 	if !recognized {
 		fmt.Printf("warning: %s: could not recognize `amp update --porcelain` output; assuming no version change\n", name)
 	}

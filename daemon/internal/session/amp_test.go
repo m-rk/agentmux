@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -251,5 +252,208 @@ func TestCollaborationIsNeverDeliveredToAmp(t *testing.T) {
 	}
 	if !collaborationPaneSafe("zero", idlePane) {
 		t.Error("collaborationPaneSafe(zero, idle pane) = false, want true (guard must be amp-specific)")
+	}
+}
+
+func TestAmpUpdateTargetVersion(t *testing.T) {
+	cases := []struct {
+		name, out, want string
+	}{
+		{
+			// Captured verbatim shape from harley-mini: the version pin
+			// precedes the failing pnpm invocation.
+			name: "pinned version",
+			out:  "Updating to version 0.0.1789603265-ge0868f...\nRunning: pnpm add -g @ampcode/cli@0.0.1789603265-ge0868f\n",
+			want: "0.0.1789603265-ge0868f",
+		},
+		{
+			name: "no version line",
+			out:  "Error: pnpm add -g @ampcode/cli failed with code 1:\n ERR_PNPM_NO_GLOBAL_BIN_DIR  Unable to find the global bin directory\n",
+			want: "",
+		},
+		{
+			name: "empty",
+			out:  "",
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ampUpdateTargetVersion(tc.out); got != tc.want {
+				t.Errorf("ampUpdateTargetVersion(%q) = %q, want %q", tc.out, got, tc.want)
+			}
+		})
+	}
+}
+
+// ampScript is one scripted command outcome for fakeAmpRun.
+type ampScript struct {
+	out string
+	err error
+}
+
+// fakeAmpRun scripts command outcomes by "name arg..." key and logs every
+// invocation, so tests can assert npm was (or was not) attempted.
+// "amp --version" is served from versions in call order (before-update
+// probe first, after-update probe second) since one key maps to two
+// different answers.
+type fakeAmpRun struct {
+	outputs  map[string]ampScript
+	versions []ampScript
+	calls    []string
+}
+
+func (f *fakeAmpRun) run(name string, args ...string) ([]byte, error) {
+	key := strings.TrimSpace(name + " " + strings.Join(args, " "))
+	f.calls = append(f.calls, key)
+	if key == "amp --version" && len(f.versions) > 0 {
+		v := f.versions[0]
+		f.versions = f.versions[1:]
+		return []byte(v.out), v.err
+	}
+	if o, ok := f.outputs[key]; ok {
+		return []byte(o.out), o.err
+	}
+	return nil, errors.New("unexpected command " + key)
+}
+
+func (f *fakeAmpRun) ran(prefix string) (string, bool) {
+	for _, c := range f.calls {
+		if strings.HasPrefix(c, prefix) {
+			return c, true
+		}
+	}
+	return "", false
+}
+
+func TestRunAmpUpdate(t *testing.T) {
+	const pnpmFailPinned = "Updating to version 0.0.1789603265-ge0868f...\n" +
+		"Running: pnpm add -g @ampcode/cli@0.0.1789603265-ge0868f\n" +
+		"Error: pnpm add -g @ampcode/cli@0.0.1789603265-ge0868f failed with code 1:\n" +
+		" ERR_PNPM_NO_GLOBAL_BIN_DIR  Unable to find the global bin directory\n"
+	const pnpmFailUnpinned = "Error: pnpm add -g @ampcode/cli failed with code 1:\n" +
+		" ERR_PNPM_NO_GLOBAL_BIN_DIR  Unable to find the global bin directory\n"
+	const oldVersion = "0.0.1789329654-g2cdf19 (released 2026-09-13T20:00:54.000Z, 3d ago)\n"
+	const newVersion = "0.0.1789603265-ge0868f (released 2026-09-17T00:01:05.000Z, 1h ago)\n"
+
+	errUpdate := errors.New("exit status 1")
+	errNpm := errors.New("exit status 1")
+	errVersion := errors.New("exit status 1")
+
+	type script = ampScript
+	cases := []struct {
+		name           string
+		update         script
+		versions       []script // before-update probe, then after-update probe
+		npm            script
+		npmSpec        string // expected "npm install -g ..." invocation; "" means npm must not run
+		wantChanged    bool
+		wantRecognized bool
+		wantErr        bool
+	}{
+		{
+			name:           "porcelain no change passes through",
+			update:         script{"Checking for updates...\nno update needed\n", nil},
+			wantChanged:    false,
+			wantRecognized: true,
+		},
+		{
+			name:           "porcelain updated passes through",
+			update:         script{"Checking for updates...\nupdated 0.0.1789603265-ge0868f\n", nil},
+			wantChanged:    true,
+			wantRecognized: true,
+		},
+		{
+			// A non-pnpm failure must propagate untouched: the npm route
+			// would be wrong for e.g. a curl-installed amp, and attempting
+			// it could paper over the real error.
+			name:    "non-pnpm error propagates without npm",
+			update:  script{"network unreachable\n", errUpdate},
+			wantErr: true,
+		},
+		{
+			name:           "pnpm failure falls back to pinned npm install",
+			update:         script{pnpmFailPinned, errUpdate},
+			versions:       []script{{oldVersion, nil}, {newVersion, nil}},
+			npm:            script{"changed 2 packages in 6s\n", nil},
+			npmSpec:        "npm install -g @ampcode/cli@0.0.1789603265-ge0868f",
+			wantChanged:    true,
+			wantRecognized: true,
+		},
+		{
+			name:           "pnpm failure without version line installs latest",
+			update:         script{pnpmFailUnpinned, errUpdate},
+			versions:       []script{{oldVersion, nil}, {newVersion, nil}},
+			npm:            script{"changed 2 packages in 6s\n", nil},
+			npmSpec:        "npm install -g @ampcode/cli@latest",
+			wantChanged:    true,
+			wantRecognized: true,
+		},
+		{
+			// npm "succeeding" without moving the version must not restart
+			// the session: no version change, session already running.
+			name:           "fallback with unchanged version reports no change",
+			update:         script{pnpmFailPinned, errUpdate},
+			versions:       []script{{oldVersion, nil}, {oldVersion, nil}},
+			npm:            script{"up to date\n", nil},
+			npmSpec:        "npm install -g @ampcode/cli@0.0.1789603265-ge0868f",
+			wantChanged:    false,
+			wantRecognized: true,
+		},
+		{
+			name:     "npm fallback failure returns error",
+			update:   script{pnpmFailPinned, errUpdate},
+			versions: []script{{oldVersion, nil}},
+			npm:      script{"npm error code EAI_AGAIN\n", errNpm},
+			npmSpec:  "npm install -g @ampcode/cli@0.0.1789603265-ge0868f",
+			wantErr:  true,
+		},
+		{
+			name:     "unrunnable amp after fallback errors",
+			update:   script{pnpmFailPinned, errUpdate},
+			versions: []script{{oldVersion, nil}, {"", errVersion}},
+			npm:      script{"changed 2 packages in 6s\n", nil},
+			npmSpec:  "npm install -g @ampcode/cli@0.0.1789603265-ge0868f",
+			wantErr:  true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeAmpRun{
+				outputs: map[string]ampScript{
+					"amp update --porcelain": tc.update,
+				},
+				versions: tc.versions,
+			}
+			if tc.npmSpec != "" {
+				fake.outputs[tc.npmSpec] = tc.npm
+			}
+			out, changed, recognized, err := runAmpUpdate(fake.run)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("runAmpUpdate err = %v, wantErr %v (out %q)", err, tc.wantErr, out)
+			}
+			if tc.wantErr {
+				if tc.npmSpec != "" {
+					if got, ok := fake.ran("npm install -g "); !ok || got != tc.npmSpec {
+						t.Errorf("runAmpUpdate ran npm %q, want %q before failing", got, tc.npmSpec)
+					}
+				} else if got, ok := fake.ran("npm "); ok {
+					t.Errorf("runAmpUpdate ran npm (%q) on the non-fallback error path", got)
+				}
+				return
+			}
+			if changed != tc.wantChanged || recognized != tc.wantRecognized {
+				t.Errorf("runAmpUpdate = (%v, %v), want (%v, %v)", changed, recognized, tc.wantChanged, tc.wantRecognized)
+			}
+			if tc.npmSpec == "" {
+				if got, ok := fake.ran("npm "); ok {
+					t.Errorf("runAmpUpdate ran npm (%q) on the non-fallback path", got)
+				}
+				return
+			}
+			if got, ok := fake.ran("npm install -g "); !ok || got != tc.npmSpec {
+				t.Errorf("runAmpUpdate ran npm %q, want %q", got, tc.npmSpec)
+			}
+		})
 	}
 }

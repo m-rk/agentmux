@@ -168,6 +168,81 @@ func UpdateAmp(name string) error {
 	return updateAmp(name)
 }
 
+// pnpmNoGlobalBinDir is the pnpm error code emitted when pnpm is on PATH
+// (so amp's updater picks it as the package manager) but `pnpm setup` was
+// never run / PNPM_HOME is unset, leaving pnpm with no global bin
+// directory. Confirmed live on harley-mini: every `amp update` — nightly
+// unit and manual alike — failed with `ERR_PNPM_NO_GLOBAL_BIN_DIR` while
+// `npm install -g @ampcode/cli@latest` for the same package worked fine.
+const pnpmNoGlobalBinDir = "ERR_PNPM_NO_GLOBAL_BIN_DIR"
+
+// ampUpdateTargetVersion scans `amp update` output for its "Updating to
+// version <v>..." line and returns <v> (trailing dots trimmed), or "" when
+// the line is absent — the caller then installs @latest. Only ever used as
+// a version pin for the npm fallback with an @latest default, so a future
+// wording change degrades into installing latest rather than failing.
+func ampUpdateTargetVersion(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		const prefix = "Updating to version "
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		ver := strings.Trim(strings.TrimPrefix(line, prefix), ".")
+		if fields := strings.Fields(ver); len(fields) > 0 {
+			return fields[0]
+		}
+	}
+	return ""
+}
+
+// runAmpUpdate refreshes the amp CLI via `amp update --porcelain` and
+// reports whether the CLI version changed. run executes a binary the way
+// the calling platform requires (withPath on macOS, runAs on Linux); every
+// call here must go through run so tests can fake the whole exchange.
+//
+// When amp's own updater fails only because it shelled out to a pnpm with
+// no global bin directory (pnpmNoGlobalBinDir in its output), runAmpUpdate
+// falls back to the equivalent `npm install -g @ampcode/cli@<version>` —
+// the same package amp itself was trying to install, pinned to the version
+// from its "Updating to version" line (@latest when that line is absent) —
+// and determines changed by comparing `amp --version` before and after
+// (via ampVersionID, so the drifting relative timestamp can't fake a
+// change). Any other `amp update` failure is returned as-is with no npm
+// attempted.
+//
+// The fallback can only fire when amp itself chose the npm-wrapper route
+// (its output names the `pnpm add -g @ampcode/cli` command), so a
+// curl-installed amp — where the npm route would be wrong — can never
+// reach it.
+func runAmpUpdate(run func(name string, args ...string) ([]byte, error)) (out []byte, changed, recognized bool, err error) {
+	out, err = run("amp", "update", "--porcelain")
+	if err == nil {
+		changed, recognized = ampUpdateChanged(string(out))
+		return out, changed, recognized, nil
+	}
+	if !strings.Contains(string(out), pnpmNoGlobalBinDir) {
+		return out, false, false, err
+	}
+
+	version := ampUpdateTargetVersion(string(out))
+	spec := "@ampcode/cli@latest"
+	if version != "" {
+		spec = "@ampcode/cli@" + version
+	}
+	before, _ := run("amp", "--version")
+	npmOut, npmErr := run("npm", "install", "-g", spec)
+	if npmErr != nil {
+		return out, false, false, fmt.Errorf("amp update failed via misconfigured pnpm (%s; fix with `pnpm setup` or PNPM_HOME) and fallback `npm install -g %s` also failed, leaving existing session running untouched: %w: %s", pnpmNoGlobalBinDir, spec, npmErr, npmOut)
+	}
+	after, afterErr := run("amp", "--version")
+	if afterErr != nil {
+		return npmOut, false, true, fmt.Errorf("npm fallback installed %s but amp is not runnable afterward, leaving existing session running untouched: %w: %s", spec, afterErr, after)
+	}
+	changed = ampVersionID(string(before)) != ampVersionID(string(after))
+	return npmOut, changed, true, nil
+}
+
 // ampUpdateChanged parses `amp update --porcelain`'s machine-readable
 // result. amp documents exactly two outputs ("updated <version>" or "no
 // update needed") but prints human chatter alongside them — confirmed live,
