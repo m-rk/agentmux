@@ -67,7 +67,9 @@ separate parts of an instance rather than defining the backend itself.
 Creating an `amp` instance preflights two things that fail badly later: the
 run user must already be signed in, and the CLI must be installed via the
 `@ampcode/cli` npm package rather than the `@sourcegraph/amp` wrapper its
-self-updater cannot maintain.
+self-updater cannot maintain. A stored `amp login` eventually expires; for
+unattended runners, inject an access token from 1Password instead — see
+[Headless amp auth](docs/amp-secrets.md).
 
 ### Four properties
 

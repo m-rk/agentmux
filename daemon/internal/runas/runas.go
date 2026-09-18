@@ -162,6 +162,14 @@ func CurrentUserLookPath(name string) (string, error) {
 	return "", fmt.Errorf("%q not found in PATH", name)
 }
 
+// CurrentUserHome returns the calling process's home directory, preferring
+// $HOME and falling back to the passwd entry (units sometimes start without
+// HOME set — see CurrentUserCommand).
+func CurrentUserHome() string {
+	home, _ := currentUserPath()
+	return home
+}
+
 func currentUserPath() (home, path string) {
 	home = os.Getenv("HOME")
 	if home == "" {

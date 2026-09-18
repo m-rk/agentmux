@@ -117,6 +117,16 @@ func ampRunnerIDFor(name string, fields map[string]string) (string, error) {
 	return provision.AmpRunnerID(id)
 }
 
+// ampLaunchArgsFor resolves the amp runner argv for an instance from its
+// registry fields.
+func ampLaunchArgsFor(name string, fields map[string]string) ([]string, error) {
+	runnerID, err := ampRunnerIDFor(name, fields)
+	if err != nil {
+		return nil, fmt.Errorf("resolving amp runner id for %s: %w", name, err)
+	}
+	return ampLaunchArgs(runnerID, provision.AmpSplitDirs(fields["AGENTMUX_AMP_DIRS"]), fields["AGENTMUX_AMP_DISCOVER_DIRS"] == "1"), nil
+}
+
 // RunAmp is `agentmux session run --instance NAME` for the amp agent:
 // idempotently ensures the instance's tmux session is running amp's headless
 // runner. Runs as the instance's target user already (the unit's User=
@@ -137,11 +147,10 @@ func RunAmp(name string) error {
 	socket := tmuxSocket(name)
 	workdir := fields["AGENTMUX_WORKDIR"]
 
-	runnerID, err := ampRunnerIDFor(name, fields)
+	launchArgs, err := ampLaunchArgsFor(name, fields)
 	if err != nil {
-		return fmt.Errorf("resolving amp runner id for %s: %w", name, err)
+		return err
 	}
-	launchArgs := ampLaunchArgs(runnerID, provision.AmpSplitDirs(fields["AGENTMUX_AMP_DIRS"]), fields["AGENTMUX_AMP_DISCOVER_DIRS"] == "1")
 
 	if err := os.MkdirAll(workdir, 0o755); err != nil {
 		return fmt.Errorf("creating workdir %s: %w", workdir, err)
@@ -151,7 +160,21 @@ func RunAmp(name string) error {
 		return nil
 	}
 
-	tmuxArgs := append([]string{"-L", socket, "new-session", "-d", "-s", session, "-c", workdir, "amp"}, launchArgs...)
+	// The default launch is amp itself. An instance with an op env-file
+	// (see openv.go) instead re-enters agentmux, which starts amp through
+	// `op run` so its secrets never touch tmux, argv, or the registry.
+	agentCmd := append([]string{"amp"}, launchArgs...)
+	if opEnvFileExists(name) {
+		if err := opPreflight(); err != nil {
+			return fmt.Errorf("instance %s has an op env-file (%s) but cannot start with it: %w", name, opEnvFilePath(name), err)
+		}
+		self, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("resolving current executable: %w", err)
+		}
+		agentCmd = []string{self, "session", "exec", "--instance", name}
+	}
+	tmuxArgs := append([]string{"-L", socket, "new-session", "-d", "-s", session, "-c", workdir}, agentCmd...)
 	if out, err := withPath("tmux", tmuxArgs...).CombinedOutput(); err != nil {
 		return fmt.Errorf("starting tmux session %s: %w: %s", session, err, out)
 	}

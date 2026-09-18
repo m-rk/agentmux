@@ -16,7 +16,7 @@ import (
 // instance's own registry file.
 func runSessionCmd(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: agentmux session <run|update|stop> --instance NAME")
+		fmt.Fprintln(os.Stderr, "usage: agentmux session <run|update|stop|exec> --instance NAME")
 		os.Exit(1)
 	}
 	sub := args[0]
@@ -36,6 +36,10 @@ func runSessionCmd(args []string) {
 		err = session.Update(*instance)
 	case "stop":
 		err = session.Stop(*instance)
+	case "exec":
+		// Internal: the command tmux runs for an amp instance with an op
+		// env-file. Replaces this process with `op run ... amp`.
+		err = session.ExecAmp(*instance)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown session subcommand %q\n", sub)
 		os.Exit(1)

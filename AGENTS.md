@@ -54,6 +54,9 @@ param is the vault, `i=` is the item. The field name is not in the URL —
 try `credential` first (the conventional primary-secret field), then the
 field label shown in the 1Password UI.
 
+To give an amp instance a secret (e.g. an access token so its login never
+expires), see [`docs/amp-secrets.md`](docs/amp-secrets.md).
+
 If `op run` still hangs, triage in this order and stop at the first
 failure:
 1. Re-check the constructed `op://` reference against the source IDs —
