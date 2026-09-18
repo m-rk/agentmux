@@ -19,6 +19,19 @@ const defaultClaudeCodeInstance = "claude-code"
 // one transient failure leaves the unit in failed state and the session
 // dead until the nightly update timer (or a human) restarts it. Valid
 // for Type=oneshot (only Restart=always is forbidden).
+//
+// KillMode=process: the tmux server this unit's ExecStart launches must
+// survive the unit stopping/restarting (a Type=oneshot unit has no
+// long-lived main process, so at stop time systemd's default
+// KillMode=control-group would SIGTERM every process still in the unit's
+// cgroup — including the long-lived tmux server that ExecStart left
+// behind, and any unrelated process that happened to be adopted into it,
+// confirmed live 2026-09-17 when restarting agentmux-minecraft.service
+// killed the PaperMC game server's tmux session, which had been adopted
+// into that cgroup, with only the owning unit's ExecStart around to bring
+// its own session back). KillMode=none would leave ExecStop as the only
+// stop path; KillMode=process keeps systemd's own SIGTERM to the main
+// process while leaving the cgroup's other members alone.
 const claudeCodeUnitTemplate = `[Unit]
 Description=Persistent agentmux Claude Code session (%[1]s / %[2]s)
 After=network-online.target
@@ -31,6 +44,7 @@ User=%[3]s
 ExecStart=%[4]s session run --instance %[1]s
 ExecStop=%[4]s session stop --instance %[1]s
 TimeoutStartSec=30
+KillMode=process
 Restart=on-failure
 RestartSec=30
 

@@ -18,6 +18,18 @@ import (
 // Restart=on-failure: a transient ExecStart failure (see the claude-code
 // template's comment) shouldn't leave the instance dead until the nightly
 // maintenance timer; retry after 30s instead. Valid for Type=oneshot.
+//
+// KillMode=process: the tmux server this unit's ExecStart launches must
+// survive the unit stopping/restarting (a Type=oneshot unit has no
+// long-lived main process, so at stop time systemd's default
+// KillMode=control-group would SIGTERM every process still in the unit's
+// cgroup — including the long-lived tmux server that ExecStart left
+// behind, and any unrelated process that happened to be adopted into it,
+// confirmed live 2026-09-17 when restarting agentmux-minecraft.service
+// killed the PaperMC game server's tmux session, which had been adopted
+// into that cgroup). See the claude-code template's comment for the full
+// story. KillMode=process keeps systemd's own SIGTERM to the main process
+// while leaving the cgroup's other members alone.
 const agentmuxUnitTemplate = `[Unit]
 Description=Persistent agentmux instance %[1]s (%[2]s + %[3]s)
 After=network-online.target ollama.service
@@ -30,6 +42,7 @@ User=%[4]s
 ExecStart=%[5]s session run --instance %[1]s
 ExecStop=%[5]s session stop --instance %[1]s
 TimeoutStartSec=90
+KillMode=process
 Restart=on-failure
 RestartSec=30
 

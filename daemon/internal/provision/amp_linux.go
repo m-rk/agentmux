@@ -24,6 +24,18 @@ import (
 //
 // No After=ollama.service here (unlike agentmuxUnitTemplate): amp talks to
 // ampcode.com, never to a local model server.
+//
+// KillMode=process: the tmux server this unit's ExecStart launches must
+// survive the unit stopping/restarting (a Type=oneshot unit has no
+// long-lived main process, so at stop time systemd's default
+// KillMode=control-group would SIGTERM every process still in the unit's
+// cgroup — including the long-lived tmux server that ExecStart left
+// behind, and any unrelated process that happened to be adopted into it,
+// confirmed live 2026-09-17 when restarting agentmux-minecraft.service
+// killed the PaperMC game server's tmux session, which had been adopted
+// into that cgroup). See the claude-code template's comment for the full
+// story. KillMode=process keeps systemd's own SIGTERM to the main process
+// while leaving the cgroup's other members alone.
 const ampUnitTemplate = `[Unit]
 Description=Persistent agentmux amp runner %[1]s (runner-id %[2]s)
 After=network-online.target
@@ -36,6 +48,7 @@ User=%[3]s
 ExecStart=%[4]s session run --instance %[1]s
 ExecStop=%[4]s session stop --instance %[1]s
 TimeoutStartSec=90
+KillMode=process
 Restart=on-failure
 RestartSec=30
 
