@@ -13,6 +13,24 @@ operate the local daemon directly instead. If the user names a host alias
 same machine, treat the reference as a request to operate the local daemon,
 not a remote one.
 
+## Re-authenticating Claude Code
+
+When Claude credentials need refreshing (`agentmux auth status -all` shows an
+approaching or past refresh-token expiry), prefer driving the whole re-auth
+itself — don't tell the operator to run `agentmux auth login` themselves
+That command is interactive: it prints an authorize URL, then blocks waiting
+for a pasted code on stdin. An agent has no TTY, so run it inside a throwaway
+helper tmux session and shuttle the URL/code with the operator:
+
+1. `agentmux auth status -all` to confirm who needs re-auth.
+2. `tmux -L agentmux-auth new-session -d -s auth 'agentmux auth login -run-user USER -force; echo "AUTH-EXIT:$?"; sleep 600'` (`-force` re-authenticates while still logged in; `-instance NAME` works in place of `-run-user`).
+3. `tmux -L agentmux-auth capture-pane -p -t auth` to read the authorize URL, and hand exactly that URL to the operator to open on another computer.
+4. When the operator pastes the code back, feed it to the waiting prompt: `tmux -L agentmux-auth send-keys -t auth -l '<code>'`, then `tmux -L agentmux-auth send-keys -t auth Enter` (up to five tries; `auth login` never prints or logs pasted codes — don't echo them anywhere else either).
+5. Verify with `agentmux auth status -all` (fresh refresh expiry ~30 days out), then `tmux -L agentmux-auth kill-server`.
+
+Raw tmux is fine here: the helper session is not agentmux-managed, so the
+"never reach around agentmux sessions with raw tmux" rule doesn't apply to it.
+
 ## Reading secrets from 1Password
 
 Secrets (Discord tokens, API keys, etc.) live in 1Password and must be
