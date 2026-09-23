@@ -37,6 +37,8 @@ func main() {
 		runSendKeysCmd(args[1:])
 	case "doctor":
 		runDoctorCmd(args[1:])
+	case "auth":
+		runAuthCmd(args[1:])
 	case "notify":
 		runNotifyCmd(args[1:])
 	case "collab":
@@ -70,6 +72,11 @@ Usage:
   agentmux view -instance NAME        headless read-only snapshot of an instance's tmux pane
   agentmux send-keys -instance NAME KEY...   headless equivalent of typing into an instance's pane
   agentmux doctor              diagnose local sessions and safely recover notable problems
+  agentmux auth status [-instance NAME] [-run-user USER] [-all] [-json]
+                               check Claude Code login and OAuth refresh-token expiry
+  agentmux auth login [-instance NAME] [-run-user USER] [-method claudeai|console] [-force]
+                               re-authenticate headlessly: prints a login URL to open on
+                               another computer, then pastes the code back
   agentmux notify discord setup    configure the Discord webhook agentmux notifies on (e.g. expiring auth)
   agentmux notify discord setup -y -webhook-url URL   same, non-interactively
   agentmux notify discord test     resend a test message using the saved webhook

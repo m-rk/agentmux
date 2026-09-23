@@ -441,7 +441,9 @@ func ensureClaudeRemoteControl(tmux func(args ...string) *exec.Cmd, name, socket
 // fields so a 5-minute tick doesn't resend the same notification forever.
 // Never returns an error: a broken Discord webhook or an unsupported
 // platform shouldn't stop RunClaudeCode's own tmux/remote-control self-heal,
-// so problems here are logged, not propagated.
+// so problems here are logged, not propagated. The expiring/expired
+// messages point at `agentmux auth login`, which prints the authorize URL
+// for completion on another computer when this host has no browser.
 func ensureClaudeAuthNotified(name, runUser, displayName string) {
 	status, err := provision.CheckTokenExpiry("claude-code", runUser)
 	if err != nil {
@@ -476,10 +478,10 @@ func ensureClaudeAuthNotified(name, runUser, displayName string) {
 
 	switch {
 	case expired && !notifiedExpired:
-		notify(fmt.Sprintf("🔴 %s: Claude Code's refresh token has expired — the session will stop working on its next token refresh. Run `claude` and log in again.", displayName))
+		notify(fmt.Sprintf("🔴 %s: Claude Code's refresh token has expired — the session will stop working on its next token refresh. Re-authenticate with: agentmux auth login -instance %s", displayName, name))
 		_ = SetRegistryField(name, "AGENTMUX_AUTH_NOTIFIED_EXPIRED", "true")
 	case expiringSoon && !notifiedSoon:
-		notify(fmt.Sprintf("🟡 %s: Claude Code's refresh token expires %s — re-authenticate soon (run `claude` and log in) to avoid an interruption.", displayName, status.RefreshExpiresAt.Format(time.RFC1123)))
+		notify(fmt.Sprintf("🟡 %s: Claude Code's refresh token expires %s — re-authenticate soon with `agentmux auth login -instance %s` to avoid an interruption.", displayName, status.RefreshExpiresAt.Format(time.RFC1123), name))
 		_ = SetRegistryField(name, "AGENTMUX_AUTH_NOTIFIED_EXPIRING", "true")
 	case !expired && !expiringSoon:
 		// Healthy again (e.g. the user re-authenticated) — clear both

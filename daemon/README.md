@@ -129,7 +129,7 @@ shared paths until their credentials and sessions have been migrated and the
 cutover is explicitly marked ready; follow the
 [Kilo isolation runbook](../docs/kilo-xdg-isolation.md).
 
-### Scripting: non-interactive create, rename, resume lookup, status, view, and control
+### Scripting: non-interactive create, rename, resume lookup, status, view, control, and Claude re-auth
 
 ```sh
 ./agentmux new -y -instance myinstance -agent claude-code -run-user dev -host-name build-box
@@ -139,6 +139,8 @@ cutover is explicitly marked ready; follow the
 ./agentmux control -instance myinstance -action restart
 ./agentmux view -instance myinstance -lines 50
 ./agentmux send-keys -instance myinstance Escape
+./agentmux auth status -all
+./agentmux auth login -instance myinstance
 ```
 
 `new -y` skips the interactive form and creates directly from flags — same
@@ -171,9 +173,19 @@ passed straight through as tmux `send-keys` arguments (literal text and/or
 key names like `Escape`, `Enter`, `C-c`). Both resolve the instance's
 socket/session the same way Attach does, rather than assuming a socket
 naming convention — useful for a script or another agent checking on/
-unwedging a session without an interactive terminal. All seven take
-`-host` (default `local`, or `all` for `list`) to target any device from
-`hosts.yaml`.
+unwedging a session without an interactive terminal.
+`auth status` checks Claude Code login for one instance (`-instance`),
+one OS user (`-run-user`), or every distinct claude-code run user on the
+host (`-all`); `-json` gives a scriptable shape and the exit code is
+non-zero when anyone checked is logged out. `auth login` re-authenticates
+that same user headlessly: it runs `claude auth login` under a PTY, prints
+the authorize URL to open on another computer, and feeds pasted codes back
+to claude (up to five tries, pasted codes are never printed or logged).
+Both are local-host only, like `doctor` — they exec `claude` as a local OS
+user, so run them on the host that owns the instance (they take no `-host`
+flag).
+The other scriptable commands take `-host` (default `local`, or `all` for
+`list`) to target any device from `hosts.yaml`.
 
 ## Multiple hosts over Tailscale
 
