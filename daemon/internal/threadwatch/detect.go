@@ -6,7 +6,9 @@ package threadwatch
 import (
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -28,6 +30,19 @@ const threadIdleEvictAfter = 48 * time.Hour
 // abandoned/stale rather than "probably sitting on a prompt", so it never
 // fires.
 const openTurnStaleAfter = 6 * time.Hour
+
+// usageLimitAlertCooldown bounds how often a usage_limit intervene signal
+// pages for the same instance, independent of alerts.cooldown: usage/rate
+// limits are typically account-wide, so repeated episodes with no progress
+// in between shouldn't repage every hour. A new episode that starts after
+// the thread made progress (a turn succeeded, or activity resumed) bypasses
+// this and pages immediately.
+const usageLimitAlertCooldown = 6 * time.Hour
+
+// usageLimitResetPattern extracts a reset-time phrase from a usage_limit
+// event's excerpt (e.g. "resets 7am (UTC)" out of "You've hit your session
+// limit · resets 7am (UTC)") for the signal's Reason.
+var usageLimitResetPattern = regexp.MustCompile(`(?i)resets? [^·\n]{1,40}`)
 
 // InstanceStats summarises one instance's activity for the nightly review.
 type InstanceStats struct {
@@ -79,6 +94,18 @@ type instanceState struct {
 
 	authFailedActive    bool
 	lastAuthFailedAlert time.Time
+
+	// usageLimitActive/lastUsageLimitAlert/usageLimitProgressed gate the
+	// usage_limit signal (docs/design/thread-watch.md, "usage_limit"):
+	// usageLimitActive is true for the duration of one open episode (so
+	// repeated usage-limit events while blocked don't re-signal);
+	// lastUsageLimitAlert plus usageLimitAlertCooldown caps how often a new
+	// episode can page; usageLimitProgressed, set when a thread recovers
+	// (a turn succeeds or activity resumes after the block), lets a fresh
+	// episode page immediately instead of waiting out the cooldown.
+	usageLimitActive     bool
+	lastUsageLimitAlert  time.Time
+	usageLimitProgressed bool
 }
 
 func (is *instanceState) addDuration(d time.Duration) {
@@ -103,6 +130,14 @@ type threadState struct {
 	lastActive    time.Time // for 48h eviction
 
 	lastAssistantExcerpt string
+
+	// lastEventWasAPIError is true when the most recently observed event
+	// (before the current one) was a KindAPIError, with nothing since to
+	// recover it — used by observeTurnEndLocked to tell a turn that ended
+	// normally (or with a fresh assistant message) from one an API error cut
+	// short, so the latter doesn't anchor an awaiting_user window on stale
+	// or absent evidence. Updated once per Observe call, after dispatch.
+	lastEventWasAPIError bool
 
 	awaitingSince      time.Time // zero when not in an awaiting-user window
 	awaitingSignaled   bool
@@ -131,6 +166,20 @@ type threadState struct {
 
 	retryTimes    map[string][]time.Time // "tool\x00excerpt" -> timestamps in the last hour
 	retrySignaled map[string]bool
+
+	// usageLimitBlocked marks this thread as blocked by a usage_limit event
+	// (docs/design/thread-watch.md, "usage_limit"): while true, awaiting_user
+	// (both the post-turn and open-turn paths) and stalled_turn are skipped
+	// for this thread in Tick, since a usage/rate limit — not the operator —
+	// is what the session is waiting on. usageLimitSkipNext guards against
+	// the turn_end/activity event that immediately follows the usage_limit
+	// event as the tail of the very same interrupted turn (the real-world
+	// case: an API-error assistant record immediately followed by a
+	// system/turn_duration record) being mistaken for recovery: it consumes
+	// exactly one such event without clearing the block, and a later one
+	// does.
+	usageLimitBlocked  bool
+	usageLimitSkipNext bool
 }
 
 func (d *Detector) instanceStateLocked(instance string) *instanceState {
@@ -235,14 +284,40 @@ func (d *Detector) Observe(ev Event) []Signal {
 					ts.lastAssistantExcerpt, false))
 			}
 		}
+		if ts.usageLimitBlocked {
+			ts.usageLimitBlocked = false
+			ts.usageLimitSkipNext = false
+			is.usageLimitActive = false
+			out = append(out, newSignal(ev.Time, ev.Instance, ev.Thread, CodeUsageLimit, TierIntervene,
+				"user message received", "", true))
+		}
 		ts.awaitingSince = time.Time{}
 		ts.open = true
+		// A new turn starts here: any evidence carried over belongs to the
+		// turn that just ended. If this new turn itself ends without a
+		// fresh assistant message (an API error, an interrupt), evidence
+		// should read as empty rather than a stale question from before.
+		ts.lastAssistantExcerpt = ""
 
 	case KindActivity:
 		// Activity means the earlier "awaiting user" hypothesis was wrong
 		// (the agent kept going on its own, e.g. a scheduled/background
 		// step); stop tracking it. Only a user message counts as the human
 		// having replied, so this does not emit a resolved signal.
+		if ts.usageLimitBlocked {
+			if ts.usageLimitSkipNext {
+				// The tail of the same interrupted turn (e.g. amp/opencode
+				// activity immediately following the usage-limit event);
+				// stay blocked.
+				ts.usageLimitSkipNext = false
+			} else {
+				ts.usageLimitBlocked = false
+				is.usageLimitActive = false
+				is.usageLimitProgressed = true
+				out = append(out, newSignal(ev.Time, ev.Instance, ev.Thread, CodeUsageLimit, TierIntervene,
+					"activity resumed after the usage limit", "", true))
+			}
+		}
 		ts.awaitingSince = time.Time{}
 		ts.open = true
 		ts.consecAPIErrors = 0
@@ -256,7 +331,26 @@ func (d *Detector) Observe(ev Event) []Signal {
 		ts.consecAPIErrors = 0
 
 	case KindTurnEnd:
+		if ts.usageLimitBlocked {
+			if ts.usageLimitSkipNext {
+				// This is the turn_end that belongs to the same broken turn
+				// as the usage_limit event itself (the real-world case: an
+				// isApiErrorMessage record immediately followed by a
+				// system/turn_duration record); it is not recovery, so stay
+				// blocked.
+				ts.usageLimitSkipNext = false
+			} else {
+				ts.usageLimitBlocked = false
+				is.usageLimitActive = false
+				is.usageLimitProgressed = true
+				out = append(out, newSignal(ev.Time, ev.Instance, ev.Thread, CodeUsageLimit, TierIntervene,
+					"turn completed after the usage limit", "", true))
+			}
+		}
 		out = append(out, d.observeTurnEndLocked(is, ts, ev, thr)...)
+
+	case KindUsageLimit:
+		out = append(out, d.observeUsageLimitLocked(is, ts, ev)...)
 
 	case KindAPIError:
 		is.apiErrors++
@@ -281,6 +375,11 @@ func (d *Detector) Observe(ev Event) []Signal {
 		is.compactions++
 		out = append(out, d.observeCompactionLocked(ts, ev, thr)...)
 	}
+
+	// Tracked after dispatch so observeTurnEndLocked (called from the
+	// KindTurnEnd case above) still sees whether the *previous* event was an
+	// API error, not this turn_end itself.
+	ts.lastEventWasAPIError = ev.Kind == KindAPIError
 
 	return out
 }
@@ -308,7 +407,18 @@ func (d *Detector) observeTurnEndLocked(is *instanceState, ts *threadState, ev E
 	if ev.Excerpt != "" {
 		ts.lastAssistantExcerpt = ev.Excerpt
 	}
-	ts.awaitingSince = ev.Time
+	if ts.lastAssistantExcerpt != "" || !ts.lastEventWasAPIError {
+		ts.awaitingSince = ev.Time
+	} else {
+		// The turn ended with no fresh assistant message, and the last
+		// thing that happened on this thread was an API error: there is no
+		// real evidence the session is "waiting on a question" (the
+		// incident this guards against: an API-error record immediately
+		// followed by a turn_end, with awaiting_user then reusing a stale
+		// message from much earlier as its evidence). Don't anchor an
+		// awaiting_user window for it at all.
+		ts.awaitingSince = time.Time{}
+	}
 	ts.awaitingSignaled = false
 	ts.consecAPIErrors = 0
 
@@ -430,6 +540,49 @@ func (d *Detector) observeAuthErrorLocked(is *instanceState, ev Event) []Signal 
 		"authentication failed", ev.Excerpt, false)}
 }
 
+// observeUsageLimitLocked handles a KindUsageLimit event: it always blocks
+// the thread (awaiting_user/stalled_turn stop firing for it in Tick until it
+// clears — see threadState.usageLimitBlocked), but only emits an intervene
+// signal once per open episode, and — once an episode has closed — no more
+// than once per usageLimitAlertCooldown per instance unless the thread made
+// progress since the last one (is.usageLimitProgressed).
+func (d *Detector) observeUsageLimitLocked(is *instanceState, ts *threadState, ev Event) []Signal {
+	ts.usageLimitBlocked = true
+	ts.usageLimitSkipNext = true
+	ts.awaitingSince = time.Time{}
+	ts.awaitingSignaled = false
+	ts.openTurnAwaitingSignaled = false
+	ts.consecAPIErrors = 0
+
+	if is.usageLimitActive {
+		// Still the same open episode (e.g. a retry hit the limit again):
+		// already signaled.
+		return nil
+	}
+	if !is.lastUsageLimitAlert.IsZero() && ev.Time.Sub(is.lastUsageLimitAlert) < usageLimitAlertCooldown && !is.usageLimitProgressed {
+		is.usageLimitActive = true
+		return nil
+	}
+
+	is.usageLimitActive = true
+	is.lastUsageLimitAlert = ev.Time
+	is.usageLimitProgressed = false
+	return []Signal{newSignal(ev.Time, ev.Instance, ev.Thread, CodeUsageLimit, TierIntervene,
+		usageLimitReason(ev.Excerpt), ev.Excerpt, false)}
+}
+
+// usageLimitReason builds the CodeUsageLimit signal's Reason, pulling the
+// reset-time phrase out of excerpt when present (e.g. "You've hit your
+// session limit · resets 7am (UTC)" -> "usage limit reached — resets 7am
+// (UTC)").
+func usageLimitReason(excerpt string) string {
+	reason := "usage limit reached"
+	if m := strings.TrimSpace(usageLimitResetPattern.FindString(excerpt)); m != "" {
+		reason += " — " + m
+	}
+	return reason
+}
+
 func (d *Detector) observeCompactionLocked(ts *threadState, ev Event, thr Thresholds) []Signal {
 	ts.compactionTimes = append(ts.compactionTimes, ev.Time)
 	ts.compactionTimes = pruneOlderThan(ts.compactionTimes, ev.Time.Add(-24*time.Hour))
@@ -473,6 +626,14 @@ func (d *Detector) Tick(now time.Time, instances []Instance) []Signal {
 		thr := d.cfg.ThresholdsFor(inst.Name)
 
 		for thread, ts := range d.threads[inst.Name] {
+			if ts.usageLimitBlocked {
+				// A usage/rate limit, not the operator, is what this thread
+				// is waiting on: the dedicated usage_limit signal already
+				// covers it (see observeUsageLimitLocked), so awaiting_user
+				// and stalled_turn stay quiet until it clears.
+				continue
+			}
+
 			// awaiting_user
 			if !ts.awaitingSince.IsZero() && !ts.awaitingSignaled && is.status == "idle" {
 				if wait := now.Sub(ts.awaitingSince); wait >= thr.AwaitingUserAfter {
@@ -541,7 +702,7 @@ func (d *Detector) mostRecentOpenTurnLocked(instance string, now time.Time) (str
 	var bestThread string
 	var best *threadState
 	for thread, ts := range d.threads[instance] {
-		if !ts.open || !ts.awaitingSince.IsZero() {
+		if !ts.open || !ts.awaitingSince.IsZero() || ts.usageLimitBlocked {
 			continue
 		}
 		if ts.lastEventTime.IsZero() || now.Sub(ts.lastEventTime) > openTurnStaleAfter {

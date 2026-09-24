@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -130,7 +131,25 @@ type claudeRecord struct {
 	IsApiErrorMessage bool           `json:"isApiErrorMessage,omitempty"`
 	IsMeta            bool           `json:"isMeta,omitempty"`
 	DurationMs        int64          `json:"durationMs,omitempty"`
+	Error             string         `json:"error,omitempty"` // isApiErrorMessage records: e.g. "rate_limit"
 	Message           *claudeMessage `json:"message,omitempty"`
+}
+
+// usageLimitTextPattern matches isApiErrorMessage text that reads as a
+// usage/session/rate limit rather than a generic API failure — e.g. "You've
+// hit your session limit · resets 7am (UTC)". Matched case-insensitively.
+// See the real record shape this was derived from in
+// docs/design/thread-watch.md's usage_limit notes.
+var usageLimitTextPattern = regexp.MustCompile(`(?i)hit your (?:session|usage|weekly|daily)? ?limit|usage limit|out of (?:usage )?credits|credit balance is too low|quota exceeded`)
+
+// isClaudeUsageLimitError reports whether an isApiErrorMessage record with
+// the given top-level `error` field and assistant text describes a
+// usage/session/credit/rate limit rather than a generic API error.
+func isClaudeUsageLimitError(topLevelError, text string) bool {
+	if strings.EqualFold(topLevelError, "rate_limit") {
+		return true
+	}
+	return usageLimitTextPattern.MatchString(text)
 }
 
 type claudeMessage struct {
@@ -372,7 +391,11 @@ func claudeMapAssistant(rec claudeRecord, base Event, st *claudeFileState) ([]Ev
 			text = claudeText(claudeBlocks(rec.Message.Content))
 		}
 		ev := base
-		ev.Kind = KindAPIError
+		if isClaudeUsageLimitError(rec.Error, text) {
+			ev.Kind = KindUsageLimit
+		} else {
+			ev.Kind = KindAPIError
+		}
 		ev.Excerpt = Excerpt(text)
 		return []Event{ev}, true
 	}

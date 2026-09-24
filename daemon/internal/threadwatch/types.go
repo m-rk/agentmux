@@ -23,6 +23,7 @@ const (
 	KindActivity     = "activity"      // any other transcript progress (tool use, partial output)
 	KindStatus       = "status"        // discovery status change; Status set
 	KindSessionExit  = "session_exit"  // session/process ended
+	KindUsageLimit   = "usage_limit"   // a usage/session/credit/rate limit interrupted a turn
 )
 
 // Signal tiers.
@@ -44,6 +45,7 @@ const (
 	CodeCompactionChurn = "compaction_churn"
 	CodeRetryThrash     = "retry_thrash"
 	CodeLongWait        = "long_wait"
+	CodeUsageLimit      = "usage_limit"
 )
 
 // MaxExcerptBytes caps Event.Excerpt and Signal.Evidence.
