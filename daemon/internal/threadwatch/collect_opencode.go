@@ -120,8 +120,12 @@ func (c *OpencodeCollector) Poll(ctx context.Context, inst Instance, offsets Off
 	if err != nil {
 		return nil, err
 	}
+	turnRows, err := c.queryTurns(ctx, run, sqlitePath, dbPath, sessionIDs, floor)
+	if err != nil {
+		return nil, err
+	}
 
-	events, newOffset := buildOpencodeEvents(inst, msgRows, partRows)
+	events, newOffset := buildOpencodeEvents(inst, msgRows, partRows, turnRows)
 	if newOffset < floor {
 		newOffset = floor
 	}
@@ -243,52 +247,129 @@ func (c *OpencodeCollector) queryParts(ctx context.Context, run opencodeRunner, 
 	return rows, nil
 }
 
+// opencodeTurnRow is one completed turn: a run of assistant "steps" (each
+// its own message row, opencode's usual shape for tool-call round trips)
+// ending in the first step whose finish reason isn't "tool-calls" (stop,
+// length, unknown, or absent-but-completed all end a turn; see
+// isTurnTerminal). Duration and token/cost totals are summed in SQL across
+// every step in the run, not just the terminal row, and the run's start is
+// taken from the preceding user message's created time when there is one
+// (falling back to the first step's own created time) — computing this
+// against the full session history (not just rows newer than the poll
+// floor) so a restart mid-turn still reports the right duration and totals.
+type opencodeTurnRow struct {
+	SessionID           string  `json:"session_id"`
+	TerminalID          string  `json:"terminal_id"`
+	TerminalTimeUpdated int64   `json:"terminal_time_updated"`
+	Completed           int64   `json:"completed"`
+	StartTime           int64   `json:"start_time"`
+	ErrorName           string  `json:"error_name"`
+	ErrorMessage        string  `json:"error_message"`
+	SumIn               int64   `json:"sum_in"`
+	SumOut              int64   `json:"sum_out"`
+	SumCacheWrite       int64   `json:"sum_cw"`
+	SumCacheRead        int64   `json:"sum_cr"`
+	SumCost             float64 `json:"sum_cost"`
+}
+
+// queryTurns groups every assistant message in sessionIDs into turns (a run
+// of "tool-calls" steps followed by a terminal step) and returns only the
+// turns whose terminal step is newer than floor. The grouping and
+// aggregation happen entirely in SQL over each session's full history so
+// the result doesn't depend on which rows a previous poll already
+// consumed.
+func (c *OpencodeCollector) queryTurns(ctx context.Context, run opencodeRunner, sqlitePath, dbPath string, sessionIDs []string, floor int64) ([]opencodeTurnRow, error) {
+	ids := sqlQuoteList(sessionIDs)
+	sql := fmt.Sprintf(`
+WITH assistant AS (
+  SELECT id, session_id, rowid,
+         time_created, time_updated,
+         json_extract(data,'$.time.completed') AS completed,
+         json_extract(data,'$.finish') AS finish,
+         COALESCE(json_extract(data,'$.tokens.input'),0) AS tok_in,
+         COALESCE(json_extract(data,'$.tokens.output'),0) AS tok_out,
+         COALESCE(json_extract(data,'$.tokens.cache.write'),0) AS tok_cw,
+         COALESCE(json_extract(data,'$.tokens.cache.read'),0) AS tok_cr,
+         COALESCE(json_extract(data,'$.cost'),0) AS cost,
+         json_extract(data,'$.error.name') AS err_name,
+         json_extract(data,'$.error.data.message') AS err_msg
+  FROM message
+  WHERE session_id IN (%s) AND json_extract(data,'$.role') = 'assistant'
+),
+flagged AS (
+  SELECT *,
+    CASE WHEN completed IS NOT NULL AND (finish IS NULL OR finish <> 'tool-calls') THEN 1 ELSE 0 END AS is_terminal
+  FROM assistant
+),
+grouped AS (
+  SELECT *,
+    COALESCE(SUM(is_terminal) OVER (
+      PARTITION BY session_id ORDER BY rowid ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+    ), 0) AS turn_group
+  FROM flagged
+),
+turns AS (
+  SELECT session_id, turn_group,
+    MIN(rowid) AS first_rowid,
+    MIN(time_created) AS first_created,
+    MAX(CASE WHEN is_terminal = 1 THEN id END) AS terminal_id,
+    MAX(CASE WHEN is_terminal = 1 THEN time_updated END) AS terminal_time_updated,
+    MAX(CASE WHEN is_terminal = 1 THEN completed END) AS completed,
+    MAX(CASE WHEN is_terminal = 1 THEN err_name END) AS error_name,
+    MAX(CASE WHEN is_terminal = 1 THEN err_msg END) AS error_message,
+    SUM(tok_in) AS sum_in, SUM(tok_out) AS sum_out,
+    SUM(tok_cw) AS sum_cw, SUM(tok_cr) AS sum_cr, SUM(cost) AS sum_cost
+  FROM grouped
+  GROUP BY session_id, turn_group
+  HAVING terminal_id IS NOT NULL
+),
+results AS (
+  SELECT t.session_id AS session_id, t.terminal_id AS terminal_id,
+    t.terminal_time_updated AS terminal_time_updated,
+    t.completed AS completed,
+    COALESCE(
+      (SELECT m2.time_created FROM message m2
+       WHERE m2.session_id = t.session_id AND m2.rowid < t.first_rowid
+         AND json_extract(m2.data,'$.role') = 'user'
+       ORDER BY m2.rowid DESC LIMIT 1),
+      t.first_created
+    ) AS start_time,
+    t.error_name AS error_name, t.error_message AS error_message,
+    t.sum_in AS sum_in, t.sum_out AS sum_out,
+    t.sum_cw AS sum_cw, t.sum_cr AS sum_cr, t.sum_cost AS sum_cost
+  FROM turns t
+)
+SELECT * FROM results WHERE terminal_time_updated > %d ORDER BY terminal_time_updated ASC`,
+		ids, floor)
+
+	var rows []opencodeTurnRow
+	if err := c.query(ctx, run, sqlitePath, dbPath, sql, &rows); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 // --- row -> Event mapping ------------------------------------------------
 
 // opencodeMessageData mirrors the shape of message.data. Field names match
 // opencode's on-disk JSON; only the fields threadwatch needs are captured.
 type opencodeMessageData struct {
-	Role string `json:"role"`
-	Time struct {
+	Role   string `json:"role"`
+	Finish string `json:"finish"` // assistant only: "tool-calls" for a step, otherwise (stop/length/unknown/absent) ends the turn
+	Time   struct {
 		Created   int64 `json:"created"`
 		Completed int64 `json:"completed"`
 	} `json:"time"`
-	Tokens *struct {
-		Input  int64 `json:"input"`
-		Output int64 `json:"output"`
-		Cache  struct {
-			Write int64 `json:"write"`
-			Read  int64 `json:"read"`
-		} `json:"cache"`
-	} `json:"tokens"`
-	Cost  float64 `json:"cost"`
-	Error *struct {
-		Name string `json:"name"`
-		Data struct {
-			Message string `json:"message"`
-		} `json:"data"`
-	} `json:"error"`
 }
 
-func (md opencodeMessageData) usage() Usage {
-	u := Usage{CostUSD: md.Cost}
-	if md.Tokens != nil {
-		u.InputTokens = md.Tokens.Input
-		u.OutputTokens = md.Tokens.Output
-		u.CacheReadTokens = md.Tokens.Cache.Read
-		u.CacheWriteTokens = md.Tokens.Cache.Write
-	}
-	return u
-}
-
-func (md opencodeMessageData) errorText() string {
-	if md.Error == nil {
-		return ""
-	}
-	if md.Error.Data.Message != "" {
-		return md.Error.Data.Message
-	}
-	return md.Error.Name
+// isStep reports whether md is a completed intermediate step of a turn
+// (opencode's per-tool-call-round assistant message) rather than the
+// message that ends the turn. Turn detection/aggregation — including
+// tokens, cost and error text, all summed/read from the terminal step —
+// happens in SQL (queryTurns); this only classifies the non-terminal steps
+// so they're mapped to KindActivity instead.
+func (md opencodeMessageData) isStep() bool {
+	return md.Time.Completed > 0 && md.Finish == "tool-calls"
 }
 
 // opencodePartData mirrors the shape of part.data.
@@ -333,10 +414,11 @@ type opencodeTextPart struct {
 	SessionID   string
 }
 
-// buildOpencodeEvents maps new message/part rows (already filtered to one
-// instance's sessions and ordered oldest-first) to Events, and returns the
-// highest time_updated seen so the caller can advance the offset.
-func buildOpencodeEvents(inst Instance, msgRows []opencodeMessageRow, partRows []opencodePartRow) ([]Event, int64) {
+// buildOpencodeEvents maps new message/part rows, plus turns already
+// aggregated in SQL (see queryTurns), to Events. It returns the highest
+// time_updated/terminal_time_updated seen so the caller can advance the
+// offset.
+func buildOpencodeEvents(inst Instance, msgRows []opencodeMessageRow, partRows []opencodePartRow, turnRows []opencodeTurnRow) ([]Event, int64) {
 	var events []Event
 	var newOffset int64
 
@@ -410,9 +492,70 @@ func buildOpencodeEvents(inst Instance, msgRows []opencodeMessageRow, partRows [
 		}
 	}
 
+	// Turns (see queryTurns) are the authority on where a turn started, how
+	// long it took and what it cost: those are summed in SQL across every
+	// "tool-calls" step of the turn, not just its terminal message. Each
+	// turn's terminal message id is recorded in terminalIDs so the message
+	// loop below skips it (it must not also be treated as a lone step).
+	terminalIDs := make(map[string]bool, len(turnRows))
+	for _, t := range turnRows {
+		if t.TerminalTimeUpdated > newOffset {
+			newOffset = t.TerminalTimeUpdated
+		}
+		terminalIDs[t.TerminalID] = true
+
+		texts := textByMsg[t.TerminalID]
+		delete(textByMsg, t.TerminalID)
+
+		completedAt := msTime(t.Completed)
+		dur := time.Duration(t.Completed-t.StartTime) * time.Millisecond
+		if dur < 0 {
+			dur = 0
+		}
+		tokens := Usage{
+			InputTokens:      t.SumIn,
+			OutputTokens:     t.SumOut,
+			CacheWriteTokens: t.SumCacheWrite,
+			CacheReadTokens:  t.SumCacheRead,
+			CostUSD:          t.SumCost,
+		}
+
+		if t.ErrorName != "" || t.ErrorMessage != "" {
+			kind := KindAPIError
+			if isAuthErrorText(t.ErrorName) || isAuthErrorText(t.ErrorMessage) {
+				kind = KindAuthError
+			}
+			errText := t.ErrorMessage
+			if errText == "" {
+				errText = t.ErrorName
+			}
+			ev := base(kind, t.SessionID, completedAt)
+			ev.Duration = dur
+			ev.Tokens = tokens
+			ev.Excerpt = Excerpt(errText)
+			events = append(events, ev)
+			// Any interim text before the error is still useful context.
+			for _, tp := range texts {
+				act := base(KindActivity, t.SessionID, msTime(tp.TimeUpdated))
+				act.Excerpt = Excerpt(tp.Text)
+				events = append(events, act)
+			}
+		} else {
+			ev := base(KindTurnEnd, t.SessionID, completedAt)
+			ev.Duration = dur
+			ev.Tokens = tokens
+			events = append(events, ev)
+			emitText(KindAssistantMsg, t.SessionID, completedAt, texts)
+		}
+	}
+
 	for _, row := range msgRows {
 		if row.TimeUpdated > newOffset {
 			newOffset = row.TimeUpdated
+		}
+		if terminalIDs[row.ID] {
+			// Already handled above with turn-aggregated duration/tokens.
+			continue
 		}
 		var md opencodeMessageData
 		if err := json.Unmarshal([]byte(row.Data), &md); err != nil {
@@ -429,42 +572,17 @@ func buildOpencodeEvents(inst Instance, msgRows []opencodeMessageRow, partRows [
 			}
 			emitText(KindUserMessage, row.SessionID, ts, texts)
 		case "assistant":
-			if md.Time.Completed > 0 {
-				completedAt := msTime(md.Time.Completed)
-				dur := time.Duration(md.Time.Completed-md.Time.Created) * time.Millisecond
-				if dur < 0 {
-					dur = 0
-				}
-				if md.Error != nil {
-					kind := KindAPIError
-					if isAuthErrorText(md.Error.Name) || isAuthErrorText(md.Error.Data.Message) {
-						kind = KindAuthError
-					}
-					ev := base(kind, row.SessionID, completedAt)
-					ev.Duration = dur
-					ev.Tokens = md.usage()
-					ev.Excerpt = Excerpt(md.errorText())
-					events = append(events, ev)
-					// Any interim text before the error is still useful context.
-					for _, t := range texts {
-						act := base(KindActivity, row.SessionID, msTime(t.TimeUpdated))
-						act.Excerpt = Excerpt(t.Text)
-						events = append(events, act)
-					}
-				} else {
-					ev := base(KindTurnEnd, row.SessionID, completedAt)
-					ev.Duration = dur
-					ev.Tokens = md.usage()
-					events = append(events, ev)
-					emitText(KindAssistantMsg, row.SessionID, completedAt, texts)
-				}
-			} else {
-				// Turn still in progress: any new text is interim, not final.
-				for _, t := range texts {
-					act := base(KindActivity, row.SessionID, msTime(t.TimeUpdated))
-					act.Excerpt = Excerpt(t.Text)
-					events = append(events, act)
-				}
+			// Not a turn-ending message: either a "tool-calls" step
+			// (finish=="tool-calls", completed) or a turn still in
+			// progress (not completed yet). Either way this isn't a
+			// final answer, so any text is interim, not KindAssistantMsg.
+			if md.isStep() {
+				events = append(events, base(KindActivity, row.SessionID, msTime(md.Time.Completed)))
+			}
+			for _, t := range texts {
+				act := base(KindActivity, row.SessionID, msTime(t.TimeUpdated))
+				act.Excerpt = Excerpt(t.Text)
+				events = append(events, act)
 			}
 		default:
 			for _, t := range texts {
