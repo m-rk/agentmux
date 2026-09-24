@@ -167,6 +167,22 @@ func TestHandle_LiveJevGate_AwaitingUser_Accepts(t *testing.T) {
 	}
 }
 
+// A session waiting on the operator pages on its own rule; a low urgency
+// score must not suppress it.
+func TestHandle_LiveJevGate_AwaitingUser_IgnoresUrgency(t *testing.T) {
+	clock := &fakeClock{t: time.Now()}
+	sender := &fakeSender{}
+	cfg := testConfig()
+	cfg.Jev.Mode = "live"
+	a := NewAlerter(cfg, "myhost", sender.send, clock.now)
+
+	sig := baseSignal(CodeAwaitingUser)
+	sig.Judgment = &Judgment{NeedsHumanNow: 0.8, WaitingKind: "question_to_user", Urgency: 2, UrgencyConf: 0.9}
+	if d := a.Handle(sig); !d.Page {
+		t.Fatalf("expected a page despite low urgency, got %+v", d)
+	}
+}
+
 func TestHandle_LiveJevGate_GeneralCode_UrgencyTooLow(t *testing.T) {
 	clock := &fakeClock{t: time.Now()}
 	sender := &fakeSender{}

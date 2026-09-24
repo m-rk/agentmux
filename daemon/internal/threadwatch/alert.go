@@ -205,8 +205,9 @@ func evaluateJev(sig Signal, jc JevConfig) jevOutcome {
 // gatePass implements the per-code gating rules from
 // docs/design/thread-watch.md "Alerting":
 //   - awaiting_user needs NeedsHumanNow >= AwaitingMinProb and a
-//     WaitingKind that isn't "finished" or "none", *and* the general
-//     urgency/confidence bar below.
+//     WaitingKind that isn't "finished" or "none". Urgency doesn't apply:
+//     a session waiting on the operator is the case worth paging even
+//     when nothing is on fire.
 //   - auth_failed and died_mid_turn always pass (they always page).
 //   - every other intervene code needs Urgency >= PageUrgency with
 //     UrgencyConf >= PageConfidence.
@@ -216,10 +217,9 @@ func gatePass(code string, j *Judgment, jc JevConfig) (bool, string) {
 		return true, "always pages"
 	case CodeAwaitingUser:
 		humanOK := j.NeedsHumanNow >= jc.AwaitingMinProb && j.WaitingKind != "finished" && j.WaitingKind != "none"
-		urgencyOK := j.Urgency >= jc.PageUrgency && j.UrgencyConf >= jc.PageConfidence
-		detail := fmt.Sprintf("needs_human_now %.2f (min %.2f), waiting_kind=%s, urgency %.1f (min %.1f), confidence %.2f (min %.2f)",
-			j.NeedsHumanNow, jc.AwaitingMinProb, j.WaitingKind, j.Urgency, jc.PageUrgency, j.UrgencyConf, jc.PageConfidence)
-		return humanOK && urgencyOK, detail
+		detail := fmt.Sprintf("needs_human_now %.2f (min %.2f), waiting_kind=%s",
+			j.NeedsHumanNow, jc.AwaitingMinProb, j.WaitingKind)
+		return humanOK, detail
 	default:
 		urgencyOK := j.Urgency >= jc.PageUrgency && j.UrgencyConf >= jc.PageConfidence
 		detail := fmt.Sprintf("urgency %.1f (min %.1f), confidence %.2f (min %.2f)",
