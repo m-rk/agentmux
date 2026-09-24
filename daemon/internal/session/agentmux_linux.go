@@ -75,8 +75,8 @@ func agentVersion(runUser, agent string, env []string) (string, error) {
 // agentVersionWithRetry re-checks a couple of times before giving up: npm's
 // postinstall can still be finishing its global-bin symlink swap for a
 // moment after `npm install` itself has already returned (confirmed live on
-// uptime-kuma: the runnable-check failed with opencode "not found in PATH",
-// then the symlink's mtime showed it was written a minute later).
+// a real instance: the runnable-check failed with opencode "not found in
+// PATH", then the symlink's mtime showed it was written a minute later).
 func agentVersionWithRetry(runUser, agent string, env []string) (string, error) {
 	var out string
 	var err error

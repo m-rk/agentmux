@@ -99,9 +99,9 @@ agentmux collab setup -y \
 There's one bot, forum, and webhook shared across every host in the fleet — this
 is a multi-host collaboration space, not a per-host one. Provision a new host
 against the *same* Discord application and forum (`channel_id`
-`1547592034334806119`) rather than creating new ones.
+`<channel-id>`) rather than creating new ones.
 
-The credentials live in the `Mark's agents` 1Password vault. Resolve them with
+The credentials live in a dedicated 1Password vault. Resolve them with
 `op run` rather than a raw `op item get`/`op read` — a raw fetch puts the
 secret value directly into the tool call's own output, which leaks into
 transcripts and trips safety classifiers. `op run` injects secrets straight
@@ -116,13 +116,13 @@ The invocation form (including the service-account token export that keeps
 ```sh
 OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.config/op/service_account_token) \
 op run --env-file=<(cat <<'EOF'
-DISCORD_BOT_TOKEN=op://Mark's agents/627h7czjtbkaqv3u3dgvwys65i/credential
-DISCORD_FORUM_WEBHOOK_URL=op://Mark's agents/ab3alqe5aucauyniekjcm6ttvi/website
+DISCORD_BOT_TOKEN=op://<vault-id>/<item-id>/credential
+DISCORD_FORUM_WEBHOOK_URL=op://<vault-id>/<item-id>/website
 EOF
 ) -- agentmux collab setup -y \
   -bot-token "$DISCORD_BOT_TOKEN" \
   -webhook-url "$DISCORD_FORUM_WEBHOOK_URL" \
-  -forum-channel 1547592034334806119
+  -forum-channel <channel-id>
 ```
 
 The forum channel ID doesn't need its own credential: any Discord webhook URL

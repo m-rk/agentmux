@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -120,4 +121,30 @@ func opPreflight() error {
 		return fmt.Errorf("1Password CLI: %w", err)
 	}
 	return nil
+}
+
+// opCommand builds ReadOpRef's op invocation, replaceable in tests.
+var opCommand = runas.CurrentUserCommandContext
+
+// ReadOpRef resolves one 1Password secret reference with the service account
+// token and returns its value to the caller, for agentmux code that consumes
+// a secret itself (thread watch's TypeSafe key) rather than handing it to a
+// child. Errors name the reference, never a value; op's stderr is left out
+// because nothing here should echo what op printed.
+func ReadOpRef(ctx context.Context, ref string) (string, error) {
+	tok, err := readOpToken()
+	if err != nil {
+		return "", err
+	}
+	cmd := opCommand(ctx, "op", "read", "--no-newline", ref)
+	cmd.Env = append(cmd.Environ(), opTokenEnv+"="+tok)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("resolving %s with op: %w", ref, err)
+	}
+	value := strings.TrimSpace(string(out))
+	if value == "" {
+		return "", fmt.Errorf("%s resolved to an empty value", ref)
+	}
+	return value, nil
 }

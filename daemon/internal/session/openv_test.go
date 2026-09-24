@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -208,5 +209,48 @@ func TestExecAmpRefusesWithoutEnvFile(t *testing.T) {
 	t.Cleanup(func() { execSyscall = prev })
 	if err := ExecAmp("probe"); err == nil {
 		t.Fatal("ExecAmp succeeded with no env-file")
+	}
+}
+
+func TestReadOpRefPassesTokenInEnvAndReturnsValue(t *testing.T) {
+	opHome(t, true)
+	prev := opCommand
+	var gotArgs []string
+	opCommand = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		gotArgs = append([]string{name}, args...)
+		cmd := exec.CommandContext(ctx, "sh", "-c", `printf 'value\n'; test -n "$OP_SERVICE_ACCOUNT_TOKEN"`)
+		return cmd
+	}
+	t.Cleanup(func() { opCommand = prev })
+
+	got, err := ReadOpRef(context.Background(), "op://v/i/credential")
+	if err != nil {
+		t.Fatalf("ReadOpRef: %v", err)
+	}
+	if got != "value" {
+		t.Errorf("value = %q", got)
+	}
+	if strings.Join(gotArgs, " ") != "op read --no-newline op://v/i/credential" {
+		t.Errorf("args = %v", gotArgs)
+	}
+}
+
+func TestReadOpRefErrorsNeverIncludeOutput(t *testing.T) {
+	opHome(t, true)
+	prev := opCommand
+	opCommand = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "sh", "-c", `echo leaked-secret; exit 1`)
+	}
+	t.Cleanup(func() { opCommand = prev })
+	_, err := ReadOpRef(context.Background(), "op://v/i/credential")
+	if err == nil || strings.Contains(err.Error(), "leaked-secret") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestReadOpRefRequiresToken(t *testing.T) {
+	opHome(t, false)
+	if _, err := ReadOpRef(context.Background(), "op://v/i/credential"); err == nil {
+		t.Fatal("expected an error without a token file")
 	}
 }

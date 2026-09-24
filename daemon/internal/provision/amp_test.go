@@ -14,7 +14,7 @@ func TestAmpRunnerID(t *testing.T) {
 		want     string
 	}{
 		// The common case: an instance name that's already a valid label.
-		{"kartography", "kartography"},
+		{"webapp", "webapp"},
 		{"data-import", "data-import"},
 		// validateIdentifier accepts these, a DNS label does not.
 		{"probe_2", "probe-2"},
@@ -22,7 +22,7 @@ func TestAmpRunnerID(t *testing.T) {
 		{"my_project.v2", "my-project-v2"},
 		// amp treats runner IDs case-insensitively; folding keeps it stable.
 		{"ABC123", "abc123"},
-		{"Obsidian_LiveSync", "obsidian-livesync"},
+		{"Family_Photos", "family-photos"},
 		// A label may not start or end with a hyphen, and runs collapse.
 		{"-lead", "lead"},
 		{"trail-", "trail"},
@@ -87,7 +87,7 @@ func TestAmpRunnerIDDerivation(t *testing.T) {
 // value it didn't compute through the same function without having to tell
 // "already sanitized" apart from "needs sanitizing".
 func TestAmpRunnerIDIsIdempotent(t *testing.T) {
-	for _, instance := range []string{"kartography", "probe_2", "A.B_C", "  --weird--  ", "x"} {
+	for _, instance := range []string{"webapp", "probe_2", "A.B_C", "  --weird--  ", "x"} {
 		once, err := AmpRunnerID(instance)
 		if err != nil {
 			t.Fatalf("AmpRunnerID(%q): %v", instance, err)
@@ -227,7 +227,7 @@ func TestDefaultInstanceNameForAmp(t *testing.T) {
 	if got, want := defaultInstanceName("amp", ""), "amp"; got != want {
 		t.Errorf("defaultInstanceName(amp, \"\") = %q, want %q", got, want)
 	}
-	if got, want := defaultInstanceName("amp", "/home/dev/kartography"), "kartography-amp"; got != want {
+	if got, want := defaultInstanceName("amp", "/home/dev/webapp"), "webapp-amp"; got != want {
 		t.Errorf("defaultInstanceName(amp, workdir) = %q, want %q", got, want)
 	}
 }

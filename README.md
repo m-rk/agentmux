@@ -126,6 +126,10 @@ Every backend here aims for:
 - **A doctor after refresh** — one host-wide check daily at 03:30 verifies
   every session and escalates troubled ones to Claude for bounded repair.
   See [Doctor](docs/doctor.md).
+- **Thread watch** — an optional per-user service that follows each
+  instance's own turns in near real time and pages Discord only when a
+  session is stuck, waiting on you, or failing in a loop; everything else is
+  logged for a nightly digest. See [Thread watch](docs/thread-watch.md).
 - **Discord** — one outbound channel for everything agentmux needs to tell
   you: doctor findings and repairs plus Claude token-expiry warnings
   (`agentmux notify discord setup`), and cross-session collaboration through
@@ -140,6 +144,55 @@ host when healthy — then Claude escalation only for troubled sessions, with
 repairs and notable findings reported to Discord. See
 [Doctor](docs/doctor.md), or run it anytime with
 `agentmux doctor -dry-run`.
+
+### Thread watch
+
+Thread watch is an optional per-user service that follows each instance's
+own turns — the same JSONL/log/SQLite records Claude Code, amp, and opencode
+already keep for themselves — and tells you when a session needs you.
+**Intervene alerts** page Discord right away, and only when a human action
+would change the outcome: the session is waiting on you, stuck, or failing
+in a loop. Everything else (a slow turn, a recovered error, wasted tokens)
+is only logged as an **insight**, rolling up into at most one **nightly
+digest**. Jev, TypeSafe's System One model, is an optional gate on top of
+the deterministic rules — it runs in shadow mode by default, scoring
+intervene candidates without ever suppressing one, until you trust it
+enough to switch to `live`.
+
+```sh
+sudo agentmux threadwatch install -run-user YOUR_USER  # per host, as your own user
+agentmux threadwatch jev-test                           # optional: check a configured TypeSafe key
+sudo agentmux threadwatch review install [-at 07:00]     # optional: nightly digest timer
+```
+
+The TypeSafe key is entirely optional and set per agentmux install (i.e. per
+host) in `~/.config/agentmux/threadwatch.yaml`, either as a 1Password
+reference (`jev.api_key_ref`) or a literal key in a mode-600 file
+(`jev.api_key`). Without one, thread watch runs on its deterministic rules
+alone.
+
+An intervene alert, rendered by `threadwatch.FormatAlert` (synthetic data):
+
+```
+⏳ webapp · 3f2a9c1e on devbox
+waiting on the user for 12m with no reply
+Waiting: question_to_user
+> I've migrated the settings page and the tests pass. The old form also backs the admin page. Should I migrate that too, or leave it for a separate change?
+Attach: `agentmux` → select webapp → a
+```
+
+A nightly digest, rendered by `threadwatch.FormatDigest` (synthetic data):
+
+```
+🧭 agentmux daily review on devbox
+60 turn(s) · 2 alert(s) sent · slowest: webapp (p90 6m0s)
+• flaky test x5 on webapp — pin the flaky integration test or add a retry (webapp)
+• missing permission x3 on api — add an allow-rule for the blocked tool to AGENTS.md (api)
+```
+
+See [Thread watch](docs/thread-watch.md) for the full operator guide
+(install, config, the TypeSafe key, and the nightly review) and
+[docs/design/thread-watch.md](docs/design/thread-watch.md) for the design.
 
 ## Trust model
 

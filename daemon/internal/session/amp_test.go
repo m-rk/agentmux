@@ -19,8 +19,8 @@ func TestAmpLaunchArgs(t *testing.T) {
 	}{
 		{
 			name:     "single directory runner is unchanged",
-			runnerID: "kartography",
-			want:     []string{"--no-tui", "--runner-id", "kartography", "--remote-control-terminal"},
+			runnerID: "webapp",
+			want:     []string{"--no-tui", "--runner-id", "webapp", "--remote-control-terminal"},
 		},
 		{
 			name:     "discover and explicit dirs slot in before remote-control-terminal",
