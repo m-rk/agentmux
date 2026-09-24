@@ -14,9 +14,18 @@ import (
 // AmpCollector reads amp's own runner log,
 // <Home>/.cache/amp/logs/no-tui.log. Unlike Claude Code, amp's thread
 // content lives server-side, so this collector can only report liveness
-// and error signals: auth failures, API errors, and best-effort turn
-// completions and activity.
-type AmpCollector struct{}
+// and error signals: auth failures, API errors, turn boundaries from the
+// runner's per-thread agent state, compaction, and tool executions.
+type AmpCollector struct {
+	// turns tracks each thread's last agent state and when its current
+	// turn started, so an idle transition can carry the turn's duration.
+	turns map[string]ampTurn
+}
+
+type ampTurn struct {
+	state string
+	start time.Time
+}
 
 // ampLogPath is amp's runner log, relative to an instance's home directory.
 var ampLogPath = filepath.Join(".cache", "amp", "logs", "no-tui.log")
@@ -27,6 +36,8 @@ type ampRecord struct {
 	Level     string    `json:"level"`
 	Message   string    `json:"message"`
 	ThreadID  string    `json:"threadId,omitempty"`
+	Type      string    `json:"type,omitempty"`
+	Subtype   string    `json:"subtype,omitempty"`
 	Error     *ampError `json:"error,omitempty"`
 }
 
@@ -43,16 +54,14 @@ var ampAuthPatterns = []string{
 	" 401",
 }
 
-// ampTurnEndPatterns match amp log messages that, by vocabulary alone
-// (amp does not expose structured turn boundaries in this log), look like
-// the end of a turn. Best effort: false negatives just fall back to
-// KindActivity, and are preferred over false positives.
-var ampTurnEndPatterns = []string{
-	"turn complete",
-	"turn finished",
-	"thread complete",
-	"response complete",
-}
+// ampAgentStateMessage carries a thread's agent state in its subtype:
+// working, streaming, tool_use, running_tools, compacting, then idle when
+// the turn ends.
+const ampAgentStateMessage = "[observer] onAgentState"
+
+// ampToolMarker precedes the tool name in the runner's tool execution
+// lines ("<executor-id> executing tool: Read").
+const ampToolMarker = "executing tool: "
 
 func ampParseTime(ts string) time.Time {
 	if ts == "" {
@@ -85,7 +94,7 @@ func ampContainsAny(haystack string, needles []string) bool {
 }
 
 // Poll implements Collector.
-func (AmpCollector) Poll(ctx context.Context, inst Instance, offsets OffsetStore) ([]Event, error) {
+func (c *AmpCollector) Poll(ctx context.Context, inst Instance, offsets OffsetStore) ([]Event, error) {
 	path := filepath.Join(inst.Home, ampLogPath)
 	info, err := os.Stat(path)
 	if err != nil {
@@ -138,7 +147,7 @@ func (AmpCollector) Poll(ctx context.Context, inst Instance, offsets OffsetStore
 			break
 		}
 		consumed += int64(len(line))
-		if ev, ok := ampMapLine(strings.TrimRight(line, "\n"), inst); ok {
+		if ev, ok := c.mapLine(strings.TrimRight(line, "\n"), inst); ok {
 			events = append(events, ev)
 		}
 	}
@@ -147,9 +156,11 @@ func (AmpCollector) Poll(ctx context.Context, inst Instance, offsets OffsetStore
 	return events, nil
 }
 
-// ampMapLine parses one log line and returns an event if it maps to one.
-// Malformed or uninteresting lines are ignored, never an error.
-func ampMapLine(line string, inst Instance) (Event, bool) {
+// mapLine parses one log line and returns an event if it maps to one.
+// Malformed or uninteresting lines are ignored, never an error. Most of the
+// runner's thread chatter (websocket and JSON-RPC traffic) is dropped: agent
+// state transitions and tool executions are enough to show progress.
+func (c *AmpCollector) mapLine(line string, inst Instance) (Event, bool) {
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return Event{}, false
@@ -190,9 +201,14 @@ func ampMapLine(line string, inst Instance) (Event, bool) {
 		return ev, true
 	}
 
-	if ampContainsAny(rec.Message, ampTurnEndPatterns) {
+	if rec.Message == ampAgentStateMessage && rec.ThreadID != "" && rec.Subtype != "" {
+		return c.agentState(base, rec.Subtype)
+	}
+
+	if i := strings.Index(rec.Message, ampToolMarker); i >= 0 && rec.ThreadID != "" {
 		ev := base
-		ev.Kind = KindTurnEnd
+		ev.Kind = KindActivity
+		ev.Tool = strings.TrimSpace(rec.Message[i+len(ampToolMarker):])
 		return ev, true
 	}
 
@@ -203,13 +219,43 @@ func ampMapLine(line string, inst Instance) (Event, bool) {
 		return Event{}, false
 	}
 
-	if rec.ThreadID != "" {
-		ev := base
-		ev.Kind = KindActivity
-		return ev, true
-	}
-
-	// INFO noise (version checks, runner registration, ...) without a
-	// thread id carries nothing thread watch can use.
 	return Event{}, false
+}
+
+// agentState turns a thread's agent state into an event on transitions
+// only: idle ends the turn, compacting is a compaction, and anything else is
+// progress. Repeats of the current state are dropped.
+func (c *AmpCollector) agentState(base Event, state string) (Event, bool) {
+	if c.turns == nil {
+		c.turns = map[string]ampTurn{}
+	}
+	prev, seen := c.turns[base.Thread]
+	if seen && prev.state == state {
+		return Event{}, false
+	}
+	next := ampTurn{state: state, start: prev.start}
+	ev := base
+	switch {
+	case state == "idle":
+		delete(c.turns, base.Thread)
+		if !seen {
+			// A turn that started before this collector began has no
+			// known length; it still ends.
+			return Event{}, false
+		}
+		ev.Kind = KindTurnEnd
+		if !prev.start.IsZero() {
+			ev.Duration = base.Time.Sub(prev.start)
+		}
+		return ev, true
+	case !seen || prev.state == "idle":
+		next.start = base.Time
+		ev.Kind = KindActivity
+	case state == "compacting":
+		ev.Kind = KindCompaction
+	default:
+		ev.Kind = KindActivity
+	}
+	c.turns[base.Thread] = next
+	return ev, true
 }

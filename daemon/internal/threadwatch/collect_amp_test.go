@@ -2,10 +2,12 @@ package threadwatch
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ampTestOffsets is a minimal in-memory OffsetStore for collector tests.
@@ -55,8 +57,9 @@ func TestAmpCollectorMapsRecords(t *testing.T) {
 		KindAPIError,  // failed to call tool
 		KindAuthError, // session expired
 		KindAuthError, // 401
-		KindTurnEnd,   // turn complete
-		KindActivity,  // tool call started
+		KindActivity,  // agent state: working
+		KindActivity,  // executing tool: Read
+		KindTurnEnd,   // agent state: idle
 		KindAPIError,  // upload failed (redacted)
 	}
 	if strings.Join(kinds, ",") != strings.Join(want, ",") {
@@ -69,6 +72,12 @@ func TestAmpCollectorMapsRecords(t *testing.T) {
 		}
 	}
 
+	if events[4].Tool != "Read" {
+		t.Errorf("tool = %q, want Read", events[4].Tool)
+	}
+	if events[5].Duration != 2*time.Second {
+		t.Errorf("turn duration = %v, want 2s", events[5].Duration)
+	}
 	if got := events[0].Excerpt; got != "failed to call tool: ECONNRESET" {
 		t.Errorf("api error excerpt = %q", got)
 	}
@@ -79,7 +88,7 @@ func TestAmpCollectorMapsRecords(t *testing.T) {
 
 func TestAmpCollectorPartialLineResumption(t *testing.T) {
 	inst, path := ampTestInstance(t)
-	if err := os.WriteFile(path, []byte(`{"@timestamp":"2026-01-01T00:00:00Z","level":"INFO","message":"tool call started","threadId":"t1"}`+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(`{"@timestamp":"2026-01-01T00:00:00Z","level":"INFO","message":"x executing tool: Read","threadId":"t1"}`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -98,7 +107,7 @@ func TestAmpCollectorPartialLineResumption(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.WriteString(`{"@timestamp":"2026-01-01T00:00:01Z","level":"INFO","message":"tool call fin`); err != nil {
+	if _, err := f.WriteString(`{"@timestamp":"2026-01-01T00:00:01Z","level":"INFO","message":"x executing tool: Ed`); err != nil {
 		t.Fatal(err)
 	}
 	f.Close()
@@ -125,7 +134,7 @@ func TestAmpCollectorTruncationRestartsAtZero(t *testing.T) {
 		t.Fatalf("Poll: %v", err)
 	}
 
-	short := `{"@timestamp":"2026-01-01T01:00:00Z","level":"INFO","message":"turn complete","threadId":"t2"}` + "\n"
+	short := `{"@timestamp":"2026-01-01T01:00:00Z","level":"INFO","message":"x executing tool: Read","threadId":"t2"}` + "\n"
 	if err := os.WriteFile(path, []byte(short), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -134,14 +143,14 @@ func TestAmpCollectorTruncationRestartsAtZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Poll: %v", err)
 	}
-	if len(events) != 1 || events[0].Kind != KindTurnEnd || events[0].Thread != "t2" {
+	if len(events) != 1 || events[0].Kind != KindActivity || events[0].Thread != "t2" {
 		t.Fatalf("post-truncation events = %+v", events)
 	}
 }
 
 func TestAmpCollectorRotationByInode(t *testing.T) {
 	inst, path := ampTestInstance(t)
-	if err := os.WriteFile(path, []byte(`{"@timestamp":"2026-01-01T00:00:00Z","level":"INFO","message":"turn complete","threadId":"old"}`+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(`{"@timestamp":"2026-01-01T00:00:00Z","level":"INFO","message":"x executing tool: Read","threadId":"old"}`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -156,7 +165,7 @@ func TestAmpCollectorRotationByInode(t *testing.T) {
 	// naturally, to make sure inode change - not just size - triggers
 	// the restart.
 	replacement := strings.Repeat(" ", 200) + `
-{"@timestamp":"2026-01-01T01:00:00Z","level":"INFO","message":"turn complete","threadId":"new"}
+{"@timestamp":"2026-01-01T01:00:00Z","level":"INFO","message":"x executing tool: Read","threadId":"new"}
 `
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
@@ -192,5 +201,42 @@ func TestAmpCollectorIgnoresReconnectChatterAndInfoNoise(t *testing.T) {
 	}
 	if len(events) != 0 {
 		t.Fatalf("got %d events, want 0: %+v", len(events), events)
+	}
+}
+
+func TestAmpCollectorAgentStateTransitions(t *testing.T) {
+	inst, path := ampTestInstance(t)
+	state := func(sec int, thread, subtype string) string {
+		return fmt.Sprintf(`{"@timestamp":"2026-01-01T00:00:%02dZ","level":"INFO","message":"[observer] onAgentState","type":"agent_state","subtype":%q,"threadId":%q}`, sec, subtype, thread)
+	}
+	lines := []string{
+		state(0, "t1", "idle"),       // turn already over when first seen: nothing
+		state(1, "t1", "working"),    // turn starts
+		state(2, "t1", "streaming"),  // progress
+		state(3, "t1", "streaming"),  // repeat: dropped
+		state(4, "t1", "compacting"), // compaction
+		state(9, "t1", "idle"),       // turn ends after 8s
+		state(10, "t1", "idle"),      // repeat: dropped
+		state(11, "t2", "tool_use"),  // other thread, joined mid-turn
+		state(15, "t2", "idle"),      // ends 4s after first seen
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var c AmpCollector
+	events, err := c.Poll(context.Background(), inst, newAmpTestOffsets())
+	if err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	var got []string
+	for _, e := range events {
+		got = append(got, fmt.Sprintf("%s/%s/%v", e.Thread, e.Kind, e.Duration))
+	}
+	want := []string{
+		"t1/activity/0s", "t1/activity/0s", "t1/compaction/0s", "t1/turn_end/8s",
+		"t2/activity/0s", "t2/turn_end/4s",
+	}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("events = %v, want %v", got, want)
 	}
 }
