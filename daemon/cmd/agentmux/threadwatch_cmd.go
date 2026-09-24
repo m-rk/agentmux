@@ -40,8 +40,10 @@ Usage:
                                (Linux, root) install agentmux-threadwatch.service
   agentmux threadwatch review ...
                                nightly digest (see its own -h)
+  agentmux threadwatch review install [-at 07:00] [-run-user USER] [-print]
+                               (Linux, root) install the nightly review timer
   agentmux threadwatch jev-test [-config PATH]
-                               check the TypeSafe key with one synthetic judgment`)
+                               check the optional TypeSafe key with one synthetic judgment`)
 		return
 	}
 	switch args[0] {

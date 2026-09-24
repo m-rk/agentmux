@@ -106,6 +106,8 @@ headless CLI equivalent:
 | — | `agentmux view -instance NAME` — read-only pane snapshot |
 | — | `agentmux send-keys -instance NAME KEY...` — type into a pane |
 | — | `agentmux doctor -dry-run` — preview the host-wide health/recovery pass |
+| — | `agentmux threadwatch status` — open thread-watch intervene signals |
+| — | `agentmux threadwatch jev-test` — check a configured TypeSafe key |
 
 **Do not shell out to raw `tmux -L`/`-S ...` commands against agentmux-managed
 sessions.** It's tempting — every instance's tmux session is easy to find by
@@ -137,6 +139,18 @@ agentmux itself considers the live session.
   `agentmux`, select the instance, and press `a` in the TUI. `agentmux list
   -json` reports the host and tmux session but deliberately doesn't expose the
   daemon's resolved socket path as a public contract.
+
+## Thread watch
+
+Before intervening in an instance, or telling the operator one needs
+attention, check `agentmux threadwatch status` first — it lists every open
+intervene signal (waiting on the user, stuck, failing in a loop) so you're
+not guessing from a raw pane. Setting up its optional TypeSafe key follows
+the same op reference pattern as everything else in "Reading secrets from
+1Password" above (`jev.api_key_ref: op://<vault-id>/<item-id>/<field>` in
+`~/.config/agentmux/threadwatch.yaml`); `agentmux threadwatch jev-test`
+checks it and only ever prints Jev's verdict, never the key itself. See
+[docs/thread-watch.md](docs/thread-watch.md).
 
 ## Developing agentmux itself
 

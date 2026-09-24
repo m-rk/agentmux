@@ -90,6 +90,8 @@ Usage:
   agentmux threadwatch serve [-dry-run] [-once]   follow agent sessions and alert on Discord (see -h)
   agentmux threadwatch status [-since 24h] [-json]   show open intervene signals
   agentmux threadwatch install -run-user USER     (Linux, root) install agentmux-threadwatch.service
+  agentmux threadwatch jev-test [-config PATH]    check the optional TypeSafe key with one synthetic judgment
   agentmux threadwatch review ...                 nightly digest (see its own -h)
+  agentmux threadwatch review install [-at 07:00] (Linux, root) install the nightly review timer
   agentmux help                show this message`)
 }
