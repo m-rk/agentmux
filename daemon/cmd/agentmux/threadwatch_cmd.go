@@ -17,6 +17,7 @@ import (
 	"github.com/m-rk/agentmux/daemon/internal/daemoninstall"
 	"github.com/m-rk/agentmux/daemon/internal/discordnotify"
 	"github.com/m-rk/agentmux/daemon/internal/pb"
+	"github.com/m-rk/agentmux/daemon/internal/session"
 	"github.com/m-rk/agentmux/daemon/internal/threadwatch"
 	"github.com/m-rk/agentmux/daemon/internal/tuiclient"
 )
@@ -75,6 +76,7 @@ func runThreadwatchServeCmd(args []string) {
 	if err != nil {
 		log.Fatalf("threadwatch serve: resolving home directory: %v", err)
 	}
+	reexecUnderOp(home)
 
 	cfgPath := *configPath
 	if cfgPath == "" {
@@ -295,15 +297,45 @@ func shortThreadID(thread string) string {
 	return thread[:8]
 }
 
+// threadwatchOpMarker is set on serve's environment once it runs under
+// `op run`, so a reference that resolves to nothing can't cause an exec loop.
+const threadwatchOpMarker = "AGENTMUX_THREADWATCH_OP"
+
+// reexecUnderOp restarts serve under `op run` when the user has an env-file
+// at ~/.agentmux/env/threadwatch.env (normally holding TYPESAFE_API_KEY as an
+// op:// reference) and the key isn't already in the environment. Doing this
+// at startup rather than in the unit means adding or removing the env-file
+// only needs a service restart, not a reinstall. Failure is logged and serve
+// continues deterministic-only: a broken 1Password setup must not stop
+// alerting.
+func reexecUnderOp(home string) {
+	envFile := filepath.Join(home, ".agentmux", "env", "threadwatch.env")
+	if os.Getenv(threadwatchOpMarker) != "" || os.Getenv("TYPESAFE_API_KEY") != "" {
+		return
+	}
+	if info, err := os.Stat(envFile); err != nil || !info.Mode().IsRegular() {
+		return
+	}
+	self, err := os.Executable()
+	if err != nil {
+		log.Printf("threadwatch serve: not starting under op (resolving executable: %v); Jev disabled", err)
+		return
+	}
+	argv := append([]string{self}, os.Args[1:]...)
+	if err := session.ExecWithOpEnv(envFile, threadwatchOpMarker, argv); err != nil {
+		log.Printf("threadwatch serve: not starting under op (%v); Jev disabled", err)
+	}
+}
+
 // runThreadwatchInstallCmd is `agentmux threadwatch install -run-user USER`:
 // writes and enables agentmux-threadwatch.service, running as USER (not
 // root — see docs/design/thread-watch.md's "Running it and secrets") so it
-// can read that user's own transcripts. If USER has an op env-file at
-// ~/.agentmux/env/threadwatch.env, ExecStart wraps the same `op run`
-// pattern docs/amp-secrets.md documents for amp, so TYPESAFE_API_KEY is
-// injected without ever touching the unit file or this process; otherwise
-// it runs `agentmux threadwatch serve` directly and thread watch stays
-// deterministic-only.
+// can read that user's own transcripts. The unit always runs `agentmux
+// threadwatch serve` from the stable install path; serve itself moves under
+// `op run` when the user has an env-file (see reexecUnderOp).
+// threadwatchBin is where `agentmux daemon install` puts the binary.
+const threadwatchBin = "/usr/local/bin/agentmux"
+
 func runThreadwatchInstallCmd(args []string) {
 	fs := flag.NewFlagSet("threadwatch install", flag.ExitOnError)
 	runUser := fs.String("run-user", "", "OS user to run thread watch as (required)")
@@ -317,29 +349,14 @@ func runThreadwatchInstallCmd(args []string) {
 	if *runUser == "" {
 		log.Fatal("threadwatch install: -run-user is required")
 	}
-	u, err := user.Lookup(*runUser)
+	_, err := user.Lookup(*runUser)
 	if err != nil {
 		log.Fatalf("threadwatch install: looking up user %q: %v", *runUser, err)
 	}
 
-	self, err := os.Executable()
-	if err != nil {
-		log.Fatalf("threadwatch install: resolving current executable: %v", err)
-	}
-	if resolved, err := filepath.EvalSymlinks(self); err == nil {
-		self = resolved
-	}
-
-	envFile := filepath.Join(u.HomeDir, ".agentmux", "env", "threadwatch.env")
-	execStart := self + " threadwatch serve"
-	if info, statErr := os.Stat(envFile); statErr == nil && info.Mode().IsRegular() {
-		// /usr/bin/env twice, exactly as docs/amp-secrets.md's ExecAmp
-		// pattern does: the outer one resolves `op` on the unit's PATH (a
-		// systemd ExecStart's first token must be an absolute path, so it
-		// can't be a bare `op`), and the inner one strips
-		// OP_SERVICE_ACCOUNT_TOKEN from thread watch's own environment
-		// after op has used it to resolve TYPESAFE_API_KEY.
-		execStart = fmt.Sprintf("/usr/bin/env op run --env-file=%s -- /usr/bin/env -u OP_SERVICE_ACCOUNT_TOKEN %s threadwatch serve", envFile, self)
+	execStart := threadwatchBin + " threadwatch serve"
+	if _, err := os.Stat(threadwatchBin); err != nil {
+		log.Fatalf("threadwatch install: %s not found; run `sudo agentmux daemon install` first", threadwatchBin)
 	}
 
 	unit := fmt.Sprintf(threadwatchUnitTemplate, *runUser, execStart)

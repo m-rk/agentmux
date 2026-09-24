@@ -210,3 +210,41 @@ func TestExecAmpRefusesWithoutEnvFile(t *testing.T) {
 		t.Fatal("ExecAmp succeeded with no env-file")
 	}
 }
+
+func TestExecWithOpEnvPassesTokenAndMarkerOnlyInEnv(t *testing.T) {
+	opHome(t, true)
+	prevPath := withPath
+	withPath = func(name string, args ...string) *exec.Cmd { return exec.Command("/usr/bin/"+name, args...) }
+	t.Cleanup(func() { withPath = prevPath })
+	var gotArgv, gotEnv []string
+	prev := execSyscall
+	execSyscall = func(path string, argv, env []string) error {
+		gotArgv, gotEnv = argv, env
+		return nil
+	}
+	t.Cleanup(func() { execSyscall = prev })
+
+	if err := ExecWithOpEnv("/e/tw.env", "MARKER", []string{"/bin/agentmux", "threadwatch", "serve"}); err != nil {
+		t.Fatalf("ExecWithOpEnv: %v", err)
+	}
+	if strings.Contains(strings.Join(gotArgv, " "), fakeOpToken) {
+		t.Fatal("token leaked into argv")
+	}
+	want := "op run --env-file=/e/tw.env -- /usr/bin/env -u OP_SERVICE_ACCOUNT_TOKEN /bin/agentmux threadwatch serve"
+	if got := strings.Join(append([]string{"op"}, gotArgv[1:]...), " "); got != want {
+		t.Errorf("argv = %q, want %q", got, want)
+	}
+	if !slices.Contains(gotEnv, "OP_SERVICE_ACCOUNT_TOKEN="+fakeOpToken) || !slices.Contains(gotEnv, "MARKER=1") {
+		t.Error("token or marker missing from env")
+	}
+}
+
+func TestExecWithOpEnvRefusesWithoutToken(t *testing.T) {
+	opHome(t, false)
+	prev := execSyscall
+	execSyscall = func(string, []string, []string) error { t.Fatal("exec called"); return nil }
+	t.Cleanup(func() { execSyscall = prev })
+	if err := ExecWithOpEnv("/e/tw.env", "MARKER", []string{"x"}); err == nil {
+		t.Fatal("expected an error without a token file")
+	}
+}

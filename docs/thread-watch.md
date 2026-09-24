@@ -11,7 +11,8 @@ and rationale; this page is the operator's guide to running it.
 
 Thread watch is optional and off until you install it. It reuses the
 `agentmux notify discord setup` webhook, so there's no separate credential to
-configure for alerting.
+configure for alerting. The nightly review has its own page:
+[thread-watch-review.md](thread-watch-review.md).
 
 ## Install
 
@@ -102,13 +103,14 @@ access token:
    chmod 600 ~/.agentmux/env/threadwatch.env
    ```
 
-3. Install (or reinstall) thread watch: `agentmux threadwatch install
-   -run-user YOUR_USER` checks for this file and, if present, wraps
-   `ExecStart` in the same `op run --env-file=... -- /usr/bin/env -u
-   OP_SERVICE_ACCOUNT_TOKEN ...` pattern `agentmux session exec` uses for
-   amp, so the resolved key exists only in thread watch's own process
-   environment — never in the unit file, `ps` output, or agentmux's own
-   registry.
+3. Restart thread watch: `sudo systemctl restart agentmux-threadwatch`. At
+   startup `threadwatch serve` sees the env-file and moves itself under
+   `op run --env-file=... -- /usr/bin/env -u OP_SERVICE_ACCOUNT_TOKEN ...`,
+   the same mechanism `agentmux session exec` uses for amp. The resolved key
+   exists only in thread watch's own environment: never in the unit file,
+   `ps` output, or agentmux's registry. The service account token comes from
+   `~/.config/op/service_account_token` and is stripped before thread watch
+   runs.
 
 If the env-file is missing, or 1Password can't resolve the reference, thread
 watch runs deterministic-only; it never alerts *less* because Jev is

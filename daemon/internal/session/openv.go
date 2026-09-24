@@ -121,3 +121,18 @@ func opPreflight() error {
 	}
 	return nil
 }
+
+// ExecWithOpEnv replaces the current process with `op run
+// --env-file=<envFile> -- argv...`, the same way ExecAmp launches a runner:
+// the service account token goes on op's environment only and is stripped
+// before argv starts. envMarker is set on the child so a caller can tell it
+// is already running under op and must not exec again.
+func ExecWithOpEnv(envFile, envMarker string, argv []string) error {
+	tok, err := readOpToken()
+	if err != nil {
+		return err
+	}
+	cmd := withPath("op", opRunArgs(envFile, argv)...)
+	env := append(cmd.Environ(), opTokenEnv+"="+tok, envMarker+"=1")
+	return execSyscall(cmd.Path, cmd.Args, env)
+}

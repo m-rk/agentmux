@@ -1,6 +1,7 @@
 # Thread watch (design)
 
-Status: phases 1-2 implemented (deterministic watch, Jev in shadow mode). See
+Status: phases 1-3 implemented (deterministic watch, Jev in shadow mode,
+nightly review). See
 [docs/thread-watch.md](../thread-watch.md) for the operator's guide —
 installing it, `threadwatch.yaml`, `TYPESAFE_API_KEY`, and `threadwatch
 serve`/`status`.
@@ -100,8 +101,8 @@ Alerts reuse `discordnotify` and the webhook from
 
 ## Nightly review and digest
 
-`agentmux review` runs on the doctor timer, after the doctor (default 07:00
-local, configurable with `daemon install -review-time`). It:
+`agentmux threadwatch review` runs on its own timer (default 07:00, set with
+`agentmux threadwatch review install -at HH:MM`). It:
 
 1. Aggregates the last 24 h of events and signals into per-instance stats: turn
    count, p50/p90 turn time, errors, tokens, and alerts sent.
@@ -178,7 +179,7 @@ local-only.
 2. **Jev in shadow mode.** Add the `internal/typesafe` client and the
    awaiting-user gate, urgency gate and tagging. Verdicts are logged only.
    After a week, compare them with what you actually needed to know.
-3. **Nightly review and digest.** Add `agentmux review`, the timer, the report
+3. **Nightly review and digest.** Add `agentmux threadwatch review`, the timer, the report
    file and the Discord digest.
 4. **Jev live, plus the remaining collectors.** Jev gates start controlling
    paging. Add the opencode collector, the pane fallback for `zero` and
