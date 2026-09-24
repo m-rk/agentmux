@@ -63,7 +63,9 @@ identical — no output, no error — so listing can neither succeed nor
 usefully fail. Always reach for the specific item ID instead. A worked
 example for the Discord collab credentials lives in
 [`docs/discord-collaboration.md`](docs/discord-collaboration.md); reuse
-that pattern (item IDs and field names) rather than re-deriving them.
+that pattern and its field names. This repo is public, so it only has
+placeholder IDs: the real item references are in the operator's private
+`~/docs/secrets-and-agents.md` ("Item references kept out of public repos").
 
 When the input is a 1Password share URL
 (`https://start.1password.com/open/i?a=<account>&v=<vault-id>&i=<item-id>&h=...`),
