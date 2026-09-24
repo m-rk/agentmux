@@ -84,37 +84,42 @@ instances:
 Every duration accepts either a Go duration string (`10m`, `2h30m`) or a bare
 number of seconds.
 
-## TYPESAFE_API_KEY (optional)
+## TypeSafe key (optional)
 
-Thread watch runs deterministic-only — every intervene/insight detector in
-[docs/design/thread-watch.md](design/thread-watch.md#detectors) still works
-— without a TypeSafe key. Adding one turns on the Jev gates (see below).
-Follow the same pattern [docs/amp-secrets.md](amp-secrets.md) uses for amp's
-access token:
+Jev needs a TypeSafe API key. Without one, thread watch runs on its
+deterministic rules alone. Each host's thread watch takes its own key, set in
+`~/.config/agentmux/threadwatch.yaml` in one of two ways:
 
-1. Put the TypeSafe API key in a 1Password item and note its vault and item
-   IDs.
-2. Write an env-file of a *reference*, not the value, at
-   `~/.agentmux/env/threadwatch.env`:
+```yaml
+jev:
+  # A 1Password secret reference: op://<vault-id>/<item-id>/<field>.
+  api_key_ref: op://<vault-id>/<item-id>/credential
+  # Or the key itself. Only honoured when threadwatch.yaml is mode 600.
+  # api_key: ts_...
+```
 
-   ```sh
-   mkdir -p ~/.agentmux/env
-   echo 'TYPESAFE_API_KEY=op://<vault-id>/<item-id>/credential' > ~/.agentmux/env/threadwatch.env
-   chmod 600 ~/.agentmux/env/threadwatch.env
-   ```
+Prefer `api_key_ref`: the file then holds no secret. For a 1Password share
+URL (`...&v=<vault-id>&i=<item-id>...`) the vault is `v=` and the item is
+`i=`; the field is normally `credential`. The reference is resolved once at
+startup with the host's service account token
+(`~/.config/op/service_account_token`, mode 600), so `op` must be on the run
+user's PATH. `TYPESAFE_API_KEY` in the environment, if set, overrides both.
 
-3. Restart thread watch: `sudo systemctl restart agentmux-threadwatch`. At
-   startup `threadwatch serve` sees the env-file and moves itself under
-   `op run --env-file=... -- /usr/bin/env -u OP_SERVICE_ACCOUNT_TOKEN ...`,
-   the same mechanism `agentmux session exec` uses for amp. The resolved key
-   exists only in thread watch's own environment: never in the unit file,
-   `ps` output, or agentmux's registry. The service account token comes from
-   `~/.config/op/service_account_token` and is stripped before thread watch
-   runs.
+Check the key with one synthetic judgment (it prints Jev's verdict, never
+the key):
 
-If the env-file is missing, or 1Password can't resolve the reference, thread
-watch runs deterministic-only; it never alerts *less* because Jev is
-unavailable.
+```sh
+agentmux threadwatch jev-test
+```
+
+Then restart thread watch: `sudo systemctl restart agentmux-threadwatch`.
+Its log says where the key came from, or why Jev is off.
+
+If the setting is wrong (both keys set, a malformed reference, a literal key
+in a file others can read) or 1Password can't resolve the reference, thread
+watch logs why and runs deterministic-only; it never alerts *less* because
+Jev is unavailable. To keep one project's excerpts away from TypeSafe, set
+`jev: false` on that instance (see [Config](#config)).
 
 ## Shadow vs. live Jev
 

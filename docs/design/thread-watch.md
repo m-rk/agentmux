@@ -152,21 +152,21 @@ deterministic-only behaviour and never alert *less* because Jev is down.
 
 Thread watch runs as its own unit, `agentmux-threadwatch.service`, **as the
 operator user**, not inside root `agentmuxd`. That lets it read the user's
-transcripts without root, and reuse the amp secret pattern from
-[amp-secrets.md](../amp-secrets.md):
+transcripts without root. It talks to `agentmuxd` over the existing gRPC
+socket (`ListInstances`, `ViewPane`) for status and panes.
 
-```
-op run --env-file=~/.agentmux/env/threadwatch.env -- /usr/bin/env -u OP_SERVICE_ACCOUNT_TOKEN agentmux threadwatch serve
-```
-
-with `~/.agentmux/env/threadwatch.env` holding only a reference:
-`TYPESAFE_API_KEY=op://<vault-id>/<item-id>/credential`. Without the env-file,
-thread watch runs deterministic-only. It talks to `agentmuxd` over the existing
-gRPC socket (`ListInstances`, `ViewPane`) for status and panes.
+The TypeSafe key is optional and set per host in `threadwatch.yaml`: either
+`jev.api_key` (the key itself, honoured only from a mode-600 file) or
+`jev.api_key_ref` (an `op://<vault-id>/<item-id>/<field>` reference). A
+reference is resolved once at startup with the host's service account token,
+in-process: thread watch is the consumer, so unlike amp there is no child to
+hand the value to. Any key problem is logged and thread watch continues
+deterministic-only, so a 1Password outage can't stop alerting.
+`agentmux threadwatch jev-test` checks the key with one synthetic judgment.
 
 Data leaving the host: capped, redacted excerpts go to TypeSafe (Jev gates)
 and, for the nightly review, to Claude under your existing login. Per-instance
-`jev: off` / `review: off` in `threadwatch.yaml` keeps a sensitive project
+`jev: false` / `review: false` in `threadwatch.yaml` keeps a sensitive project
 local-only.
 
 ## Phases

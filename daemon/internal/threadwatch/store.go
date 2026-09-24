@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -68,8 +69,50 @@ func LoadConfig(path string) (Config, error) {
 	default:
 		return Config{}, fmt.Errorf("%s: invalid jev.mode %q (want off, shadow, or live)", path, cfg.Jev.Mode)
 	}
+	checkAPIKey(&cfg.Jev, path)
 
 	return cfg, nil
+}
+
+// checkAPIKey drops an unusable TypeSafe key setting and records why in
+// KeyProblem, rather than failing the load: Jev is optional, and a key
+// mistake must not stop deterministic alerting. A literal key is only
+// accepted from a file no one else can read.
+func checkAPIKey(jc *JevConfig, path string) {
+	switch {
+	case jc.APIKey != "" && jc.APIKeyRef != "":
+		jc.KeyProblem = "set jev.api_key or jev.api_key_ref, not both"
+	case jc.APIKeyRef != "" && !validOpRef(jc.APIKeyRef):
+		jc.KeyProblem = "jev.api_key_ref must look like op://<vault-id>/<item-id>/<field>"
+	case jc.APIKey != "":
+		info, err := os.Stat(path)
+		if err != nil {
+			jc.KeyProblem = fmt.Sprintf("checking %s: %v", path, err)
+		} else if perm := info.Mode().Perm(); perm&0o077 != 0 {
+			jc.KeyProblem = fmt.Sprintf("jev.api_key ignored: %s is mode %03o; run chmod 600 %s", path, perm, path)
+		}
+	}
+	if jc.KeyProblem != "" {
+		jc.APIKey, jc.APIKeyRef = "", ""
+	}
+}
+
+// validOpRef accepts op://vault/item/field and op://vault/item/section/field.
+func validOpRef(ref string) bool {
+	rest, ok := strings.CutPrefix(ref, "op://")
+	if !ok {
+		return false
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) < 3 || len(parts) > 4 {
+		return false
+	}
+	for _, p := range parts {
+		if p == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // yamlConfig mirrors Config for YAML decoding, with pointer fields so
@@ -108,6 +151,8 @@ type yamlJevConfig struct {
 	PageUrgency     *float64 `yaml:"page_urgency"`
 	PageConfidence  *float64 `yaml:"page_confidence"`
 	AwaitingMinProb *float64 `yaml:"awaiting_min_prob"`
+	APIKey          *string  `yaml:"api_key"`
+	APIKeyRef       *string  `yaml:"api_key_ref"`
 }
 
 type yamlInstanceConf struct {
@@ -190,6 +235,12 @@ func mergeJev(dst *JevConfig, src *yamlJevConfig) {
 	}
 	if src.Model != nil {
 		dst.Model = *src.Model
+	}
+	if src.APIKey != nil {
+		dst.APIKey = strings.TrimSpace(*src.APIKey)
+	}
+	if src.APIKeyRef != nil {
+		dst.APIKeyRef = strings.TrimSpace(*src.APIKeyRef)
 	}
 	if src.PageUrgency != nil {
 		dst.PageUrgency = *src.PageUrgency

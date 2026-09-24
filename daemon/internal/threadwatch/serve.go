@@ -59,19 +59,14 @@ type InsightJudge interface {
 	JudgeInsight(ctx context.Context, sig Signal, recent []Event) Judgment
 }
 
-// NewJudge returns a JevJudge backed by TYPESAFE_API_KEY, or nil when no key
-// is configured or cfg.Jev.Mode is "off". A nil Judge means Runner runs
-// deterministic-only, per the design doc's "never alert less because Jev is
-// down".
-func NewJudge(cfg Config) Judge {
-	if cfg.Jev.Mode == "off" {
+// NewJudge returns a JevJudge using apiKey, or nil when there is no key or
+// cfg.Jev.Mode is "off". A nil Judge means Runner runs deterministic-only,
+// per the design doc's "never alert less because Jev is down".
+func NewJudge(cfg Config, apiKey string) Judge {
+	if cfg.Jev.Mode == "off" || apiKey == "" {
 		return nil
 	}
-	client, ok := typesafe.NewFromEnv()
-	if !ok {
-		return nil
-	}
-	return JevJudge{Client: client, Model: cfg.Jev.Model}
+	return JevJudge{Client: &typesafe.Client{APIKey: apiKey}, Model: cfg.Jev.Model}
 }
 
 // Runner polls instances on an interval, feeds their agents' events through

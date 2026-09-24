@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -332,5 +333,48 @@ func TestStoreConcurrentAppends(t *testing.T) {
 	}
 	if len(got) != n {
 		t.Fatalf("ReadEvents returned %d events, want %d", len(got), n)
+	}
+}
+
+func TestLoadConfigAPIKeySettings(t *testing.T) {
+	cases := []struct {
+		name        string
+		yaml        string
+		mode        os.FileMode
+		wantKey     string
+		wantRef     string
+		wantProblem string
+	}{
+		{"none", "jev:\n  mode: shadow\n", 0o600, "", "", ""},
+		{"literal in private file", "jev:\n  api_key: ts_abc\n", 0o600, "ts_abc", "", ""},
+		{"literal in readable file", "jev:\n  api_key: ts_abc\n", 0o644, "", "", "chmod 600"},
+		{"op reference", "jev:\n  api_key_ref: op://vault/item/credential\n", 0o644, "", "op://vault/item/credential", ""},
+		{"op reference with section", "jev:\n  api_key_ref: op://vault/item/section/field\n", 0o644, "", "op://vault/item/section/field", ""},
+		{"malformed reference", "jev:\n  api_key_ref: vault/item\n", 0o600, "", "", "op://"},
+		{"both", "jev:\n  api_key: ts_abc\n  api_key_ref: op://v/i/f\n", 0o600, "", "", "not both"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "threadwatch.yaml")
+			if err := os.WriteFile(path, []byte(tc.yaml), tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(path, tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if cfg.Jev.APIKey != tc.wantKey || cfg.Jev.APIKeyRef != tc.wantRef {
+				t.Errorf("key=%q ref=%q, want %q %q", cfg.Jev.APIKey, cfg.Jev.APIKeyRef, tc.wantKey, tc.wantRef)
+			}
+			if tc.wantProblem == "" && cfg.Jev.KeyProblem != "" || !strings.Contains(cfg.Jev.KeyProblem, tc.wantProblem) {
+				t.Errorf("problem = %q, want containing %q", cfg.Jev.KeyProblem, tc.wantProblem)
+			}
+			if strings.Contains(cfg.Jev.KeyProblem, "ts_abc") {
+				t.Error("problem text leaks the key")
+			}
+		})
 	}
 }

@@ -38,6 +38,17 @@ type JevConfig struct {
 	PageUrgency     float64 `yaml:"page_urgency"`      // default 4 (Score 1..5)
 	PageConfidence  float64 `yaml:"page_confidence"`   // default 0.6
 	AwaitingMinProb float64 `yaml:"awaiting_min_prob"` // default 0.5
+
+	// The TypeSafe API key is optional; without one thread watch runs
+	// deterministic-only. Give at most one: the key itself (the config file
+	// must then be private, mode 600), or a 1Password secret reference,
+	// op://<vault-id>/<item-id>/<field>, resolved at startup with the host's
+	// service account token. TYPESAFE_API_KEY in the environment overrides
+	// both.
+	APIKey    string `yaml:"api_key"`
+	APIKeyRef string `yaml:"api_key_ref"`
+	// KeyProblem explains why a configured key was dropped at load time.
+	KeyProblem string `yaml:"-"`
 }
 
 // InstanceConf overrides per instance.

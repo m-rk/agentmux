@@ -9,9 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
-	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/m-rk/agentmux/daemon/internal/daemoninstall"
@@ -20,6 +20,7 @@ import (
 	"github.com/m-rk/agentmux/daemon/internal/session"
 	"github.com/m-rk/agentmux/daemon/internal/threadwatch"
 	"github.com/m-rk/agentmux/daemon/internal/tuiclient"
+	"github.com/m-rk/agentmux/daemon/internal/typesafe"
 )
 
 // runThreadwatchCmd is `agentmux threadwatch ...`: thread watch's own
@@ -38,7 +39,9 @@ Usage:
   agentmux threadwatch install [-run-user USER] [-print]
                                (Linux, root) install agentmux-threadwatch.service
   agentmux threadwatch review ...
-                               nightly digest (see its own -h)`)
+                               nightly digest (see its own -h)
+  agentmux threadwatch jev-test [-config PATH]
+                               check the TypeSafe key with one synthetic judgment`)
 		return
 	}
 	switch args[0] {
@@ -50,10 +53,12 @@ Usage:
 		runThreadwatchInstallCmd(args[1:])
 	case "review":
 		runThreadwatchReview(args[1:])
+	case "jev-test":
+		runThreadwatchJevTestCmd(args[1:])
 	case "-h", "--help", "help":
 		runThreadwatchCmd(nil)
 	default:
-		log.Fatalf("threadwatch: unknown subcommand %q (want serve, status, install, or review)", args[0])
+		log.Fatalf("threadwatch: unknown subcommand %q (want serve, status, install, review, or jev-test)", args[0])
 	}
 }
 
@@ -76,7 +81,6 @@ func runThreadwatchServeCmd(args []string) {
 	if err != nil {
 		log.Fatalf("threadwatch serve: resolving home directory: %v", err)
 	}
-	reexecUnderOp(home)
 
 	cfgPath := *configPath
 	if cfgPath == "" {
@@ -108,9 +112,12 @@ func runThreadwatchServeCmd(args []string) {
 		log.Println(note)
 	}
 
-	judge := threadwatch.NewJudge(cfg)
+	apiKey, keyNote := threadwatchAPIKey(context.Background(), cfg)
+	judge := threadwatch.NewJudge(cfg, apiKey)
 	if judge == nil {
-		log.Println("threadwatch: no TYPESAFE_API_KEY (or jev.mode: off); running deterministic-only")
+		log.Printf("threadwatch: Jev off (%s; jev.mode %s); running deterministic-only", keyNote, cfg.Jev.Mode)
+	} else {
+		log.Printf("threadwatch: Jev %s (%s)", cfg.Jev.Mode, keyNote)
 	}
 
 	runner := &threadwatch.Runner{
@@ -297,42 +304,38 @@ func shortThreadID(thread string) string {
 	return thread[:8]
 }
 
-// threadwatchOpMarker is set on serve's environment once it runs under
-// `op run`, so a reference that resolves to nothing can't cause an exec loop.
-const threadwatchOpMarker = "AGENTMUX_THREADWATCH_OP"
-
-// reexecUnderOp restarts serve under `op run` when the user has an env-file
-// at ~/.agentmux/env/threadwatch.env (normally holding TYPESAFE_API_KEY as an
-// op:// reference) and the key isn't already in the environment. Doing this
-// at startup rather than in the unit means adding or removing the env-file
-// only needs a service restart, not a reinstall. Failure is logged and serve
-// continues deterministic-only: a broken 1Password setup must not stop
-// alerting.
-func reexecUnderOp(home string) {
-	envFile := filepath.Join(home, ".agentmux", "env", "threadwatch.env")
-	if os.Getenv(threadwatchOpMarker) != "" || os.Getenv("TYPESAFE_API_KEY") != "" {
-		return
+// threadwatchAPIKey finds the optional TypeSafe key: TYPESAFE_API_KEY from
+// the environment, else threadwatch.yaml's jev.api_key, else its
+// jev.api_key_ref resolved through 1Password. It returns where the key came
+// from, or why there isn't one, for a log line that never includes the key.
+func threadwatchAPIKey(ctx context.Context, cfg threadwatch.Config) (key, note string) {
+	if v := strings.TrimSpace(os.Getenv("TYPESAFE_API_KEY")); v != "" {
+		return v, "TypeSafe key from TYPESAFE_API_KEY"
 	}
-	if info, err := os.Stat(envFile); err != nil || !info.Mode().IsRegular() {
-		return
+	jc := cfg.Jev
+	switch {
+	case jc.KeyProblem != "":
+		return "", jc.KeyProblem
+	case jc.APIKey != "":
+		return jc.APIKey, "TypeSafe key from threadwatch.yaml"
+	case jc.APIKeyRef != "":
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		v, err := session.ReadOpRef(ctx, jc.APIKeyRef)
+		if err != nil {
+			return "", err.Error()
+		}
+		return v, "TypeSafe key from " + jc.APIKeyRef
 	}
-	self, err := os.Executable()
-	if err != nil {
-		log.Printf("threadwatch serve: not starting under op (resolving executable: %v); Jev disabled", err)
-		return
-	}
-	argv := append([]string{self}, os.Args[1:]...)
-	if err := session.ExecWithOpEnv(envFile, threadwatchOpMarker, argv); err != nil {
-		log.Printf("threadwatch serve: not starting under op (%v); Jev disabled", err)
-	}
+	return "", "no TypeSafe key configured"
 }
 
 // runThreadwatchInstallCmd is `agentmux threadwatch install -run-user USER`:
 // writes and enables agentmux-threadwatch.service, running as USER (not
 // root — see docs/design/thread-watch.md's "Running it and secrets") so it
 // can read that user's own transcripts. The unit always runs `agentmux
-// threadwatch serve` from the stable install path; serve itself moves under
-// `op run` when the user has an env-file (see reexecUnderOp).
+// threadwatch serve` from the stable install path; the optional TypeSafe key
+// comes from threadwatch.yaml (see threadwatchAPIKey).
 // threadwatchBin is where `agentmux daemon install` puts the binary.
 const threadwatchBin = "/usr/local/bin/agentmux"
 
@@ -407,4 +410,66 @@ func runSystemctlThreadwatch(args ...string) error {
 		return fmt.Errorf("systemctl %s: %w", args[0], err)
 	}
 	return nil
+}
+
+// runThreadwatchJevTestCmd is `agentmux threadwatch jev-test`: resolves the
+// configured TypeSafe key the same way serve does and asks Jev about one
+// synthetic awaiting-user signal, printing the typed verdict (never the key).
+func runThreadwatchJevTestCmd(args []string) {
+	fs := flag.NewFlagSet("threadwatch jev-test", flag.ExitOnError)
+	configPath := fs.String("config", "", "threadwatch.yaml path (default ~/.config/agentmux/threadwatch.yaml)")
+	fs.Parse(args)
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		log.Fatalf("threadwatch jev-test: %v", err)
+	}
+	if *configPath == "" {
+		*configPath = threadwatch.DefaultConfigPath(home)
+	}
+	cfg, err := threadwatch.LoadConfig(*configPath)
+	if err != nil {
+		log.Fatalf("threadwatch jev-test: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	key, note := threadwatchAPIKey(ctx, cfg)
+	fmt.Println(note)
+	if cfg.Jev.Mode == "off" {
+		fmt.Println("jev.mode is off: serve will not call Jev")
+	}
+	if key == "" {
+		os.Exit(1)
+	}
+
+	now := time.Now()
+	sig := threadwatch.Signal{
+		Time: now, Instance: "jev-test", Thread: "synthetic", Code: threadwatch.CodeAwaitingUser,
+		Tier: threadwatch.TierIntervene, Reason: "idle for 12 minutes after the agent's last message",
+	}
+	judge := threadwatch.JevJudge{Client: &typesafe.Client{APIKey: key}, Model: cfg.Jev.Model}
+	cases := []struct{ label, reply, expect string }{
+		{"question", "I've migrated the settings page and the tests pass. The old form also backs the admin page. Should I migrate that too, or leave it for a separate change?",
+			"question_to_user, needs_human_now high"},
+		{"finished", "Done: the settings page now uses the new form component, all 214 tests pass, and I've pushed the branch. Nothing else is needed.",
+			"finished, needs_human_now low"},
+	}
+	failed := false
+	for _, c := range cases {
+		recent := []threadwatch.Event{
+			{Time: now.Add(-13 * time.Minute), Instance: "jev-test", Agent: "claude-code", Kind: threadwatch.KindUserMessage, Excerpt: "Please migrate the settings page to the new form component."},
+			{Time: now.Add(-12 * time.Minute), Instance: "jev-test", Agent: "claude-code", Kind: threadwatch.KindAssistantMsg, Excerpt: c.reply},
+		}
+		j := judge.Judge(ctx, sig, recent)
+		if j.Err != "" {
+			fmt.Printf("%-9s Jev call failed: %s\n", c.label, j.Err)
+			failed = true
+			continue
+		}
+		fmt.Printf("%-9s waiting_kind=%s needs_human_now=%.2f urgency=%.1f (confidence %.2f) — expected %s\n",
+			c.label, j.WaitingKind, j.NeedsHumanNow, j.Urgency, j.UrgencyConf, c.expect)
+	}
+	if failed {
+		os.Exit(1)
+	}
 }
