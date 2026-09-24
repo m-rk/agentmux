@@ -27,10 +27,10 @@ func contextItem(thread, from, content string) digestItem {
 // regardless of what buildPrompt returns, so nothing is replayed later).
 func TestBuildPromptSuppressesContextOnlyBatch(t *testing.T) {
 	items := []digestItem{
-		contextItem("t1", "kartography-opencode", "Confirmed — working tree clean, no blockers, standing by."),
+		contextItem("t1", "webapp-opencode", "Confirmed — working tree clean, no blockers, standing by."),
 		contextItem("t2", "agentmux", "Status update: on main, tests pass, no requests addressed to me."),
 	}
-	got := buildPrompt(SyncOptions{Identity: testIdentity(), Project: "github.com/example/kartography"}, false, items)
+	got := buildPrompt(SyncOptions{Identity: testIdentity(), Project: "github.com/example/webapp"}, false, items)
 	if got != "" {
 		t.Fatalf("expected no wake for a context-only batch, got prompt:\n%s", got)
 	}
@@ -38,10 +38,10 @@ func TestBuildPromptSuppressesContextOnlyBatch(t *testing.T) {
 
 func TestBuildPromptWakesOnAddressedItem(t *testing.T) {
 	items := []digestItem{
-		contextItem("t1", "kartography-opencode", "Confirmed — working tree clean, standing by."),
+		contextItem("t1", "webapp-opencode", "Confirmed — working tree clean, standing by."),
 		contextItem("t2", "agentmux", "@kilo-minecraft@build-box.example.net please rebase on main before merging."),
 	}
-	got := buildPrompt(SyncOptions{Identity: testIdentity(), Project: "github.com/example/kartography"}, false, items)
+	got := buildPrompt(SyncOptions{Identity: testIdentity(), Project: "github.com/example/webapp"}, false, items)
 	if got == "" {
 		t.Fatal("expected a wake when one item addresses this identity, got empty prompt")
 	}
@@ -54,15 +54,15 @@ func TestBuildPromptWakesOnAddressedItem(t *testing.T) {
 }
 
 func TestBuildPromptOnboardingAlwaysWakesEvenWithNoItems(t *testing.T) {
-	got := buildPrompt(SyncOptions{Identity: testIdentity(), Project: "github.com/example/kartography"}, true, nil)
+	got := buildPrompt(SyncOptions{Identity: testIdentity(), Project: "github.com/example/webapp"}, true, nil)
 	if got == "" {
 		t.Fatal("expected onboarding to always produce a prompt, even with zero items")
 	}
 }
 
 func TestBuildPromptOnboardingWakesOnContextOnlyBatch(t *testing.T) {
-	items := []digestItem{contextItem("t1", "kartography-opencode", "Confirmed — standing by.")}
-	got := buildPrompt(SyncOptions{Identity: testIdentity(), Project: "github.com/example/kartography"}, true, items)
+	items := []digestItem{contextItem("t1", "webapp-opencode", "Confirmed — standing by.")}
+	got := buildPrompt(SyncOptions{Identity: testIdentity(), Project: "github.com/example/webapp"}, true, items)
 	if got == "" {
 		t.Fatal("expected onboarding to wake and show context, first contact isn't gated on REQUEST")
 	}

@@ -10,14 +10,14 @@ import (
 )
 
 func TestDefaultPaths(t *testing.T) {
-	home := "/home/mark"
-	if got, want := DefaultConfigPath(home), "/home/mark/.config/agentmux/threadwatch.yaml"; got != want {
+	home := "/home/user"
+	if got, want := DefaultConfigPath(home), "/home/user/.config/agentmux/threadwatch.yaml"; got != want {
 		t.Errorf("DefaultConfigPath = %q, want %q", got, want)
 	}
-	if got, want := StateDir(home), "/home/mark/.local/state/agentmux/threadwatch"; got != want {
+	if got, want := StateDir(home), "/home/user/.local/state/agentmux/threadwatch"; got != want {
 		t.Errorf("StateDir = %q, want %q", got, want)
 	}
-	if got, want := ReviewDir(home), "/home/mark/.local/state/agentmux/reviews"; got != want {
+	if got, want := ReviewDir(home), "/home/user/.local/state/agentmux/reviews"; got != want {
 		t.Errorf("ReviewDir = %q, want %q", got, want)
 	}
 }
