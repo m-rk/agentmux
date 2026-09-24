@@ -2,8 +2,11 @@ package threadwatch
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -210,6 +213,201 @@ func TestRunnerCycleFullFlow(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(StateDir(home), "offsets.json")); err != nil {
 		t.Errorf("want offsets.json persisted: %v", err)
+	}
+}
+
+// fakePaneViewer is a fixed PaneViewer for tests, recording every instance
+// it was asked to view.
+type fakePaneViewer struct {
+	content string
+	err     error
+	calls   []string
+}
+
+func (f *fakePaneViewer) ViewPane(ctx context.Context, instance string) (string, error) {
+	f.calls = append(f.calls, instance)
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.content, nil
+}
+
+// --- appendPaneEvidence ---
+
+func TestAppendPaneEvidence_AppendsTailForAwaitingUserAndStalledTurn(t *testing.T) {
+	pane := &fakePaneViewer{content: "some old line\n\nShould I continue with the deploy?\n"}
+	r := &Runner{PaneViewer: pane}
+
+	for _, code := range []string{CodeAwaitingUser, CodeStalledTurn} {
+		sig := Signal{Instance: "inst1", Code: code, Evidence: "turn ended"}
+		r.appendPaneEvidence(context.Background(), &sig)
+		if !strings.Contains(sig.Evidence, "--- pane ---") {
+			t.Errorf("%s: expected a pane-tail marker in evidence, got %q", code, sig.Evidence)
+		}
+		if !strings.Contains(sig.Evidence, "Should I continue with the deploy?") {
+			t.Errorf("%s: expected pane content in evidence, got %q", code, sig.Evidence)
+		}
+		if !strings.Contains(sig.Evidence, "turn ended") {
+			t.Errorf("%s: expected the original evidence to be preserved, got %q", code, sig.Evidence)
+		}
+	}
+}
+
+func TestAppendPaneEvidence_SkipsOtherCodesAndResolved(t *testing.T) {
+	pane := &fakePaneViewer{content: "Should I continue?"}
+	r := &Runner{PaneViewer: pane}
+
+	sig := Signal{Instance: "inst1", Code: CodeErrorLoop, Evidence: "boom"}
+	r.appendPaneEvidence(context.Background(), &sig)
+	if sig.Evidence != "boom" {
+		t.Errorf("expected a code other than awaiting_user/stalled_turn to be left alone, got %q", sig.Evidence)
+	}
+
+	resolved := Signal{Instance: "inst1", Code: CodeAwaitingUser, Resolved: true, Evidence: "boom"}
+	r.appendPaneEvidence(context.Background(), &resolved)
+	if resolved.Evidence != "boom" {
+		t.Errorf("expected a resolved signal to be left alone, got %q", resolved.Evidence)
+	}
+
+	if len(pane.calls) != 0 {
+		t.Errorf("expected ViewPane never called for skipped signals, got %d calls", len(pane.calls))
+	}
+}
+
+func TestAppendPaneEvidence_NoPaneViewer_LeavesEvidenceUnchanged(t *testing.T) {
+	r := &Runner{}
+	sig := Signal{Instance: "inst1", Code: CodeAwaitingUser, Evidence: "boom"}
+	r.appendPaneEvidence(context.Background(), &sig)
+	if sig.Evidence != "boom" {
+		t.Errorf("expected evidence unchanged with no PaneViewer, got %q", sig.Evidence)
+	}
+}
+
+func TestAppendPaneEvidence_ViewPaneError_LeavesEvidenceUnchanged(t *testing.T) {
+	pane := &fakePaneViewer{err: errors.New("boom")}
+	r := &Runner{PaneViewer: pane}
+	sig := Signal{Instance: "inst1", Code: CodeAwaitingUser, Evidence: "boom"}
+	r.appendPaneEvidence(context.Background(), &sig)
+	if sig.Evidence != "boom" {
+		t.Errorf("expected evidence unchanged on a ViewPane error, got %q", sig.Evidence)
+	}
+}
+
+func TestAppendPaneEvidence_OnlyLastNNonEmptyLines(t *testing.T) {
+	var lines []string
+	for i := 0; i < 30; i++ {
+		lines = append(lines, fmt.Sprintf("line %d", i))
+	}
+	pane := &fakePaneViewer{content: strings.Join(lines, "\n")}
+	r := &Runner{PaneViewer: pane}
+
+	sig := Signal{Instance: "inst1", Code: CodeAwaitingUser}
+	r.appendPaneEvidence(context.Background(), &sig)
+
+	if strings.Contains(sig.Evidence, "line 0\n") || strings.Contains(sig.Evidence, "line 9\n") {
+		t.Errorf("expected only the last 20 non-empty lines to be kept, got %q", sig.Evidence)
+	}
+	if !strings.Contains(sig.Evidence, "line 29") {
+		t.Errorf("expected the last line to be present, got %q", sig.Evidence)
+	}
+	if !strings.Contains(sig.Evidence, "line 10") {
+		t.Errorf("expected the 20th-from-last line to be present, got %q", sig.Evidence)
+	}
+}
+
+// --- pane tail through a full Cycle: reaches Judge, and rule-suppression
+// re-tiers to insight ---
+
+func TestRunnerCycle_PaneTailAppendedBeforeJudge_RuleRetiersToInsight(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	store, err := NewStore(StateDir(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	offsets, err := LoadOffsets(StateDir(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Agent "generic" has no structured collector (newCollectorForAgent),
+	// so Cycle falls back to the pane-hash heartbeat, giving the Detector a
+	// KindActivity event (and so an open turn) straight from the fake pane.
+	pbi := &pb.Instance{Name: "inst1", Agent: "generic", Workdir: "/repo", Status: pb.Status_STATUS_RUNNING}
+	lister := &fakeLister{instances: []*pb.Instance{pbi}}
+	pane := &fakePaneViewer{content: "Finished the task. All done."}
+	judge := &fakeJudge{judgment: Judgment{}} // no Err, but NeedsHumanNow 0 fails the awaiting_user gate
+	sender := &fakeSender{}
+	cfg := DefaultConfig()
+
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	runner := &Runner{
+		Config:     cfg,
+		Store:      store,
+		Offsets:    offsets,
+		Lister:     lister,
+		Alerter:    NewAlerter(cfg, "test-host", sender.send, nil),
+		Judge:      judge,
+		PaneViewer: pane,
+		Clock:      func() time.Time { return now },
+	}
+
+	ctx := context.Background()
+	if err := runner.Cycle(ctx); err != nil {
+		t.Fatalf("first Cycle: %v", err)
+	}
+
+	// Flip the instance to idle. This produces a KindStatus event, which
+	// (like the pane-fallback's KindActivity events) carries no Thread, so
+	// it touches the same thread state and — like any event — resets its
+	// silence clock. Do this a little after the first cycle, then advance
+	// well past AwaitingUserAfter with no further status change or pane
+	// change before ticking again, so the open-turn idle-prompt path
+	// (detect.go's Tick) has a clean silence window to fire on.
+	now = now.Add(10 * time.Second)
+	pbi.Status = pb.Status_STATUS_IDLE
+	if err := runner.Cycle(ctx); err != nil {
+		t.Fatalf("second Cycle: %v", err)
+	}
+
+	now = now.Add(11 * time.Minute)
+	if err := runner.Cycle(ctx); err != nil {
+		t.Fatalf("third Cycle: %v", err)
+	}
+
+	if len(judge.calls) != 1 {
+		t.Fatalf("expected exactly one Judge call, got %d: %+v", len(judge.calls), judge.calls)
+	}
+	judged := judge.calls[0]
+	if judged.Code != CodeAwaitingUser {
+		t.Fatalf("expected the judged signal to be awaiting_user, got %q", judged.Code)
+	}
+	if !strings.Contains(judged.Evidence, "--- pane ---") || !strings.Contains(judged.Evidence, "Finished the task") {
+		t.Errorf("expected the judge to see the pane tail in Evidence (appended before judging), got %q", judged.Evidence)
+	}
+
+	signals, err := runner.Store.ReadSignals(testReadSince, testReadUntil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var awaiting *Signal
+	for i := range signals {
+		if signals[i].Code == CodeAwaitingUser && !signals[i].Resolved {
+			awaiting = &signals[i]
+		}
+	}
+	if awaiting == nil {
+		t.Fatalf("want an awaiting_user signal, got %+v", signals)
+	}
+	if !strings.Contains(awaiting.Evidence, "--- pane ---") {
+		t.Errorf("expected the stored signal's Evidence to include the pane tail, got %q", awaiting.Evidence)
+	}
+	if awaiting.Tier != TierInsight {
+		t.Errorf("expected the rule-suppressed signal to be re-tiered to insight, got tier %q", awaiting.Tier)
+	}
+	if sender.count() != 0 {
+		t.Errorf("expected no page sent (the rule found no question in the evidence), got %d: %v", sender.count(), sender.messages)
 	}
 }
 

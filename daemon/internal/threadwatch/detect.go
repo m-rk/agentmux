@@ -23,6 +23,12 @@ const minSamplesForPercentile = 20
 // Tick drops its state.
 const threadIdleEvictAfter = 48 * time.Hour
 
+// openTurnStaleAfter bounds the open-turn idle-prompt check (Tick): a turn
+// that has been open with no event for longer than this is treated as
+// abandoned/stale rather than "probably sitting on a prompt", so it never
+// fires.
+const openTurnStaleAfter = 6 * time.Hour
+
 // InstanceStats summarises one instance's activity for the nightly review.
 type InstanceStats struct {
 	Turns           int64
@@ -101,6 +107,14 @@ type threadState struct {
 	awaitingSince      time.Time // zero when not in an awaiting-user window
 	awaitingSignaled   bool
 	awaitingSignalTime time.Time
+
+	// openTurnAwaitingSignaled tracks the open-turn idle-prompt variant of
+	// awaiting_user (Tick): a permission prompt or menu can block an agent
+	// inside a turn that never closes, so the ordinary awaitingSince-based
+	// path (anchored at turn_end/assistant_msg) never sees it. This fires
+	// only while the turn is still open (awaitingSince is zero) so the two
+	// paths never double-fire for the same thread.
+	openTurnAwaitingSignaled bool
 
 	consecAPIErrors      int
 	apiErrorLoopSignaled bool
@@ -185,6 +199,15 @@ func (d *Detector) Observe(ev Event) []Signal {
 	if ts.stalledSignaled {
 		ts.stalledSignaled = false
 		out = append(out, newSignal(ev.Time, ev.Instance, ev.Thread, CodeStalledTurn, TierIntervene,
+			"activity resumed", "", true))
+	}
+
+	// Same for the open-turn idle-prompt variant of awaiting_user: any
+	// event on the thread means the operator (or the agent on its own)
+	// moved past whatever the session was sitting on.
+	if ts.openTurnAwaitingSignaled {
+		ts.openTurnAwaitingSignaled = false
+		out = append(out, newSignal(ev.Time, ev.Instance, ev.Thread, CodeAwaitingUser, TierIntervene,
 			"activity resumed", "", true))
 	}
 
@@ -471,6 +494,25 @@ func (d *Detector) Tick(now time.Time, instances []Instance) []Signal {
 				}
 			}
 		}
+
+		// awaiting_user (open-turn idle prompt): a permission prompt or menu
+		// blocks an agent inside a turn that never ends, so discovery
+		// reports the pane "idle" while neither the ordinary
+		// awaitingSince-based awaiting_user (needs a turn end) nor
+		// stalled_turn (needs status "running") ever fires. Only the
+		// instance's most-recently-active open thread is considered, so a
+		// host with several long-open (but not actually stuck) threads
+		// doesn't fire once per thread.
+		if is.status == "idle" {
+			if thread, ts := d.mostRecentOpenTurnLocked(inst.Name, now); ts != nil && !ts.openTurnAwaitingSignaled {
+				if silence := now.Sub(ts.lastEventTime); silence >= thr.AwaitingUserAfter {
+					ts.openTurnAwaitingSignaled = true
+					out = append(out, newSignal(now, inst.Name, thread, CodeAwaitingUser, TierIntervene,
+						fmt.Sprintf("turn open and the session idle for %s — likely a prompt or menu", roundDuration(silence)),
+						ts.lastAssistantExcerpt, false))
+				}
+			}
+		}
 	}
 
 	// Evict idle threads.
@@ -486,6 +528,30 @@ func (d *Detector) Tick(now time.Time, instances []Instance) []Signal {
 	}
 
 	return out
+}
+
+// mostRecentOpenTurnLocked returns the thread (and its state) with the most
+// recent activity among instance's open turns that have no
+// awaitingSince anchor yet (i.e. the ordinary post-turn-end/assistant_msg
+// awaiting_user path does not already cover them — see threadState's
+// openTurnAwaitingSignaled doc comment). Threads whose last event is older
+// than openTurnStaleAfter are excluded so a long-abandoned open turn never
+// counts as "most recent". Returns ("", nil) when there is no candidate.
+func (d *Detector) mostRecentOpenTurnLocked(instance string, now time.Time) (string, *threadState) {
+	var bestThread string
+	var best *threadState
+	for thread, ts := range d.threads[instance] {
+		if !ts.open || !ts.awaitingSince.IsZero() {
+			continue
+		}
+		if ts.lastEventTime.IsZero() || now.Sub(ts.lastEventTime) > openTurnStaleAfter {
+			continue
+		}
+		if best == nil || ts.lastEventTime.After(best.lastEventTime) {
+			bestThread, best = thread, ts
+		}
+	}
+	return bestThread, best
 }
 
 // Stats returns rolling/cumulative counts for instance, for the nightly

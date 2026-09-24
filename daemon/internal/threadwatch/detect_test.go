@@ -2,6 +2,7 @@ package threadwatch
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -131,8 +132,124 @@ func TestActivityClearsAwaitingWithoutResolving(t *testing.T) {
 	got := d.Observe(Event{Time: t0.Add(time.Minute), Instance: "i1", Thread: "t1", Kind: KindActivity})
 	assertSignals(t, "activity before threshold: nothing to resolve", got, nil)
 
+	// The post-turn-end awaiting window is cleared by the activity (the
+	// agent kept going on its own): ticking soon after produces nothing,
+	// since it's neither past the old anchor nor past the open-turn
+	// idle-prompt threshold measured from the activity itself.
+	got = d.Tick(t0.Add(5*time.Minute), []Instance{{Name: "i1", Status: "idle"}})
+	assertSignals(t, "activity cleared the old awaiting window, not yet idle long enough to look like a new prompt", got, nil)
+
+	// But the activity reopened the turn (threadState.open), and nothing
+	// followed it. A turn that opens and then goes silent while the
+	// instance sits idle is exactly the open-turn idle-prompt case
+	// (detect.go's Tick, the fix for problem 2), so it now fires there.
 	got = d.Tick(t0.Add(20*time.Minute), []Instance{{Name: "i1", Status: "idle"}})
-	assertSignals(t, "activity cleared the awaiting window, never fires", got, nil)
+	assertSignals(t, "no further activity after the reopen: looks like a stuck prompt", got, []wantSig{{Code: CodeAwaitingUser}})
+}
+
+// --- awaiting_user (open-turn idle prompt) ---
+
+func TestOpenTurnIdlePromptFiresOnceThenResolvesOnActivity(t *testing.T) {
+	cfg := DefaultConfig()
+	d := NewDetector(cfg)
+	t0 := day(0)
+	instances := []Instance{{Name: "i1", Status: "idle"}}
+
+	// A permission prompt/menu blocks the agent mid-turn: the turn opens
+	// but never closes (no turn_end, no assistant_msg), so the ordinary
+	// awaitingSince-anchored path never engages.
+	d.Observe(Event{Time: t0, Instance: "i1", Thread: "t1", Kind: KindActivity})
+
+	got := d.Tick(t0.Add(9*time.Minute), instances)
+	assertSignals(t, "under threshold", got, nil)
+
+	got = d.Tick(t0.Add(11*time.Minute), instances)
+	assertSignals(t, "open turn idle past the threshold fires once", got, []wantSig{{Code: CodeAwaitingUser}})
+	if !strings.Contains(got[0].Reason, "turn open") {
+		t.Errorf("expected reason to describe an open turn, got %q", got[0].Reason)
+	}
+
+	got = d.Tick(t0.Add(12*time.Minute), instances)
+	assertSignals(t, "no duplicate on the next tick", got, nil)
+
+	// Any later event on the thread resolves it, even a non-user_message
+	// one — the operator (or the agent on its own) moved past whatever it
+	// was sitting on.
+	got = d.Observe(Event{Time: t0.Add(15 * time.Minute), Instance: "i1", Thread: "t1", Kind: KindActivity})
+	assertSignals(t, "resolves on any later event", got, []wantSig{{Code: CodeAwaitingUser, Resolved: true}})
+
+	// And it can fire again after a fresh idle gap.
+	got = d.Tick(t0.Add(26*time.Minute), instances)
+	assertSignals(t, "fires again after a fresh idle gap", got, []wantSig{{Code: CodeAwaitingUser}})
+}
+
+func TestOpenTurnIdlePromptOnlyMostRecentThread(t *testing.T) {
+	cfg := DefaultConfig()
+	d := NewDetector(cfg)
+	t0 := day(0)
+	instances := []Instance{{Name: "i1", Status: "idle"}}
+
+	// Two open turns on the same instance; t1 is older, t2 is the more
+	// recently active one.
+	d.Observe(Event{Time: t0, Instance: "i1", Thread: "t1", Kind: KindActivity})
+	d.Observe(Event{Time: t0.Add(time.Minute), Instance: "i1", Thread: "t2", Kind: KindActivity})
+
+	got := d.Tick(t0.Add(15*time.Minute), instances)
+	assertSignals(t, "only the most recently active open thread fires", got, []wantSig{{Code: CodeAwaitingUser}})
+	if got[0].Thread != "t2" {
+		t.Errorf("expected the most-recently-active thread (t2) to fire, got %q", got[0].Thread)
+	}
+
+	// t1 never gets its turn this cycle or later — it's simply not the
+	// most-recently-active thread — but nothing else should misfire either.
+	got = d.Tick(t0.Add(16*time.Minute), instances)
+	assertSignals(t, "no duplicate, and t1 still does not fire", got, nil)
+}
+
+func TestOpenTurnIdlePromptSkipsStaleThread(t *testing.T) {
+	cfg := DefaultConfig()
+	d := NewDetector(cfg)
+	t0 := day(0)
+	instances := []Instance{{Name: "i1", Status: "idle"}}
+
+	d.Observe(Event{Time: t0, Instance: "i1", Thread: "t1", Kind: KindActivity})
+
+	// Well past both the awaiting-user threshold and the 6h stale cutoff:
+	// this is an abandoned open turn, not a live prompt, so it must not
+	// fire.
+	got := d.Tick(t0.Add(7*time.Hour), instances)
+	assertSignals(t, "stale (>6h) open turn never fires", got, nil)
+}
+
+func TestOpenTurnIdlePromptDoesNotDoubleFireWithPostTurnPath(t *testing.T) {
+	cfg := DefaultConfig()
+	d := NewDetector(cfg)
+	t0 := day(0)
+	instances := []Instance{{Name: "i1", Status: "idle"}}
+
+	// A turn that actually ended (or produced a final assistant message)
+	// is covered by the ordinary awaitingSince-anchored path; the open-turn
+	// variant must stay out of its way and not also fire.
+	d.Observe(Event{Time: t0, Instance: "i1", Thread: "t1", Kind: KindTurnEnd, Excerpt: "done, want me to continue?"})
+
+	got := d.Tick(t0.Add(11*time.Minute), instances)
+	assertSignals(t, "only the ordinary awaiting_user path fires, no duplicate from the open-turn path", got, []wantSig{{Code: CodeAwaitingUser}})
+}
+
+func TestOpenTurnIdlePromptRequiresIdleStatus(t *testing.T) {
+	cfg := DefaultConfig()
+	d := NewDetector(cfg)
+	t0 := day(0)
+	d.Observe(Event{Time: t0, Instance: "i1", Thread: "t1", Kind: KindActivity})
+
+	// A running instance with an open, silent turn is stalled_turn's job,
+	// not the open-turn awaiting_user variant's.
+	got := d.Tick(t0.Add(20*time.Minute), []Instance{{Name: "i1", Status: "running"}})
+	for _, s := range got {
+		if s.Code == CodeAwaitingUser {
+			t.Fatalf("open-turn awaiting_user must require idle status, got %+v", got)
+		}
+	}
 }
 
 // --- error_loop ---
@@ -265,7 +382,17 @@ func TestStalledTurnRequiresRunningStatus(t *testing.T) {
 	d.Observe(Event{Time: t0, Instance: "i1", Thread: "t1", Kind: KindUserMessage})
 
 	got := d.Tick(t0.Add(20*time.Minute), []Instance{{Name: "i1", Status: "idle"}})
-	assertSignals(t, "idle status never triggers stalled_turn", got, nil)
+	// stalled_turn itself never fires on an idle instance (it requires
+	// status "running"). But this is exactly the open-turn idle-prompt
+	// scenario the problem-2 fix targets: an open turn, idle status, no
+	// event for AwaitingUserAfter — so awaiting_user fires instead, via the
+	// open-turn path in Tick.
+	for _, s := range got {
+		if s.Code == CodeStalledTurn {
+			t.Fatalf("stalled_turn must never fire on an idle instance, got %+v", got)
+		}
+	}
+	assertSignals(t, "idle status with an open turn raises the open-turn awaiting_user instead", got, []wantSig{{Code: CodeAwaitingUser}})
 }
 
 // --- died_mid_turn ---

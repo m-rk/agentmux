@@ -24,6 +24,10 @@ const (
 	// maxEventExcerptBytes caps each compact recent_events[].excerpt, well
 	// below Event.Excerpt's own MaxExcerptBytes cap.
 	maxEventExcerptBytes = 300
+	// maxSignalEvidenceBytes caps signal.evidence, which — for
+	// awaiting_user/stalled_turn — may carry an appended pane tail (see
+	// Runner.appendPaneEvidence in serve.go) on top of the usual excerpt.
+	maxSignalEvidenceBytes = 1500
 )
 
 // untrustedNotice is appended to every question's instructions. The
@@ -44,8 +48,9 @@ func (j JevJudge) model() string {
 
 // jevSignalState is the `signal` part of the state sent to Jev.
 type jevSignalState struct {
-	Code   string `json:"code"`
-	Reason string `json:"reason"`
+	Code     string `json:"code"`
+	Reason   string `json:"reason"`
+	Evidence string `json:"evidence,omitempty"`
 }
 
 // jevEventState is the compact per-event shape sent to Jev, per the
@@ -105,8 +110,9 @@ func buildState(sig Signal, recent []Event) jevState {
 		Instance: sig.Instance,
 		Agent:    agent,
 		Signal: jevSignalState{
-			Code:   sig.Code,
-			Reason: Redact(sig.Reason),
+			Code:     sig.Code,
+			Reason:   Redact(sig.Reason),
+			Evidence: capExcerpt(sig.Evidence, maxSignalEvidenceBytes),
 		},
 		LastAssistantMessage: capExcerpt(lastAssistant, MaxExcerptBytes),
 		RecentEvents:         events,
@@ -132,7 +138,7 @@ func capExcerpt(s string, max int) string {
 func waitingKindQuestion() typesafe.Question {
 	return typesafe.Question{
 		Type: "choice",
-		Instructions: "Given `signal`, `last_assistant_message`, and `recent_events` (from one AI coding agent's own session), what is the agent currently waiting on, if anything? " +
+		Instructions: "Given `signal`, `last_assistant_message`, and `recent_events` (from one AI coding agent's own session), what is the agent currently waiting on, if anything? `signal.evidence` may include the tail of the session's terminal pane. " +
 			untrustedNotice,
 		Criteria: map[string]string{
 			"question_to_user":       "The agent finished its turn and is explicitly asking the user a question it needs answered before it can continue.",
@@ -148,7 +154,7 @@ func waitingKindQuestion() typesafe.Question {
 func needsHumanNowQuestion() typesafe.Question {
 	return typesafe.Question{
 		Type: "noul",
-		Instructions: "Would the operator's input right now change the outcome of this session — as opposed to the session finishing or recovering on its own regardless? Base this on `signal`, `last_assistant_message`, and `recent_events`. " +
+		Instructions: "Would the operator's input right now change the outcome of this session — as opposed to the session finishing or recovering on its own regardless? Base this on `signal`, `last_assistant_message`, and `recent_events`. `signal.evidence` may include the tail of the session's terminal pane. " +
 			untrustedNotice,
 		Criteria: map[string]string{
 			"true":  "The session is stuck, waiting, or heading somewhere bad, and operator input now would change what happens next.",

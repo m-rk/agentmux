@@ -277,13 +277,15 @@ func (r *Runner) Cycle(ctx context.Context) error {
 
 	stored := make([]Signal, 0, len(signals))
 	for _, sig := range signals {
+		r.appendPaneEvidence(ctx, &sig)
 		r.judge(ctx, &sig)
 
 		decision := r.Alerter.Handle(sig)
-		if !decision.Page && strings.HasPrefix(decision.Reason, "jev:") {
-			// Live-mode Jev rejected an intervene signal: it still happened
-			// and is still worth the nightly review, just not worth paging
-			// on, so it's stored (and ranked) as an insight instead.
+		if !decision.Page && (strings.HasPrefix(decision.Reason, "jev:") || strings.HasPrefix(decision.Reason, "rule:")) {
+			// Live-mode Jev, or the deterministic awaiting_user heuristic,
+			// rejected an intervene signal: it still happened and is still
+			// worth the nightly review, just not worth paging on, so it's
+			// stored (and ranked) as an insight instead.
 			sig.Tier = TierInsight
 		}
 
@@ -357,6 +359,64 @@ func (r *Runner) pollPaneFallback(ctx context.Context, inst Instance) []Event {
 		return nil
 	}
 	return []Event{{Time: r.now(), Instance: inst.Name, Agent: inst.Agent, Kind: KindActivity}}
+}
+
+// paneTailTimeout bounds the ViewPane call appendPaneEvidence makes, so a
+// slow or hanging daemon dial can never stall a poll cycle.
+const paneTailTimeout = 5 * time.Second
+
+// paneTailLines is how many trailing non-empty pane lines appendPaneEvidence
+// appends to a signal's Evidence.
+const paneTailLines = 20
+
+// appendPaneEvidence enriches an awaiting_user or stalled_turn signal's
+// Evidence with the instance's current pane tail, when a PaneViewer is
+// configured. A permission prompt or menu that blocks an agent mid-turn
+// often produces no transcript event at all (the open-turn idle-prompt case
+// in detect.go's Tick, and the pane-hash fallback for agents with no
+// structured collector), so the pane is the only place the prompt text
+// exists. This runs before judging (Runner.judge) so both the alerter's
+// deterministic heuristic (looksLikeWaiting) and Jev see it.
+// Resolved signals are skipped — they're just "condition cleared" notices —
+// and a missing PaneViewer or a failed/slow ViewPane call (bounded by
+// paneTailTimeout) leaves Evidence unchanged rather than failing the cycle.
+func (r *Runner) appendPaneEvidence(ctx context.Context, sig *Signal) {
+	if sig.Resolved || r.PaneViewer == nil {
+		return
+	}
+	if sig.Code != CodeAwaitingUser && sig.Code != CodeStalledTurn {
+		return
+	}
+
+	pctx, cancel := context.WithTimeout(ctx, paneTailTimeout)
+	defer cancel()
+	content, err := r.PaneViewer.ViewPane(pctx, sig.Instance)
+	if err != nil {
+		return
+	}
+	tail := lastNonEmptyLines(content, paneTailLines)
+	if tail == "" {
+		return
+	}
+	sig.Evidence = Excerpt(sig.Evidence + "\n--- pane ---\n" + tail)
+}
+
+// lastNonEmptyLines returns the last n non-empty (after trimming trailing
+// whitespace) lines of s, joined with "\n" in their original order.
+func lastNonEmptyLines(s string, n int) string {
+	all := strings.Split(s, "\n")
+	nonEmpty := make([]string, 0, len(all))
+	for _, line := range all {
+		trimmed := strings.TrimRight(line, " \t\r")
+		if trimmed == "" {
+			continue
+		}
+		nonEmpty = append(nonEmpty, trimmed)
+	}
+	if len(nonEmpty) > n {
+		nonEmpty = nonEmpty[len(nonEmpty)-n:]
+	}
+	return strings.Join(nonEmpty, "\n")
 }
 
 // newCollectorForAgent returns a fresh Collector for agent, or nil when
