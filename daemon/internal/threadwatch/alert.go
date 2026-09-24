@@ -381,12 +381,13 @@ var waitingPromptMarkers = []string{
 	"should i",
 	"which option",
 	"approve",
-	"permission",
+	"need your permission",
+	"need permission",
+	"grant permission",
 	"(y/n)",
 	"[y/n]",
 	"press enter",
 	"waiting for your",
-	"let me know",
 }
 
 // waitingMenuCursor matches a numbered menu/option list with a selection
@@ -399,20 +400,28 @@ var waitingMenuCursor = regexp.MustCompile(`(?im)^[ \t]*[❯>][ \t]*(\d+\.|yes\b
 // gap, it looks at the tail of the evidence for a trailing question or a
 // recognizable prompt/menu.
 func looksLikeWaiting(evidence string) bool {
-	tail := strings.TrimSpace(tailCap(evidence, waitingHeuristicTailBytes))
-	if tail == "" {
-		return false
+	message, pane, _ := strings.Cut(evidence, paneEvidenceSeparator)
+	if tail := strings.TrimSpace(tailCap(message, waitingHeuristicTailBytes)); tail != "" {
+		if hasPromptMarker(tail) || waitingMenuCursor.MatchString(tail) || lastLineEndsWithQuestion(tail) {
+			return true
+		}
 	}
-	lower := strings.ToLower(tail)
+	// The pane tail ends with the agent's own chrome (input box, status
+	// line), so only explicit prompt text or a menu cursor counts there.
+	if tail := strings.TrimSpace(tailCap(pane, waitingHeuristicTailBytes)); tail != "" {
+		return hasPromptMarker(tail) || waitingMenuCursor.MatchString(tail)
+	}
+	return false
+}
+
+func hasPromptMarker(text string) bool {
+	lower := strings.ToLower(text)
 	for _, marker := range waitingPromptMarkers {
 		if strings.Contains(lower, marker) {
 			return true
 		}
 	}
-	if waitingMenuCursor.MatchString(tail) {
-		return true
-	}
-	return lastLineEndsWithQuestion(tail)
+	return false
 }
 
 // lastLineEndsWithQuestion reports whether the last non-empty line of tail

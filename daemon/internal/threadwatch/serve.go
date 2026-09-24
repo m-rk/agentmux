@@ -398,8 +398,16 @@ func (r *Runner) appendPaneEvidence(ctx context.Context, sig *Signal) {
 	if tail == "" {
 		return
 	}
-	sig.Evidence = Excerpt(sig.Evidence + "\n--- pane ---\n" + tail)
+	// Cap each half separately so a long pane can't push the agent's own
+	// last message out of the evidence.
+	half := MaxExcerptBytes / 2
+	message := tailCap(Excerpt(sig.Evidence), half)
+	sig.Evidence = message + paneEvidenceSeparator + tailCap(Excerpt(tail), half-len(paneEvidenceSeparator))
 }
+
+// paneEvidenceSeparator divides a signal's Evidence into the agent's last
+// message and the pane tail appended by appendPaneEvidence.
+const paneEvidenceSeparator = "\n--- pane ---\n"
 
 // lastNonEmptyLines returns the last n non-empty (after trimming trailing
 // whitespace) lines of s, joined with "\n" in their original order.

@@ -62,8 +62,15 @@ Tier, Evidence}` where `Tier` is `intervene` or `insight`.
 
 Intervene candidates:
 
-- `awaiting_user`: the turn ended and the session has sat idle ≥ 10 min (configurable) on a
-  question, permission prompt, plan approval or menu. See the Jev gate below.
+- `awaiting_user`: the session has sat idle ≥ 10 min (configurable) on a
+  question, permission prompt, plan approval or menu. It fires after a turn
+  ends, and also while a turn is still open (a prompt or menu blocks a turn
+  without ending it) for the instance's most recently active thread; open
+  turns quiet for more than 6 h are treated as abandoned. The runner appends
+  the last 20 pane lines to the evidence before judging. Unless live Jev has
+  a verdict, it pages only when the agent's last message ends in a question
+  or the message or pane shows a prompt or menu; otherwise it is kept as an
+  insight. See the Jev gate below.
 - `error_loop`: at least 3 consecutive API errors, or the same tool error at
   least 4 times in one turn.
 - `auth_failed`: amp `Session expired`, 401s, or Claude login errors. The

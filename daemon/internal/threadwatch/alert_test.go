@@ -610,7 +610,9 @@ func TestLooksLikeWaiting(t *testing.T) {
 		{"y/n brackets", "Overwrite the file [y/n]", true},
 		{"press enter", "Press enter to continue, or Ctrl-C to cancel.", true},
 		{"waiting for your", "Waiting for your input before proceeding.", true},
-		{"let me know", "Let me know if you want me to go further.", true},
+		// A finished summary's sign-off is not a question.
+		{"let me know sign-off", "All tests pass and the branch is pushed. Let me know if you want me to go further.", false},
+		{"permission in prose", "Fixed the file permission bug in the uploader; tests pass.", false},
 		{"numbered menu cursor angle", "Select an option:\n❯ 1. Yes\n  2. No", true},
 		{"numbered menu cursor gt", "Select an option:\n> 1. Yes\n  2. No", true},
 		{"menu with yes cursor", "Do this?\n❯ Yes\n  No", true},
@@ -895,5 +897,20 @@ func TestFormatResolved_Neutralises(t *testing.T) {
 	msg := formatResolved("myhost", sig)
 	if !strings.HasPrefix(msg, "✅ resolved:") {
 		t.Fatalf("expected resolved prefix, got %q", msg)
+	}
+}
+
+// A question in the agent's message still counts once a pane tail follows it,
+// but the pane's own chrome can't make a finished message look like a question.
+func TestLooksLikeWaitingSplitsMessageAndPane(t *testing.T) {
+	pane := paneEvidenceSeparator + "────────\n> \n? for shortcuts"
+	if !looksLikeWaiting("Should I migrate the admin page too?" + pane) {
+		t.Error("question in the message was missed behind the pane tail")
+	}
+	if looksLikeWaiting("Done. All tests pass." + pane) {
+		t.Error("pane chrome made a finished message look like a question")
+	}
+	if !looksLikeWaiting("Running the migration." + paneEvidenceSeparator + "Do you want to proceed?\n❯ 1. Yes\n  2. No") {
+		t.Error("menu in the pane was missed")
 	}
 }

@@ -148,6 +148,14 @@ Run in shadow mode for a while, compare `threadwatch status` and the event
 log against what you actually needed to know, then switch to `live` once
 you're comfortable.
 
+Without a live Jev verdict (shadow or off mode, no key, or a failed call), a
+"waiting on you" alert pages only when the agent's last message ends in a
+question, or the message or the pane tail shows a prompt or menu ("Do you
+want…", "(y/n)", a `❯ 1.` cursor, and similar). A finished summary is kept
+as an insight instead. In shadow mode the log records where Jev and this rule
+disagree (`shadow: jev says waiting …`), which is what to look at before
+switching to `live`.
+
 ## Running it
 
 ```sh
