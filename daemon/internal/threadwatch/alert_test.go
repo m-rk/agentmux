@@ -514,6 +514,126 @@ func TestHandle_Resolved_OutsideWindow_SendsNothing(t *testing.T) {
 	}
 }
 
+// --- FIX 1: no "resolved" notice for awaiting_user/usage_limit ---
+
+func TestHandleResolved_AwaitingUser_NoNoticeButClearsDedup(t *testing.T) {
+	clock := &fakeClock{t: time.Now()}
+	sender := &fakeSender{}
+	cfg := testConfig()
+	cfg.Jev.Mode = "off"
+	a := NewAlerter(cfg, "myhost", sender.send, clock.now)
+
+	sig := awaitingSignalWithEvidence("I've finished the migration. Should I also update the docs?")
+	d1 := a.Handle(sig)
+	if !d1.Page {
+		t.Fatalf("expected the initial page to send, got %+v", d1)
+	}
+
+	clock.advance(time.Minute) // well within ResolvedAfter/Cooldown
+	resolved := sig
+	resolved.Resolved = true
+	d2 := a.Handle(resolved)
+	if d2.Page {
+		t.Fatalf("expected no notice for a resolved awaiting_user (the operator resolving it themselves isn't news), got %+v", d2)
+	}
+	if sender.count() != 1 {
+		t.Fatalf("expected no message sent for the resolved notice, got %d total messages", sender.count())
+	}
+
+	// Dedup must still have cleared: a fresh wait pages immediately, even
+	// though we're well inside the cooldown window.
+	d3 := a.Handle(sig)
+	if !d3.Page {
+		t.Fatalf("expected dedup to have cleared so a new wait pages immediately, got %+v", d3)
+	}
+	if sender.count() != 2 {
+		t.Fatalf("expected two total messages sent, got %d", sender.count())
+	}
+}
+
+func TestHandleResolved_UsageLimit_NoNoticeButClearsDedup(t *testing.T) {
+	clock := &fakeClock{t: time.Now()}
+	sender := &fakeSender{}
+	cfg := testConfig()
+	cfg.Jev.Mode = "off"
+	a := NewAlerter(cfg, "myhost", sender.send, clock.now)
+
+	sig := baseSignal(CodeUsageLimit)
+	d1 := a.Handle(sig)
+	if !d1.Page {
+		t.Fatalf("expected the initial page to send, got %+v", d1)
+	}
+
+	clock.advance(time.Minute)
+	resolved := sig
+	resolved.Resolved = true
+	d2 := a.Handle(resolved)
+	if d2.Page {
+		t.Fatalf("expected no notice for a resolved usage_limit (it clears on its own), got %+v", d2)
+	}
+	if sender.count() != 1 {
+		t.Fatalf("expected no message sent for the resolved notice, got %d total messages", sender.count())
+	}
+
+	d3 := a.Handle(sig)
+	if !d3.Page {
+		t.Fatalf("expected dedup to have cleared so a new episode pages immediately, got %+v", d3)
+	}
+}
+
+// Codes that CAN clear without the operator still get their resolved
+// notice: it's news (the session fixed itself).
+func TestHandleResolved_OtherCodesStillNotify(t *testing.T) {
+	for _, code := range []string{CodeErrorLoop, CodeAuthFailed, CodeStalledTurn, CodeDiedMidTurn} {
+		t.Run(code, func(t *testing.T) {
+			clock := &fakeClock{t: time.Now()}
+			sender := &fakeSender{}
+			cfg := testConfig()
+			cfg.Jev.Mode = "off"
+			a := NewAlerter(cfg, "myhost", sender.send, clock.now)
+
+			sig := baseSignal(code)
+			a.Handle(sig)
+
+			clock.advance(time.Minute)
+			resolved := sig
+			resolved.Resolved = true
+			d := a.Handle(resolved)
+			if !d.Page {
+				t.Fatalf("%s: expected a resolved notice to send, got %+v", code, d)
+			}
+			if sender.count() != 2 {
+				t.Fatalf("%s: expected two messages sent (page + resolved), got %d", code, sender.count())
+			}
+		})
+	}
+}
+
+// --- awaiting_user gate: usage_limit/error_blocked waiting kinds ---
+
+func TestHandle_LiveJevGate_AwaitingUser_UsageLimitAndErrorBlockedRejects(t *testing.T) {
+	for _, wk := range []string{"usage_limit", "error_blocked"} {
+		t.Run(wk, func(t *testing.T) {
+			clock := &fakeClock{t: time.Now()}
+			sender := &fakeSender{}
+			cfg := testConfig()
+			cfg.Jev.Mode = "live"
+			a := NewAlerter(cfg, "myhost", sender.send, clock.now)
+
+			sig := baseSignal(CodeAwaitingUser)
+			sig.Judgment = &Judgment{NeedsHumanNow: 0.99, WaitingKind: wk, Urgency: 5, UrgencyConf: 0.9}
+			d := a.Handle(sig)
+
+			if d.Page {
+				t.Fatalf("expected waiting_kind=%s to be excluded from paging as awaiting_user (a dedicated signal covers it), got %+v", wk, d)
+			}
+			if sender.count() != 0 {
+				t.Fatalf("expected no message sent, got %d", sender.count())
+			}
+		})
+	}
+}
+
 func TestHandle_Resolved_WithoutPriorPage_SendsNothing(t *testing.T) {
 	clock := &fakeClock{t: time.Now()}
 	sender := &fakeSender{}
@@ -864,6 +984,7 @@ func TestFormatAlert_EmojiPerCode(t *testing.T) {
 		CodeAuthFailed:   "🔑",
 		CodeStalledTurn:  "🧊",
 		CodeDiedMidTurn:  "💥",
+		CodeUsageLimit:   "🪫",
 	}
 	for code, emoji := range cases {
 		sig := baseSignal(code)
@@ -912,5 +1033,126 @@ func TestLooksLikeWaitingSplitsMessageAndPane(t *testing.T) {
 	}
 	if !looksLikeWaiting("Running the migration." + paneEvidenceSeparator + "Do you want to proceed?\n❯ 1. Yes\n  2. No") {
 		t.Error("menu in the pane was missed")
+	}
+}
+
+// --- FIX 3: readable alert evidence (message + cleaned pane tail) ---
+
+func TestFormatEvidence_CleansPaneChromeKeepsRealContent(t *testing.T) {
+	// The shape from the real incident: a rule, a queued-message prompt
+	// line with real text, another rule, and a status/keybinding line.
+	pane := "────────────────\n❯ push main when merged\n────────────────\n  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents · 2 feedback drafts"
+	evidence := "…to apply" + paneEvidenceSeparator + pane
+
+	lines := formatEvidence(evidence)
+	joined := strings.Join(lines, "\n")
+
+	if !strings.Contains(joined, "Pane:") {
+		t.Fatalf("expected a Pane: section, got %q", joined)
+	}
+	if strings.Contains(joined, "────") {
+		t.Errorf("expected rule-only lines to be dropped, got %q", joined)
+	}
+	if strings.Contains(joined, "shift+tab") || strings.Contains(joined, "for agents") {
+		t.Errorf("expected the status/keybinding chrome line to be dropped, got %q", joined)
+	}
+	if !strings.Contains(joined, "push main when merged") {
+		t.Errorf("expected the real queued-message line to be kept, got %q", joined)
+	}
+}
+
+func TestFormatEvidence_OmitsPaneWhenNothingSurvivesCleaning(t *testing.T) {
+	evidence := "Should I continue?" + paneEvidenceSeparator + "────\n❯ \n? for shortcuts\nesc to interrupt"
+	lines := formatEvidence(evidence)
+	joined := strings.Join(lines, "\n")
+
+	if strings.Contains(joined, "Pane:") {
+		t.Errorf("expected no Pane: section once every pane line is chrome, got %q", joined)
+	}
+	if !strings.Contains(joined, "Should I continue?") {
+		t.Errorf("expected the message part to still be quoted, got %q", joined)
+	}
+}
+
+func TestFormatEvidence_KeepsOnlyLastPaneTailKeepLines(t *testing.T) {
+	var pane strings.Builder
+	for i := 0; i < 10; i++ {
+		fmt.Fprintf(&pane, "real pane line %d\n", i)
+	}
+	evidence := "msg" + paneEvidenceSeparator + pane.String()
+	lines := formatEvidence(evidence)
+	joined := strings.Join(lines, "\n")
+
+	for i := 0; i < 10-paneTailKeepLines; i++ {
+		if strings.Contains(joined, fmt.Sprintf("real pane line %d\n", i)) {
+			t.Errorf("expected early pane line %d to be dropped, got %q", i, joined)
+		}
+	}
+	if !strings.Contains(joined, "real pane line 9") {
+		t.Errorf("expected the last pane line to be kept, got %q", joined)
+	}
+}
+
+func TestFormatEvidence_NoPaneSeparator_MessageOnly(t *testing.T) {
+	lines := formatEvidence("just a message, no pane tail")
+	if len(lines) != 1 {
+		t.Fatalf("expected a single message block, got %v", lines)
+	}
+	if lines[0] != "> just a message, no pane tail" {
+		t.Errorf("got %q", lines[0])
+	}
+}
+
+func TestFormatEvidence_MessageKeepsTrueTail(t *testing.T) {
+	long := strings.Repeat("word ", 100) + "Final sentence here. Should I proceed?"
+	lines := formatEvidence(long)
+	if len(lines) != 1 {
+		t.Fatalf("expected a single message block (no pane separator present), got %v", lines)
+	}
+	if !strings.HasSuffix(lines[0], "Should I proceed?") {
+		t.Errorf("expected the quoted block to end with the true tail, got %q", lines[0])
+	}
+	if len(lines[0]) > messageEvidenceCap+50 {
+		t.Errorf("message block unexpectedly long: %d bytes: %q", len(lines[0]), lines[0])
+	}
+}
+
+func TestTailAtBoundary_PrefersLineBoundary(t *testing.T) {
+	s := strings.Repeat("x", 100) + "\n" + strings.Repeat("y", 250)
+	got := tailAtBoundary(s, 350)
+	want := strings.Repeat("y", 250)
+	if got != want {
+		t.Errorf("tailAtBoundary did not cut at the line boundary; got len=%d, want len=%d", len(got), len(want))
+	}
+}
+
+func TestTailAtBoundary_PrefersSentenceBoundary(t *testing.T) {
+	s := strings.Repeat("x", 100) + ". " + strings.Repeat("y", 250)
+	got := tailAtBoundary(s, 350)
+	want := strings.Repeat("y", 250)
+	if got != want {
+		t.Errorf("tailAtBoundary did not cut at the sentence boundary; got len=%d, want len=%d", len(got), len(want))
+	}
+}
+
+func TestTailAtBoundary_ShortStringUnchanged(t *testing.T) {
+	if got := tailAtBoundary("short", 350); got != "short" {
+		t.Errorf("got %q, want unchanged", got)
+	}
+}
+
+func TestFormatAlert_UsesFormattedEvidence(t *testing.T) {
+	sig := baseSignal(CodeAwaitingUser)
+	sig.Evidence = "…to apply" + paneEvidenceSeparator + "────\n❯ push main when merged\n────\n  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents"
+	msg := FormatAlert("myhost", sig)
+
+	if !strings.Contains(msg, "Pane:") {
+		t.Errorf("expected the full alert to include the cleaned pane section, got %q", msg)
+	}
+	if strings.Contains(msg, "shift+tab") {
+		t.Errorf("expected chrome to be stripped from the full alert, got %q", msg)
+	}
+	if !strings.Contains(msg, "push main when merged") {
+		t.Errorf("expected real pane content in the full alert, got %q", msg)
 	}
 }

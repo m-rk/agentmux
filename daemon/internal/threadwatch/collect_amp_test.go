@@ -204,6 +204,47 @@ func TestAmpCollectorIgnoresReconnectChatterAndInfoNoise(t *testing.T) {
 	}
 }
 
+func TestAmpCollectorUsageLimit(t *testing.T) {
+	inst, path := ampTestInstance(t)
+	lines := []string{
+		`{"@timestamp":"2026-01-01T00:00:00Z","level":"ERROR","message":"request failed: you are out of credits","threadId":"thread-1"}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var c AmpCollector
+	events, err := c.Poll(context.Background(), inst, newAmpTestOffsets())
+	if err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if len(events) != 1 || events[0].Kind != KindUsageLimit {
+		t.Fatalf("events = %+v, want a single usage_limit event", events)
+	}
+	if events[0].Thread != "thread-1" {
+		t.Errorf("thread = %q, want thread-1", events[0].Thread)
+	}
+}
+
+func TestAmpCollectorUsageLimitTakesPrecedenceOverGenericError(t *testing.T) {
+	inst, path := ampTestInstance(t)
+	// Not level ERROR at all, so it would otherwise be dropped entirely; the
+	// usage-limit check, like the auth check, isn't gated on log level.
+	line := `{"@timestamp":"2026-01-01T00:00:00Z","level":"WARN","message":"quota exceeded for this workspace","threadId":"thread-1"}`
+	if err := os.WriteFile(path, []byte(line+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var c AmpCollector
+	events, err := c.Poll(context.Background(), inst, newAmpTestOffsets())
+	if err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if len(events) != 1 || events[0].Kind != KindUsageLimit {
+		t.Fatalf("events = %+v, want a single usage_limit event", events)
+	}
+}
+
 func TestAmpCollectorAgentStateTransitions(t *testing.T) {
 	inst, path := ampTestInstance(t)
 	state := func(sec int, thread, subtype string) string {

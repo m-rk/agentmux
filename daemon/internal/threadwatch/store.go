@@ -57,6 +57,7 @@ func LoadConfig(path string) (Config, error) {
 	mergeThresholds(&cfg.Thresholds, y.Thresholds)
 	mergeAlerts(&cfg.Alerts, y.Alerts)
 	mergeJev(&cfg.Jev, y.Jev)
+	mergeReview(&cfg.Review, y.Review)
 	if len(y.Instances) > 0 {
 		cfg.Instances = make(map[string]InstanceConf, len(y.Instances))
 		for name, ic := range y.Instances {
@@ -71,7 +72,27 @@ func LoadConfig(path string) (Config, error) {
 	}
 	checkAPIKey(&cfg.Jev, path)
 
+	switch cfg.Review.Agent {
+	case "claude", "amp":
+	default:
+		return Config{}, fmt.Errorf("%s: invalid review.agent %q (want claude or amp)", path, cfg.Review.Agent)
+	}
+	if !validAmpExecutor(cfg.Review.Amp.Executor) {
+		return Config{}, fmt.Errorf("%s: invalid review.amp.executor %q (want local or runner:<id>)", path, cfg.Review.Amp.Executor)
+	}
+	checkAmpAPIKey(&cfg.Review.Amp, path)
+
 	return cfg, nil
+}
+
+// validAmpExecutor reports whether executor is "local" or "runner:<id>"
+// with a non-empty id (see ampexec.Run for what each does).
+func validAmpExecutor(executor string) bool {
+	if executor == "local" {
+		return true
+	}
+	id, ok := strings.CutPrefix(executor, "runner:")
+	return ok && id != ""
 }
 
 // checkAPIKey drops an unusable TypeSafe key setting and records why in
@@ -79,22 +100,42 @@ func LoadConfig(path string) (Config, error) {
 // mistake must not stop deterministic alerting. A literal key is only
 // accepted from a file no one else can read.
 func checkAPIKey(jc *JevConfig, path string) {
+	jc.APIKey, jc.APIKeyRef, jc.KeyProblem = checkSecretRef("jev", jc.APIKey, jc.APIKeyRef, path)
+}
+
+// checkAmpAPIKey is checkAPIKey's twin for review.amp.api_key(_ref): the
+// amp access token is just as optional (amp falls back to its own stored
+// `amp login` session), so a key mistake here must not fail the whole
+// config load either.
+func checkAmpAPIKey(ac *AmpConfig, path string) {
+	ac.APIKey, ac.APIKeyRef, ac.KeyProblem = checkSecretRef("review.amp", ac.APIKey, ac.APIKeyRef, path)
+}
+
+// checkSecretRef validates one literal-key/1Password-ref pair loaded from
+// path: at most one of the two may be set, api_key_ref must look like an
+// op:// reference, and a literal api_key is only honoured from a file no
+// one else can read. fieldPrefix (e.g. "jev" or "review.amp") only affects
+// the wording of a returned problem. On any problem both key and ref come
+// back empty, so the caller never accidentally uses a half-validated value.
+func checkSecretRef(fieldPrefix, apiKey, apiKeyRef, path string) (key, ref, problem string) {
 	switch {
-	case jc.APIKey != "" && jc.APIKeyRef != "":
-		jc.KeyProblem = "set jev.api_key or jev.api_key_ref, not both"
-	case jc.APIKeyRef != "" && !validOpRef(jc.APIKeyRef):
-		jc.KeyProblem = "jev.api_key_ref must look like op://<vault-id>/<item-id>/<field>"
-	case jc.APIKey != "":
+	case apiKey != "" && apiKeyRef != "":
+		return "", "", fmt.Sprintf("set %s.api_key or %s.api_key_ref, not both", fieldPrefix, fieldPrefix)
+	case apiKeyRef != "" && !validOpRef(apiKeyRef):
+		return "", "", fmt.Sprintf("%s.api_key_ref must look like op://<vault-id>/<item-id>/<field>", fieldPrefix)
+	case apiKey != "":
 		info, err := os.Stat(path)
 		if err != nil {
-			jc.KeyProblem = fmt.Sprintf("checking %s: %v", path, err)
-		} else if perm := info.Mode().Perm(); perm&0o077 != 0 {
-			jc.KeyProblem = fmt.Sprintf("jev.api_key ignored: %s is mode %03o; run chmod 600 %s", path, perm, path)
+			return "", "", fmt.Sprintf("checking %s: %v", path, err)
 		}
+		if perm := info.Mode().Perm(); perm&0o077 != 0 {
+			return "", "", fmt.Sprintf("%s.api_key ignored: %s is mode %03o; run chmod 600 %s", fieldPrefix, path, perm, path)
+		}
+		return apiKey, "", ""
+	case apiKeyRef != "":
+		return "", apiKeyRef, ""
 	}
-	if jc.KeyProblem != "" {
-		jc.APIKey, jc.APIKeyRef = "", ""
-	}
+	return "", "", ""
 }
 
 // validOpRef accepts op://vault/item/field and op://vault/item/section/field.
@@ -125,6 +166,7 @@ type yamlConfig struct {
 	Thresholds *yamlThresholds             `yaml:"thresholds"`
 	Alerts     *yamlAlertConfig            `yaml:"alerts"`
 	Jev        *yamlJevConfig              `yaml:"jev"`
+	Review     *yamlReviewConfig           `yaml:"review"`
 	Instances  map[string]yamlInstanceConf `yaml:"instances"`
 }
 
@@ -153,6 +195,22 @@ type yamlJevConfig struct {
 	AwaitingMinProb *float64 `yaml:"awaiting_min_prob"`
 	APIKey          *string  `yaml:"api_key"`
 	APIKeyRef       *string  `yaml:"api_key_ref"`
+}
+
+type yamlReviewConfig struct {
+	Agent *string        `yaml:"agent"`
+	Model *string        `yaml:"model"`
+	Amp   *yamlAmpConfig `yaml:"amp"`
+}
+
+type yamlAmpConfig struct {
+	Executor  *string `yaml:"executor"`
+	Workdir   *string `yaml:"workdir"`
+	RunnerDir *string `yaml:"runner_dir"`
+	Mode      *string `yaml:"mode"`
+	Label     *string `yaml:"label"`
+	APIKey    *string `yaml:"api_key"`
+	APIKeyRef *string `yaml:"api_key_ref"`
 }
 
 type yamlInstanceConf struct {
@@ -250,6 +308,46 @@ func mergeJev(dst *JevConfig, src *yamlJevConfig) {
 	}
 	if src.AwaitingMinProb != nil {
 		dst.AwaitingMinProb = *src.AwaitingMinProb
+	}
+}
+
+func mergeReview(dst *ReviewConfig, src *yamlReviewConfig) {
+	if src == nil {
+		return
+	}
+	if src.Agent != nil {
+		dst.Agent = strings.TrimSpace(*src.Agent)
+	}
+	if src.Model != nil {
+		dst.Model = strings.TrimSpace(*src.Model)
+	}
+	mergeAmp(&dst.Amp, src.Amp)
+}
+
+func mergeAmp(dst *AmpConfig, src *yamlAmpConfig) {
+	if src == nil {
+		return
+	}
+	if src.Executor != nil {
+		dst.Executor = strings.TrimSpace(*src.Executor)
+	}
+	if src.Workdir != nil {
+		dst.Workdir = strings.TrimSpace(*src.Workdir)
+	}
+	if src.RunnerDir != nil {
+		dst.RunnerDir = strings.TrimSpace(*src.RunnerDir)
+	}
+	if src.Mode != nil {
+		dst.Mode = strings.TrimSpace(*src.Mode)
+	}
+	if src.Label != nil {
+		dst.Label = strings.TrimSpace(*src.Label)
+	}
+	if src.APIKey != nil {
+		dst.APIKey = strings.TrimSpace(*src.APIKey)
+	}
+	if src.APIKeyRef != nil {
+		dst.APIKeyRef = strings.TrimSpace(*src.APIKeyRef)
 	}
 }
 

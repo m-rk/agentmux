@@ -32,9 +32,9 @@ pane.
 
 | Agent | Source | Useful fields |
 |---|---|---|
-| claude-code | `~/.claude/projects/<workdir-slug>/*.jsonl` | `system/turn_duration` (`durationMs`), `isApiErrorMessage`, `tool_result.is_error`, assistant `usage`, `cost-state`, compaction and bridge records |
-| amp | `~/.cache/amp/logs/no-tui.log` (JSON lines) | `level`, `threadId`, auth/`Session expired` errors, reconnects, runner registration. Thread content is server-side, so amp gets error and liveness signals only |
-| opencode | `~/.local/share/opencode/opencode.db` (read-only SQLite: `session`, `message`, `part`) | message times, token counts, tool errors |
+| claude-code | `~/.claude/projects/<workdir-slug>/*.jsonl` | `system/turn_duration` (`durationMs`), `isApiErrorMessage` (its top-level `error`/`apiErrorStatus`, e.g. `error: "rate_limit"`, distinguish a usage/session limit from a generic API error), `tool_result.is_error`, assistant `usage`, `cost-state`, compaction and bridge records |
+| amp | `~/.cache/amp/logs/no-tui.log` (JSON lines) | `level`, `threadId`, auth/`Session expired` errors, usage/credit-limit text ("out of credits", "quota", ...), reconnects, runner registration. Thread content is server-side, so amp gets error and liveness signals only |
+| opencode | `~/.local/share/opencode/opencode.db` (read-only SQLite: `session`, `message`, `part`) | message times, token counts, tool errors, and each turn's own `error.name`/`error.data.message` (auth vs. usage-limit vs. generic, by text) |
 | any (fallback) | `ViewPane` + discovery status | running/idle transitions come from discovery status separately; the `ViewPane` side is a pane-hash heartbeat only — one `activity` event whenever the rendered pane changes since the last poll, nothing else. It does not parse pane content, so it cannot tell a visible menu from any other change |
 
 The collectors keep a small per-file byte or row offset, so a restart resumes
@@ -47,7 +47,7 @@ type Event struct {
     Time     time.Time
     Instance string
     Thread   string        // Claude session id, amp threadId, opencode session id
-    Kind     string        // turn_end, api_error, tool_error, auth_error, awaiting_user, stall, compaction, ...
+    Kind     string        // turn_end, api_error, usage_limit, tool_error, auth_error, awaiting_user, stall, compaction, ...
     Duration time.Duration // turn_end
     Tokens   Usage         // turn_end, when known
     Excerpt  string        // capped (≤2 KiB), secret-redacted
@@ -79,6 +79,18 @@ Intervene candidates:
 - `stalled_turn`: status is `running`, but for more than 15 min there has been
   no new transcript event and the pane hash has not changed.
 - `died_mid_turn`: the session exited or restarted while a turn was open.
+- `usage_limit`: a usage/session/weekly/credit/rate limit interrupted a turn
+  (Claude Code's `isApiErrorMessage` records with `error: "rate_limit"` or
+  matching text, amp/opencode's own equivalents). This is its own signal,
+  never `awaiting_user`: the collectors route this text to a distinct event
+  kind before the detector ever sees it as an error or a turn end, so a
+  limit hit can't be mistaken for "waiting on a question" using a stale or
+  absent assistant message. It fires once per open episode (repeated hits
+  while still blocked don't re-page), blocks `awaiting_user` and
+  `stalled_turn` for the thread until a later user message or real
+  recovery, and doesn't count toward `error_loop` or `recovered_errors`.
+  Paging is capped at once per instance per 6 h unless a new episode starts
+  after the thread made progress.
 
 Insight candidates (logged, never paged):
 
@@ -99,14 +111,28 @@ overrides.
 Alerts reuse `discordnotify` and the webhook from
 `agentmux notify discord setup`, so there is no new credential.
 
-- One message per signal: instance, thread, a one-line reason, a capped
-  evidence excerpt, and what to do (`agentmux` → select → `a`). Mentions are
-  neutralised, as `dailycheck.FormatNotification` already does.
-- Dedup on `(instance, thread, code)` with a 1 h cooldown. The limit is 6
+- One message per signal: instance, thread, a one-line reason, evidence, and
+  what to do (`agentmux` → select → `a`). Mentions are neutralised, as
+  `dailycheck.FormatNotification` already does.
+- Evidence is rendered in two parts, each capped and cleaned up separately,
+  so a long pane doesn't crowd out or garble the agent's own words: the
+  agent's last message (cut to roughly its last 350 bytes, preferring a
+  line or sentence boundary over a mid-word cut), and, when a pane tail was
+  appended (`awaiting_user`/`stalled_turn`), a `Pane:` block with box-drawing
+  rules, status/keybinding chrome (`shift+tab`, `esc to interrupt`, `auto
+  mode`, token counters, ...) and bare prompt lines stripped out, keeping
+  only the last few real lines. Either half is omitted if nothing is left to
+  show.
+- Dedup on `(instance, thread, code)` with a 1 h cooldown (`usage_limit` adds
+  its own coarser per-instance cap on top — see above). The limit is 6
   intervene messages per hour per host; after that they roll up into one
   "N more" line.
 - When a condition clears (the session is running again), a short "resolved"
-  message is sent only if the alert was sent in the last hour.
+  message is sent only if the alert was sent in the last hour — **except**
+  for `awaiting_user` and `usage_limit`, which never get a resolved notice:
+  the operator resolving a wait themselves, or a limit clearing on its own,
+  isn't news. Dedup state still clears for both, so a fresh wait/episode can
+  page again right away rather than waiting out the cooldown.
 - Quiet hours are **not implemented**: every alert pages immediately
   regardless of time of day (see "Open questions").
 
@@ -141,7 +167,7 @@ counts stay in code, and prose for the digest stays with Claude.
 
 | Use | Primitive(s) | Why Jev and not code or Claude |
 |---|---|---|
-| **Awaiting-user gate** (highest value). Runs when a session goes idle. State: last assistant message tail + pane tail | Choice `waiting_kind` ∈ {question to user, permission/approval prompt, plan awaiting approval, finished/report, error/blocked, none}; Noul `needs_human_now` | Regexes cannot tell "Done, here's a summary" from "Should I also migrate the DB?". Claude on every idle transition is too slow and costly |
+| **Awaiting-user gate** (highest value). Runs when a session goes idle. State: last assistant message tail + pane tail | Choice `waiting_kind` ∈ {question to user, permission/approval prompt, plan awaiting approval, finished/report, error/blocked, usage/credit limit, none}; Noul `needs_human_now` | Regexes cannot tell "Done, here's a summary" from "Should I also migrate the DB?". Claude on every idle transition is too slow and costly. `error_blocked` and `usage_limit` both fail the gate outright (their own dedicated signals — `error_loop`/`auth_failed` and `usage_limit` — already cover them), regardless of `needs_human_now` |
 | **Alert gate**. Before paging on any intervene candidate | Score `intervention_urgency` (1–5, with concrete levels); Noul `likely_transient` for errors | Confidence-gated routing: page only if urgency ≥ 4 and confidence is high. Uncertain candidates become insights, which is the main noise control |
 | **Insight tagging** at write time | Choice `category` over a fixed taxonomy (missing permission, flaky test, env/tooling, context bloat, repeated instruction, unclear task, external outage, other); Noul `fixable_by_config` | Turns the log into structured data, so the nightly ranking is code (composite scoring) and Claude only writes up the top clusters |
 | **Dedup/merge** (not implemented — future work) | Noul "same underlying issue as open alert X?" | Would stop one outage from causing one alert per instance; today dedup is purely code-based, per (instance, thread, code) with a cooldown (see "Alerting") |

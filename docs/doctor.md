@@ -23,6 +23,7 @@ default and uses the existing Claude login for the session owner; `-model` can
 pin a model when that is useful. On Linux, agentmux drops privileges before
 launching Claude and normally chooses the owner of the first Claude Code
 instance. `-run-user USER` makes that explicit on an unusual multi-user host.
+`-checker amp` uses amp instead — see "Amp as the checker" below.
 
 Claude gets no tools and never types into a session itself. It receives only
 the affected sessions' structured findings and capped pane snapshots, then
@@ -34,6 +35,44 @@ daily refresh is still active. agentmux refreshes the affected session's state
 immediately before acting, then probes again afterward rather than treating a
 successful command as proof of recovery. Pane text is still session content,
 so use an account you trust with that small excerpt.
+
+## Amp as the checker
+
+`agentmux doctor -checker amp` runs the same escalation through a single
+bounded `amp -x` call (`daemon/internal/ampexec`) instead of `claude -p`. It
+gets the identical findings/snapshots payload and the identical validation —
+only the transport differs, and amp gets no tools here either.
+
+Amp settings come from the run user's own `~/.config/agentmux/
+threadwatch.yaml`, specifically the **same `review.amp` block** the nightly
+review's `-agent amp` uses (see [docs/thread-watch.md](thread-watch.md#review-backend-claude-vs-amp)
+for the full field list, the `local` vs. `runner:<id>` executor tradeoff,
+and the amp key precedence). Doctor does not have its own separate amp
+config section — it deliberately reuses that one, since both are "the
+occasional bounded escalation for this host's operator." Two flags let a
+doctor invocation override it without touching `threadwatch.yaml`:
+
+- `-amp-executor` — override `review.amp.executor` (`local` or
+  `runner:<id>`).
+- `-amp-workdir` — override `review.amp.workdir` (default: the run user's
+  home).
+
+With the default `local` executor, agentmux generates a temporary,
+0600 settings file that disables every amp tool (belt and braces:
+`amp.tools.disable: ["*"]` plus a catch-all `amp.permissions` reject
+rule) before the call and removes it afterward — the same tool-safety
+guarantee `--tools ""` gives the claude path. A `runner:<id>` executor
+cannot be given that guarantee (that runner's own settings decide what it
+can call), so choosing one logs a startup warning; only point doctor at a
+runner you've configured with permissions you trust against pane content.
+
+Every `-checker amp` run creates a real, visible amp thread on
+ampcode.com (labeled by `review.amp.label`, default `agentmux-review`) —
+that is intentional, not a leak to guard against.
+
+On Linux, root-run doctor drops privileges for the amp subprocess exactly
+like it does for claude: via `runas`, as the same session owner
+`doctorIdentity` resolves for the claude path (or `-run-user`).
 
 No Discord message is sent for an uneventful pass. Repairs, meaningful
 observations, escalation failures, and inspection failures go to the webhook

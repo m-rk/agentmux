@@ -119,6 +119,73 @@ func TestClaudeCollectorMapsRecords(t *testing.T) {
 	}
 }
 
+// TestClaudeCollectorUsageLimitFromTopLevelError exercises the real record
+// shape behind the incident this fix addresses: an isApiErrorMessage record
+// with a top-level "error":"rate_limit" and text like "You've hit your
+// session limit · resets 7am (UTC)" must map to KindUsageLimit, not
+// KindAPIError.
+func TestClaudeCollectorUsageLimitFromTopLevelError(t *testing.T) {
+	inst, dir := claudeTestInstance(t, "/proj/usage-limit-error")
+	path := filepath.Join(dir, "a.jsonl")
+	line := `{"type":"assistant","timestamp":"2026-01-01T00:00:00Z","sessionId":"sess-1","isApiErrorMessage":true,"error":"rate_limit","apiErrorStatus":429,"message":{"role":"assistant","content":[{"type":"text","text":"You've hit your session limit · resets 7am (UTC)"}]}}` + "\n"
+	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &ClaudeCollector{Backfill: true}
+	events, err := c.Poll(context.Background(), inst, newClaudeTestOffsets())
+	if err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if len(events) != 1 || events[0].Kind != KindUsageLimit {
+		t.Fatalf("events = %+v, want a single usage_limit event", events)
+	}
+	if !strings.Contains(events[0].Excerpt, "resets 7am") {
+		t.Errorf("excerpt = %q, want the reset phrase preserved", events[0].Excerpt)
+	}
+}
+
+// TestClaudeCollectorUsageLimitFromTextPattern covers records that don't set
+// the top-level "error" field at all (or set some other value) but still
+// read as a usage/credit limit from the assistant text alone.
+func TestClaudeCollectorUsageLimitFromTextPattern(t *testing.T) {
+	inst, dir := claudeTestInstance(t, "/proj/usage-limit-text")
+	path := filepath.Join(dir, "a.jsonl")
+	line := `{"type":"assistant","timestamp":"2026-01-01T00:00:00Z","sessionId":"sess-1","isApiErrorMessage":true,"message":{"role":"assistant","content":[{"type":"text","text":"Sorry, you are out of usage credits for this billing period."}]}}` + "\n"
+	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &ClaudeCollector{Backfill: true}
+	events, err := c.Poll(context.Background(), inst, newClaudeTestOffsets())
+	if err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if len(events) != 1 || events[0].Kind != KindUsageLimit {
+		t.Fatalf("events = %+v, want a single usage_limit event", events)
+	}
+}
+
+// A generic API error that doesn't match any usage-limit phrasing must stay
+// KindAPIError, not get swept into KindUsageLimit.
+func TestClaudeCollectorGenericAPIErrorStaysAPIError(t *testing.T) {
+	inst, dir := claudeTestInstance(t, "/proj/generic-api-error")
+	path := filepath.Join(dir, "a.jsonl")
+	line := `{"type":"assistant","timestamp":"2026-01-01T00:00:00Z","sessionId":"sess-1","isApiErrorMessage":true,"error":"invalid_request","apiErrorStatus":400,"message":{"role":"assistant","content":[{"type":"text","text":"Prompt is too long"}]}}` + "\n"
+	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &ClaudeCollector{Backfill: true}
+	events, err := c.Poll(context.Background(), inst, newClaudeTestOffsets())
+	if err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if len(events) != 1 || events[0].Kind != KindAPIError {
+		t.Fatalf("events = %+v, want a single api_error event", events)
+	}
+}
+
 func TestClaudeCollectorRedactsExcerpts(t *testing.T) {
 	inst, dir := claudeTestInstance(t, "/proj/two")
 	claudeCopyFixture(t, "redact.jsonl", filepath.Join(dir, "a.jsonl"))

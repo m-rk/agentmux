@@ -126,6 +126,123 @@ instances:
 	}
 }
 
+func TestLoadConfigReviewDefaults(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := LoadConfig(filepath.Join(dir, "nope.yaml"))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Review.Agent != "claude" {
+		t.Errorf("Review.Agent = %q, want claude", cfg.Review.Agent)
+	}
+	if cfg.Review.Amp.Executor != "local" {
+		t.Errorf("Review.Amp.Executor = %q, want local", cfg.Review.Amp.Executor)
+	}
+	if cfg.Review.Amp.Label != "agentmux-review" {
+		t.Errorf("Review.Amp.Label = %q, want agentmux-review", cfg.Review.Amp.Label)
+	}
+}
+
+func TestLoadConfigReviewOverridesKeepOtherDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "threadwatch.yaml")
+	yamlSrc := `
+review:
+  agent: amp
+  amp:
+    executor: "runner:abc123"
+    runner_dir: /srv/work
+    mode: high
+`
+	if err := os.WriteFile(path, []byte(yamlSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Review.Agent != "amp" {
+		t.Errorf("Review.Agent = %q, want amp", cfg.Review.Agent)
+	}
+	if cfg.Review.Amp.Executor != "runner:abc123" {
+		t.Errorf("Review.Amp.Executor = %q, want runner:abc123", cfg.Review.Amp.Executor)
+	}
+	if cfg.Review.Amp.RunnerDir != "/srv/work" {
+		t.Errorf("Review.Amp.RunnerDir = %q, want /srv/work", cfg.Review.Amp.RunnerDir)
+	}
+	if cfg.Review.Amp.Mode != "high" {
+		t.Errorf("Review.Amp.Mode = %q, want high", cfg.Review.Amp.Mode)
+	}
+	// Label was not set in the file, so it keeps the default.
+	if cfg.Review.Amp.Label != "agentmux-review" {
+		t.Errorf("Review.Amp.Label = %q, want default agentmux-review", cfg.Review.Amp.Label)
+	}
+}
+
+func TestLoadConfigInvalidReviewAgent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "threadwatch.yaml")
+	if err := os.WriteFile(path, []byte("review:\n  agent: chatgpt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(path); err == nil {
+		t.Fatal("expected error for invalid review.agent")
+	}
+}
+
+func TestLoadConfigInvalidAmpExecutor(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "threadwatch.yaml")
+	if err := os.WriteFile(path, []byte("review:\n  amp:\n    executor: cloud\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(path); err == nil {
+		t.Fatal("expected error for invalid review.amp.executor")
+	}
+}
+
+func TestLoadConfigAmpAPIKeySettings(t *testing.T) {
+	cases := []struct {
+		name        string
+		yaml        string
+		mode        os.FileMode
+		wantKey     string
+		wantRef     string
+		wantProblem string
+	}{
+		{"none", "review:\n  agent: amp\n", 0o600, "", "", ""},
+		{"literal in private file", "review:\n  amp:\n    api_key: sgamp_abc\n", 0o600, "sgamp_abc", "", ""},
+		{"literal in readable file", "review:\n  amp:\n    api_key: sgamp_abc\n", 0o644, "", "", "chmod 600"},
+		{"op reference", "review:\n  amp:\n    api_key_ref: op://vault/item/credential\n", 0o644, "", "op://vault/item/credential", ""},
+		{"malformed reference", "review:\n  amp:\n    api_key_ref: vault/item\n", 0o600, "", "", "op://"},
+		{"both", "review:\n  amp:\n    api_key: sgamp_abc\n    api_key_ref: op://v/i/f\n", 0o600, "", "", "not both"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "threadwatch.yaml")
+			if err := os.WriteFile(path, []byte(tc.yaml), tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(path, tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if cfg.Review.Amp.APIKey != tc.wantKey || cfg.Review.Amp.APIKeyRef != tc.wantRef {
+				t.Errorf("key=%q ref=%q, want %q %q", cfg.Review.Amp.APIKey, cfg.Review.Amp.APIKeyRef, tc.wantKey, tc.wantRef)
+			}
+			if tc.wantProblem == "" && cfg.Review.Amp.KeyProblem != "" || !strings.Contains(cfg.Review.Amp.KeyProblem, tc.wantProblem) {
+				t.Errorf("problem = %q, want containing %q", cfg.Review.Amp.KeyProblem, tc.wantProblem)
+			}
+			if strings.Contains(cfg.Review.Amp.KeyProblem, "sgamp_abc") {
+				t.Error("problem text leaks the key")
+			}
+		})
+	}
+}
+
 func TestLoadConfigInvalidJevMode(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "threadwatch.yaml")

@@ -183,8 +183,26 @@ func (a *Alerter) Flush() error {
 	return nil
 }
 
+// noResolvedNoticeCodes are codes whose resolution is not itself news: the
+// operator resolving CodeAwaitingUser themselves (by replying) is the
+// expected, ordinary outcome, not something worth a second Discord message,
+// and CodeUsageLimit clears on its own (the limit resets, or the operator's
+// reply/retry gets past it) the same way. Both still clear dedup state below
+// so a fresh wait/limit episode can page again without waiting out the
+// cooldown.
+var noResolvedNoticeCodes = map[string]bool{
+	CodeAwaitingUser: true,
+	CodeUsageLimit:   true,
+}
+
 func (a *Alerter) handleResolvedLocked(sig Signal) Decision {
 	key := dedupKey(sig)
+
+	if noResolvedNoticeCodes[sig.Code] {
+		delete(a.lastPaged, key)
+		return Decision{Page: false, Reason: "resolved: no notice for " + sig.Code}
+	}
+
 	last, ok := a.lastPaged[key]
 	if !ok || a.now().Sub(last) > a.cfg.Alerts.ResolvedAfter {
 		return Decision{Page: false, Reason: "resolved: no recent page"}
@@ -248,12 +266,27 @@ func evaluateJev(sig Signal, jc JevConfig) jevOutcome {
 	}
 }
 
+// awaitingUserExcludedWaitingKinds are Jev waiting_kind values that must
+// never let a signal pass the awaiting_user gate, even with a high
+// needs_human_now: "finished"/"none" mean nothing is actually being waited
+// on, and "error_blocked"/"usage_limit" mean the session is stuck on
+// something other than the operator's input — those are covered by their
+// own dedicated signals (error_loop/auth_failed, and the new usage_limit
+// signal respectively), so double-paging them as "waiting on the user"
+// would be misleading and redundant.
+var awaitingUserExcludedWaitingKinds = map[string]bool{
+	"finished":      true,
+	"none":          true,
+	"error_blocked": true,
+	"usage_limit":   true,
+}
+
 // gatePass implements the per-code gating rules from
 // docs/design/thread-watch.md "Alerting":
 //   - awaiting_user needs NeedsHumanNow >= AwaitingMinProb and a
-//     WaitingKind that isn't "finished" or "none". Urgency doesn't apply:
-//     a session waiting on the operator is the case worth paging even
-//     when nothing is on fire.
+//     WaitingKind not in awaitingUserExcludedWaitingKinds. Urgency doesn't
+//     apply: a session waiting on the operator is the case worth paging
+//     even when nothing is on fire.
 //   - auth_failed and died_mid_turn always pass (they always page).
 //   - every other intervene code needs Urgency >= PageUrgency with
 //     UrgencyConf >= PageConfidence.
@@ -262,7 +295,7 @@ func gatePass(code string, j *Judgment, jc JevConfig) (bool, string) {
 	case CodeAuthFailed, CodeDiedMidTurn:
 		return true, "always pages"
 	case CodeAwaitingUser:
-		humanOK := j.NeedsHumanNow >= jc.AwaitingMinProb && j.WaitingKind != "finished" && j.WaitingKind != "none"
+		humanOK := j.NeedsHumanNow >= jc.AwaitingMinProb && !awaitingUserExcludedWaitingKinds[j.WaitingKind]
 		detail := fmt.Sprintf("needs_human_now %.2f (min %.2f), waiting_kind=%s",
 			j.NeedsHumanNow, jc.AwaitingMinProb, j.WaitingKind)
 		return humanOK, detail
@@ -278,10 +311,17 @@ func gatePass(code string, j *Judgment, jc JevConfig) (bool, string) {
 // as dailycheck.FormatNotification.
 const discordMessageCap = 1900
 
-// alertEvidenceCap bounds the quoted evidence block inside one alert
-// message; it is smaller than MaxExcerptBytes (the event/signal cap)
-// because the whole message must also fit under discordMessageCap.
-const alertEvidenceCap = 600
+// messageEvidenceCap bounds how much of the message part of a signal's
+// evidence (the agent's own last words, before any pane tail — see
+// paneEvidenceSeparator) FormatAlert quotes. Smaller than the old flat
+// evidence cap so a long pane tail (rendered separately below) can't starve
+// it, and small enough that the whole message still fits comfortably under
+// discordMessageCap.
+const messageEvidenceCap = 350
+
+// paneTailKeepLines bounds how many trailing, non-chrome pane lines
+// FormatAlert quotes under "Pane:".
+const paneTailKeepLines = 6
 
 var codeEmoji = map[string]string{
 	CodeAwaitingUser: "⏳",
@@ -289,13 +329,15 @@ var codeEmoji = map[string]string{
 	CodeAuthFailed:   "🔑",
 	CodeStalledTurn:  "🧊",
 	CodeDiedMidTurn:  "💥",
+	CodeUsageLimit:   "🪫",
 }
 
 // FormatAlert renders the Discord message for one intervene signal:
-// instance/thread/host, the reason, the Jev waiting_kind if known, a
-// capped quoted evidence excerpt, and how to attach. Mentions are
-// neutralised (as dailycheck.FormatNotification already does) and the
-// result is capped at discordMessageCap.
+// instance/thread/host, the reason, the Jev waiting_kind if known, the
+// evidence (rendered by formatEvidence — the agent's own message and, when
+// present, a cleaned-up pane tail, shown and capped separately), and how to
+// attach. Mentions are neutralised (as dailycheck.FormatNotification already
+// does) and the result is capped at discordMessageCap.
 func FormatAlert(host string, sig Signal) string {
 	emoji := codeEmoji[sig.Code]
 	if emoji == "" {
@@ -315,13 +357,35 @@ func FormatAlert(host string, sig Signal) string {
 	if sig.Judgment != nil && sig.Judgment.WaitingKind != "" {
 		lines = append(lines, "Waiting: "+sig.Judgment.WaitingKind)
 	}
-	if evidence := strings.TrimSpace(sig.Evidence); evidence != "" {
-		lines = append(lines, quoteEvidence(evidence))
-	}
+	lines = append(lines, formatEvidence(sig.Evidence)...)
 	lines = append(lines, "Attach: `agentmux` → select "+sig.Instance+" → a")
 
 	message := neutraliseMentions(strings.Join(lines, "\n"))
 	return truncateMessage(message, discordMessageCap)
+}
+
+// formatEvidence splits sig.Evidence on paneEvidenceSeparator (see serve.go)
+// into the agent's own last message and the raw pane tail
+// (Runner.appendPaneEvidence), and renders each as its own quoted block: the
+// message cut to its last ~350 bytes at a sentence/line boundary where
+// possible, and the pane tail stripped of box-drawing rules, status chrome
+// (shift+tab hints, "esc to interrupt", token counters, ...) and bare
+// prompt lines, keeping only its last few real lines — so an alert shows
+// what the agent actually said or was showing, not a cut-off tail glued to
+// the input box's own furniture. Either half is omitted if it ends up with
+// nothing to show.
+func formatEvidence(evidence string) []string {
+	message, pane, _ := strings.Cut(evidence, paneEvidenceSeparator)
+
+	var lines []string
+	if m := strings.TrimSpace(message); m != "" {
+		lines = append(lines, quoteBlock(tailAtBoundary(m, messageEvidenceCap)))
+	}
+	if p := cleanPaneTail(pane); p != "" {
+		lines = append(lines, "Pane:")
+		lines = append(lines, quoteBlock(p))
+	}
+	return lines
 }
 
 // formatResolved renders the short "condition cleared" notice for a
@@ -357,13 +421,105 @@ func shortThread(thread string) string {
 	return thread[:8]
 }
 
-func quoteEvidence(evidence string) string {
-	capped := tailCap(evidence, alertEvidenceCap)
-	lines := strings.Split(capped, "\n")
+// quoteBlock renders already-sized text as a Discord blockquote.
+func quoteBlock(text string) string {
+	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		lines[i] = "> " + line
 	}
 	return strings.Join(lines, "\n")
+}
+
+// tailAtBoundary keeps roughly the last limit bytes of s, preferring to
+// start just after a nearby line break or sentence end (". ", "! ", "? ")
+// rather than mid-word or mid-sentence, so a quoted message opens cleanly.
+// The search for a boundary is itself bounded to the first quarter of the
+// cut text (plus a little slack) so a boundary far into the kept text isn't
+// preferred over the byte cap.
+func tailAtBoundary(s string, limit int) string {
+	capped := tailCap(s, limit)
+	if !strings.HasPrefix(capped, "…") {
+		return capped
+	}
+	body := capped[len("…"):]
+	search := len(body)/4 + 40
+
+	if i := strings.IndexByte(body, '\n'); i >= 0 && i < search {
+		if rest := strings.TrimLeft(body[i+1:], "\n"); rest != "" {
+			return rest
+		}
+	}
+	for i := 0; i < len(body)-1 && i < search; i++ {
+		if (body[i] == '.' || body[i] == '!' || body[i] == '?') && (body[i+1] == ' ' || body[i+1] == '\n') {
+			if rest := strings.TrimLeft(body[i+2:], " \n"); rest != "" {
+				return rest
+			}
+		}
+	}
+	return capped
+}
+
+// paneRuleLine matches a pane line made up only of box-drawing/rule
+// characters and whitespace — Claude Code, amp and opencode all draw these
+// around their input box and status line.
+var paneRuleLine = regexp.MustCompile(`^[\s─━═\-—_│┃┆┇┊┋┌┐└┘├┤┬┴┼╭╮╰╯|]+$`)
+
+// panePromptLine matches a bare input-prompt line with nothing typed into
+// it — just a cursor and whitespace (e.g. "❯ ", "> "). A cursor line with
+// real text after it (e.g. "❯ push main when merged") is not chrome and is
+// kept.
+var panePromptLine = regexp.MustCompile(`^[\s>❯]*$`)
+
+// paneChromeMarkers are case-insensitive substrings that mark a pane line as
+// the agent's own status chrome — a keybinding hint, a mode indicator, a
+// token/cost counter — rather than session content worth showing in an
+// alert.
+var paneChromeMarkers = []string{
+	"shift+tab",
+	"for shortcuts",
+	"esc to interrupt",
+	"auto mode",
+	"? for",
+	"ctrl+",
+	"tokens",
+}
+
+// isPaneChromeLine reports whether line (already trimmed) is pane furniture
+// that formatEvidence should drop rather than quote: blank, a bare rule, a
+// bare prompt, or one of the agent's own status/keybinding lines.
+func isPaneChromeLine(line string) bool {
+	if line == "" || paneRuleLine.MatchString(line) || panePromptLine.MatchString(line) {
+		return true
+	}
+	lower := strings.ToLower(line)
+	for _, marker := range paneChromeMarkers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// cleanPaneTail drops chrome lines from pane (see isPaneChromeLine) and
+// keeps at most the last paneTailKeepLines of what's left, so a signal's
+// pane tail reads as the last real thing on screen instead of a rule and a
+// status line. Returns "" when nothing worth showing remains.
+func cleanPaneTail(pane string) string {
+	if strings.TrimSpace(pane) == "" {
+		return ""
+	}
+	var kept []string
+	for _, line := range strings.Split(pane, "\n") {
+		trimmed := strings.TrimSpace(strings.TrimRight(line, " \t\r"))
+		if isPaneChromeLine(trimmed) {
+			continue
+		}
+		kept = append(kept, trimmed)
+	}
+	if len(kept) > paneTailKeepLines {
+		kept = kept[len(kept)-paneTailKeepLines:]
+	}
+	return strings.Join(kept, "\n")
 }
 
 // waitingHeuristicTailBytes bounds how much of sig.Evidence looksLikeWaiting

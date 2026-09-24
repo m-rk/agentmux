@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -401,6 +402,17 @@ func isAuthErrorText(s string) bool {
 	return false
 }
 
+// usageLimitErrorPattern matches an opencode turn's error name/message that
+// reads as a usage/session/credit/rate limit rather than a generic API
+// error. Matched case-insensitively.
+var usageLimitErrorPattern = regexp.MustCompile(`(?i)hit your (?:session|usage|weekly|daily)? ?limit|usage limit|out of (?:usage )?credits|insufficient credit|credit balance is too low|quota exceeded|quota`)
+
+// isUsageLimitErrorText reports whether an error name/message looks like a
+// usage/credit/rate limit rather than a generic API failure.
+func isUsageLimitErrorText(s string) bool {
+	return usageLimitErrorPattern.MatchString(s)
+}
+
 func msTime(ms int64) time.Time {
 	if ms <= 0 {
 		return time.Time{}
@@ -522,8 +534,11 @@ func buildOpencodeEvents(inst Instance, msgRows []opencodeMessageRow, partRows [
 
 		if t.ErrorName != "" || t.ErrorMessage != "" {
 			kind := KindAPIError
-			if isAuthErrorText(t.ErrorName) || isAuthErrorText(t.ErrorMessage) {
+			switch {
+			case isAuthErrorText(t.ErrorName) || isAuthErrorText(t.ErrorMessage):
 				kind = KindAuthError
+			case isUsageLimitErrorText(t.ErrorName) || isUsageLimitErrorText(t.ErrorMessage):
+				kind = KindUsageLimit
 			}
 			errText := t.ErrorMessage
 			if errText == "" {
