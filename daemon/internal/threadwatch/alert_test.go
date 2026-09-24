@@ -587,6 +587,242 @@ func TestHandle_ConcurrencySafe(t *testing.T) {
 	}
 }
 
+// --- looksLikeWaiting ---
+
+func TestLooksLikeWaiting(t *testing.T) {
+	cases := []struct {
+		name     string
+		evidence string
+		want     bool
+	}{
+		{"plain question", "I've reviewed the code. Should I also update the tests?", true},
+		{"question with trailing quote", `The agent said "should I proceed?"`, true},
+		{"question with trailing markdown", "**Should I continue?**", true},
+		{"question with closing paren", "Should I go ahead and delete the branch (origin/old-feature)?", true},
+		{"do you want", "Do you want me to open a PR for this?", true},
+		{"would you like", "I found three matches. Would you like me to pick one.", true},
+		{"shall i", "Shall I proceed with the migration.", true},
+		{"should i case insensitive", "SHOULD I retry the failed step.", true},
+		{"which option", "Which option do you prefer, A or B.", true},
+		{"approve", "Please approve this plan before I continue.", true},
+		{"permission", "I need permission to run this command.", true},
+		{"y/n parens", "Continue? (y/n)", true},
+		{"y/n brackets", "Overwrite the file [y/n]", true},
+		{"press enter", "Press enter to continue, or Ctrl-C to cancel.", true},
+		{"waiting for your", "Waiting for your input before proceeding.", true},
+		{"let me know", "Let me know if you want me to go further.", true},
+		{"numbered menu cursor angle", "Select an option:\n❯ 1. Yes\n  2. No", true},
+		{"numbered menu cursor gt", "Select an option:\n> 1. Yes\n  2. No", true},
+		{"menu with yes cursor", "Do this?\n❯ Yes\n  No", true},
+
+		{"plain done summary", "Ran the tests and fixed the failing case. Done.", false},
+		{"plain done with trailing markdown", "All set. **Done.**", false},
+		{"multi-sentence non-question tail", "Is that ok? No, I went ahead and finished it anyway.", false},
+		{"empty evidence", "", false},
+		{"whitespace only", "   \n\n  ", false},
+		{"rhetorical-looking but no marker, ends in period", "I've completed the refactor across all packages.", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := looksLikeWaiting(c.evidence); got != c.want {
+				t.Errorf("looksLikeWaiting(%q) = %v, want %v", c.evidence, got, c.want)
+			}
+		})
+	}
+}
+
+func TestLooksLikeWaiting_OnlyInspectsTail(t *testing.T) {
+	// A question far outside the last ~600 bytes must not count; padding
+	// with plain non-question text keeps the tail itself unambiguous.
+	padding := strings.Repeat("line of finished work with no question mark here.\n", 50)
+	evidence := "Should I continue?\n" + padding + "All done, nothing further needed."
+	if looksLikeWaiting(evidence) {
+		t.Fatalf("expected the leading question outside the tail window to be ignored")
+	}
+}
+
+// --- CodeAwaitingUser rule-vs-Jev gating ---
+
+func awaitingSignalWithEvidence(evidence string) Signal {
+	sig := baseSignal(CodeAwaitingUser)
+	sig.Evidence = evidence
+	return sig
+}
+
+func TestHandle_AwaitingUser_ShadowMode_RuleSuppresses(t *testing.T) {
+	clock := &fakeClock{t: time.Now()}
+	sender := &fakeSender{}
+	cfg := testConfig()
+	cfg.Jev.Mode = "shadow"
+	a := NewAlerter(cfg, "myhost", sender.send, clock.now)
+
+	sig := awaitingSignalWithEvidence("All done, no more changes needed.")
+	// No Judgment scored (e.g. Jev wasn't reachable this cycle either).
+	d := a.Handle(sig)
+
+	if d.Page {
+		t.Fatalf("expected the rule to suppress a non-question evidence tail, got %+v", d)
+	}
+	if d.Reason != "rule: no question or prompt in the last message" {
+		t.Fatalf("unexpected reason: %q", d.Reason)
+	}
+	if sender.count() != 0 {
+		t.Fatalf("expected no message sent, got %d", sender.count())
+	}
+}
+
+func TestHandle_AwaitingUser_ShadowMode_RulePages(t *testing.T) {
+	clock := &fakeClock{t: time.Now()}
+	sender := &fakeSender{}
+	cfg := testConfig()
+	cfg.Jev.Mode = "shadow"
+	a := NewAlerter(cfg, "myhost", sender.send, clock.now)
+
+	sig := awaitingSignalWithEvidence("I've finished the migration. Should I also update the docs?")
+	d := a.Handle(sig)
+
+	if !d.Page {
+		t.Fatalf("expected the rule to allow a real question through, got %+v", d)
+	}
+	if sender.count() != 1 {
+		t.Fatalf("expected one message sent, got %d", sender.count())
+	}
+}
+
+func TestHandle_AwaitingUser_OffMode_UsesRule(t *testing.T) {
+	clock := &fakeClock{t: time.Now()}
+	sender := &fakeSender{}
+	cfg := testConfig()
+	cfg.Jev.Mode = "off"
+	a := NewAlerter(cfg, "myhost", sender.send, clock.now)
+
+	sig := awaitingSignalWithEvidence("Finished up, everything looks good.")
+	d := a.Handle(sig)
+
+	if d.Page {
+		t.Fatalf("expected off mode to still apply the rule (not fail open) for awaiting_user, got %+v", d)
+	}
+	if !strings.HasPrefix(d.Reason, "rule:") {
+		t.Fatalf("expected rule-prefixed reason, got %q", d.Reason)
+	}
+}
+
+func TestHandle_AwaitingUser_NilJudgment_UsesRule(t *testing.T) {
+	clock := &fakeClock{t: time.Now()}
+	sender := &fakeSender{}
+	cfg := testConfig()
+	cfg.Jev.Mode = "live" // even in live mode, a nil Judgment falls back to the rule
+	a := NewAlerter(cfg, "myhost", sender.send, clock.now)
+
+	sig := awaitingSignalWithEvidence("Wrapped up the task, no issues.")
+	// sig.Judgment left nil.
+	d := a.Handle(sig)
+
+	if d.Page {
+		t.Fatalf("expected nil judgment to fall back to the rule and suppress, got %+v", d)
+	}
+	if d.Reason != "rule: no question or prompt in the last message" {
+		t.Fatalf("unexpected reason: %q", d.Reason)
+	}
+}
+
+func TestHandle_AwaitingUser_ErroredJudgment_UsesRule(t *testing.T) {
+	clock := &fakeClock{t: time.Now()}
+	sender := &fakeSender{}
+	cfg := testConfig()
+	cfg.Jev.Mode = "live"
+	a := NewAlerter(cfg, "myhost", sender.send, clock.now)
+
+	sig := awaitingSignalWithEvidence("Should I go ahead and deploy this?")
+	sig.Judgment = &Judgment{Err: "timeout", NeedsHumanNow: 0.99, WaitingKind: "question_to_user"}
+	d := a.Handle(sig)
+
+	if !d.Page {
+		t.Fatalf("expected an errored judgment to fall back to the rule, which should page on a real question, got %+v", d)
+	}
+}
+
+func TestHandle_AwaitingUser_LiveMode_JevDecidesAlone_IgnoresRule(t *testing.T) {
+	clock := &fakeClock{t: time.Now()}
+	sender := &fakeSender{}
+	cfg := testConfig()
+	cfg.Jev.Mode = "live"
+	a := NewAlerter(cfg, "myhost", sender.send, clock.now)
+
+	// Evidence has no question or prompt marker (the rule would suppress),
+	// but a valid live Judgment says the session needs the human now: live
+	// mode's Jev gate decides alone, unchanged by this fix.
+	sig := awaitingSignalWithEvidence("All finished, nothing more to do.")
+	sig.Judgment = &Judgment{NeedsHumanNow: 0.9, WaitingKind: "question_to_user", Urgency: 5, UrgencyConf: 0.9}
+	d := a.Handle(sig)
+
+	if !d.Page {
+		t.Fatalf("expected live mode's Jev verdict to page despite the rule disagreeing, got %+v", d)
+	}
+}
+
+func TestHandle_AwaitingUser_ShadowMode_DisagreementNote_RuleSuppressesJevWaiting(t *testing.T) {
+	clock := &fakeClock{t: time.Now()}
+	sender := &fakeSender{}
+	cfg := testConfig()
+	cfg.Jev.Mode = "shadow"
+	a := NewAlerter(cfg, "myhost", sender.send, clock.now)
+
+	sig := awaitingSignalWithEvidence("Everything is done, thanks!")
+	sig.Judgment = &Judgment{NeedsHumanNow: 0.85, WaitingKind: "question_to_user"}
+	d := a.Handle(sig)
+
+	if d.Page {
+		t.Fatalf("expected the rule to suppress (no question in evidence), got %+v", d)
+	}
+	if !strings.Contains(d.Reason, "jev says waiting") {
+		t.Fatalf("expected a disagreement note recording that jev says waiting, got %q", d.Reason)
+	}
+	if !strings.HasPrefix(d.Reason, "rule:") {
+		t.Fatalf("expected the rule-prefixed reason to lead, got %q", d.Reason)
+	}
+}
+
+func TestHandle_AwaitingUser_ShadowMode_AgreementNote_WouldSuppress(t *testing.T) {
+	clock := &fakeClock{t: time.Now()}
+	sender := &fakeSender{}
+	cfg := testConfig()
+	cfg.Jev.Mode = "shadow"
+	a := NewAlerter(cfg, "myhost", sender.send, clock.now)
+
+	sig := awaitingSignalWithEvidence("Everything is done, thanks!")
+	sig.Judgment = &Judgment{NeedsHumanNow: 0.1, WaitingKind: "finished"}
+	d := a.Handle(sig)
+
+	if d.Page {
+		t.Fatalf("expected the rule to suppress, got %+v", d)
+	}
+	if !strings.Contains(d.Reason, "shadow: would suppress") {
+		t.Fatalf("expected the usual would-suppress note when rule and jev agree, got %q", d.Reason)
+	}
+}
+
+func TestHandle_AwaitingUser_Retiers_ToInsight_ViaRulePrefix(t *testing.T) {
+	// serve.go re-tiers a suppressed intervene signal to insight when the
+	// Decision.Reason starts with "rule:" (as well as "jev:"); this just
+	// pins down that Handle actually produces that prefix in the plain
+	// suppress case, since serve_test.go exercises the re-tiering itself.
+	clock := &fakeClock{t: time.Now()}
+	sender := &fakeSender{}
+	cfg := testConfig()
+	cfg.Jev.Mode = "off"
+	a := NewAlerter(cfg, "myhost", sender.send, clock.now)
+
+	sig := awaitingSignalWithEvidence("No question here, just a status update.")
+	d := a.Handle(sig)
+	if strings.HasPrefix(d.Reason, "jev:") {
+		t.Fatalf("did not expect a jev-prefixed reason here: %q", d.Reason)
+	}
+	if !strings.HasPrefix(d.Reason, "rule:") {
+		t.Fatalf("expected a rule-prefixed reason, got %q", d.Reason)
+	}
+}
+
 func TestFormatAlert(t *testing.T) {
 	sig := Signal{
 		Instance: "myinst",

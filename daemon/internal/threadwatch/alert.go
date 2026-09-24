@@ -2,6 +2,7 @@ package threadwatch
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -65,7 +66,52 @@ func (a *Alerter) Handle(sig Signal) Decision {
 
 	jo := evaluateJev(sig, a.cfg.Jev)
 	var shadowNote string
-	if jo.applied {
+
+	if sig.Code == CodeAwaitingUser {
+		if jo.applied {
+			if !jo.pass {
+				return Decision{Page: false, Reason: "jev: " + jo.detail}
+			}
+			// Live mode allowed it; fall through to dedup/rate-limit.
+		} else {
+			// The live Jev gate did not apply here — not live mode, no
+			// Judgment was scored, or it errored. The old behaviour paged
+			// on every turn end followed by a long idle gap, which pages
+			// every finished task whenever Jev isn't live/available. Fall
+			// back to a deterministic heuristic instead: only page when
+			// the tail of the evidence actually reads like a question or a
+			// prompt (docs/design/thread-watch.md, "Alerting").
+			mode := a.cfg.Jev.Mode
+			if mode == "" {
+				mode = "shadow"
+			}
+			rulePass := looksLikeWaiting(sig.Evidence)
+			if jo.haveVerdict {
+				switch {
+				case !jo.pass:
+					// Jev's shadow verdict also would have suppressed —
+					// the same "would suppress" note every other code
+					// gets in shadow/off mode.
+					shadowNote = fmt.Sprintf("%s: would suppress (%s)", mode, jo.detail)
+				case !rulePass:
+					// Jev's shadow verdict says the session is waiting,
+					// but the rule is about to suppress: log the
+					// disagreement so a week of logs shows which is
+					// better.
+					shadowNote = fmt.Sprintf("%s: jev says waiting (%s)", mode, jo.detail)
+				}
+			}
+			if !rulePass {
+				reason := "rule: no question or prompt in the last message"
+				if shadowNote != "" {
+					reason = reason + "; " + shadowNote
+				}
+				return Decision{Page: false, Reason: reason}
+			}
+			// The rule says this looks like a real prompt: fall through to
+			// dedup/rate-limit even though the live gate didn't apply.
+		}
+	} else if jo.applied {
 		if !jo.pass {
 			return Decision{Page: false, Reason: "jev: " + jo.detail}
 		}
@@ -318,6 +364,82 @@ func quoteEvidence(evidence string) string {
 		lines[i] = "> " + line
 	}
 	return strings.Join(lines, "\n")
+}
+
+// waitingHeuristicTailBytes bounds how much of sig.Evidence looksLikeWaiting
+// inspects — only the tail matters for "what is the agent waiting on right
+// now".
+const waitingHeuristicTailBytes = 600
+
+// waitingPromptMarkers are case-insensitive substrings that, anywhere in the
+// evidence tail, strongly suggest the agent is sitting on a question or a
+// permission/approval prompt rather than reporting a finished result.
+var waitingPromptMarkers = []string{
+	"do you want",
+	"would you like",
+	"shall i",
+	"should i",
+	"which option",
+	"approve",
+	"permission",
+	"(y/n)",
+	"[y/n]",
+	"press enter",
+	"waiting for your",
+	"let me know",
+}
+
+// waitingMenuCursor matches a numbered menu/option list with a selection
+// cursor, e.g. "❯ 1. Yes", "> 1.", or "❯ Yes".
+var waitingMenuCursor = regexp.MustCompile(`(?im)^[ \t]*[❯>][ \t]*(\d+\.|yes\b)`)
+
+// looksLikeWaiting is the deterministic CodeAwaitingUser fallback used
+// whenever the live Jev gate did not apply (docs/design/thread-watch.md,
+// "Alerting"): rather than paging on every turn end followed by a long idle
+// gap, it looks at the tail of the evidence for a trailing question or a
+// recognizable prompt/menu.
+func looksLikeWaiting(evidence string) bool {
+	tail := strings.TrimSpace(tailCap(evidence, waitingHeuristicTailBytes))
+	if tail == "" {
+		return false
+	}
+	lower := strings.ToLower(tail)
+	for _, marker := range waitingPromptMarkers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	if waitingMenuCursor.MatchString(tail) {
+		return true
+	}
+	return lastLineEndsWithQuestion(tail)
+}
+
+// lastLineEndsWithQuestion reports whether the last non-empty line of tail
+// ends with a question mark, once trailing quotes, markdown emphasis
+// markers, and closing parens/brackets are stripped.
+func lastLineEndsWithQuestion(tail string) bool {
+	lines := strings.Split(tail, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		line = strings.TrimRightFunc(line, isTrailingDecoration)
+		return strings.HasSuffix(line, "?")
+	}
+	return false
+}
+
+// isTrailingDecoration reports whether r is a character that can trail a
+// question mark without changing whether the sentence reads as a question:
+// whitespace, quotes, markdown emphasis markers, and closing brackets.
+func isTrailingDecoration(r rune) bool {
+	switch r {
+	case ' ', '\t', '"', '\'', '`', '*', '_', ')', ']', '”', '’', '»':
+		return true
+	}
+	return false
 }
 
 // tailCap keeps the last limit bytes of s (tails matter most for "what is
