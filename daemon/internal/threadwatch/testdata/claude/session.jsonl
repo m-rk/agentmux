@@ -1,0 +1,9 @@
+{"type":"user","timestamp":"2026-01-01T00:00:00Z","sessionId":"sess-1","message":{"role":"user","content":"Please add a health check endpoint."}}
+{"type":"assistant","timestamp":"2026-01-01T00:00:01Z","sessionId":"sess-1","message":{"id":"msg_1","role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Write","input":{}}],"stop_reason":"tool_use","usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":5,"cache_creation_input_tokens":3}}}
+{"type":"user","timestamp":"2026-01-01T00:00:02Z","sessionId":"sess-1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","is_error":true,"content":"Permission denied: cannot write file"}]}}
+{"type":"assistant","timestamp":"2026-01-01T00:00:03Z","sessionId":"sess-1","isApiErrorMessage":true,"message":{"role":"assistant","content":[{"type":"text","text":"rate limit exceeded, retrying"}]}}
+{"type":"assistant","timestamp":"2026-01-01T00:00:04Z","sessionId":"sess-1","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"I'll retry that."}],"stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":5,"cache_creation_input_tokens":3}}}
+{"type":"system","subtype":"compact_boundary","timestamp":"2026-01-01T00:00:05Z","sessionId":"sess-1"}
+{"type":"assistant","timestamp":"2026-01-01T00:00:06Z","sessionId":"sess-1","isSidechain":true,"message":{"id":"msg_2","role":"assistant","content":[{"type":"text","text":"subagent result"}],"stop_reason":"end_turn","usage":{"input_tokens":9999,"output_tokens":9999}}}
+{"type":"system","subtype":"turn_duration","timestamp":"2026-01-01T00:00:07Z","sessionId":"sess-1","durationMs":45231}
+{"type":"queue","timestamp":"2026-01-01T00:00:08Z","sessionId":"sess-1","note":"something else"}
