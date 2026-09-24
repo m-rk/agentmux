@@ -146,6 +146,7 @@ func waitingKindQuestion() typesafe.Question {
 			"plan_awaiting_approval": "The agent has presented a plan or proposed approach and is waiting for the user to approve or reject it before starting the work.",
 			"finished":               "The agent completed its task and is reporting a result or summary; nothing further is required from the user right now.",
 			"error_blocked":          "The agent hit an error it cannot get past on its own and has stopped, distinct from a plain clarifying question.",
+			"usage_limit":            "The agent is blocked by a usage/credit/rate limit and will resume when it resets or credits are added.",
 			"none":                   "The agent still appears to be actively working, or there is no clear sign in the transcript that it is waiting on the user at all.",
 		},
 	}

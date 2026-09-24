@@ -16,7 +16,7 @@ type wantSig struct {
 
 func tierOf(code string) string {
 	switch code {
-	case CodeAwaitingUser, CodeErrorLoop, CodeAuthFailed, CodeStalledTurn, CodeDiedMidTurn:
+	case CodeAwaitingUser, CodeErrorLoop, CodeAuthFailed, CodeStalledTurn, CodeDiedMidTurn, CodeUsageLimit:
 		return TierIntervene
 	default:
 		return TierInsight
@@ -630,4 +630,176 @@ func TestStats(t *testing.T) {
 	if got := d.Stats("unknown"); got != (InstanceStats{}) {
 		t.Errorf("Stats for unobserved instance = %+v, want zero value", got)
 	}
+}
+
+// --- usage_limit ---
+
+func TestUsageLimitBlocksAwaitingUserAndStalledTurn(t *testing.T) {
+	cfg := DefaultConfig()
+	d := NewDetector(cfg)
+	t0 := day(0)
+	inst, thr := "i1", "t1"
+
+	d.Observe(Event{Time: t0, Instance: inst, Thread: thr, Kind: KindUserMessage})
+	got := d.Observe(Event{Time: t0.Add(time.Minute), Instance: inst, Thread: thr, Kind: KindUsageLimit,
+		Excerpt: "You've hit your session limit · resets 7am (UTC)"})
+	assertSignals(t, "usage limit fires once", got, []wantSig{{Code: CodeUsageLimit}})
+	if !strings.Contains(got[0].Reason, "resets 7am (UTC)") {
+		t.Errorf("expected the reset phrase in the reason, got %q", got[0].Reason)
+	}
+
+	// Claude Code emits a turn_duration record immediately after an
+	// isApiErrorMessage one, even for an interrupted turn: that turn_end is
+	// the tail of the same broken turn, not recovery, so it must not clear
+	// the block.
+	got = d.Observe(Event{Time: t0.Add(2 * time.Minute), Instance: inst, Thread: thr, Kind: KindTurnEnd})
+	assertSignals(t, "the immediate turn_end tail does not clear the block", got, nil)
+
+	got = d.Tick(t0.Add(2*time.Hour), []Instance{{Name: inst, Status: "idle"}})
+	assertSignals(t, "blocked thread: no awaiting_user while idle, however long", got, nil)
+
+	got = d.Tick(t0.Add(3*time.Hour), []Instance{{Name: inst, Status: "running"}})
+	assertSignals(t, "blocked thread: no stalled_turn while running, however long", got, nil)
+}
+
+func TestUsageLimitClearsOnUserMessageThenNormalDetectionResumes(t *testing.T) {
+	cfg := DefaultConfig()
+	d := NewDetector(cfg)
+	t0 := day(0)
+	inst, thr := "i1", "t1"
+
+	d.Observe(Event{Time: t0, Instance: inst, Thread: thr, Kind: KindUsageLimit, Excerpt: "hit your usage limit, resets in 2 hours"})
+	d.Observe(Event{Time: t0.Add(time.Second), Instance: inst, Thread: thr, Kind: KindTurnEnd}) // same broken turn's tail
+
+	got := d.Observe(Event{Time: t0.Add(time.Hour), Instance: inst, Thread: thr, Kind: KindUserMessage})
+	assertSignals(t, "a later user message clears the usage_limit block", got, []wantSig{{Code: CodeUsageLimit, Resolved: true}})
+
+	d.Observe(Event{Time: t0.Add(time.Hour + time.Minute), Instance: inst, Thread: thr, Kind: KindTurnEnd,
+		Excerpt: "back to normal, should I continue?"})
+	got = d.Tick(t0.Add(time.Hour+12*time.Minute), []Instance{{Name: inst, Status: "idle"}})
+	assertSignals(t, "awaiting_user fires normally again once the block has cleared", got, []wantSig{{Code: CodeAwaitingUser}})
+}
+
+func TestUsageLimitClearsOnLaterActivityNotTheImmediateTail(t *testing.T) {
+	cfg := DefaultConfig()
+	d := NewDetector(cfg)
+	t0 := day(0)
+	inst, thr := "i1", "t1"
+
+	got := d.Observe(Event{Time: t0, Instance: inst, Thread: thr, Kind: KindUsageLimit, Excerpt: "usage limit reached"})
+	assertSignals(t, "first episode pages", got, []wantSig{{Code: CodeUsageLimit}})
+
+	got = d.Observe(Event{Time: t0.Add(time.Minute), Instance: inst, Thread: thr, Kind: KindActivity})
+	assertSignals(t, "activity immediately following the limit is the tail of the same broken turn: stays blocked", got, nil)
+
+	got = d.Observe(Event{Time: t0.Add(2 * time.Minute), Instance: inst, Thread: thr, Kind: KindActivity})
+	assertSignals(t, "a later activity is real recovery", got, []wantSig{{Code: CodeUsageLimit, Resolved: true}})
+}
+
+func TestUsageLimitOnePerEpisodeNoDuplicateWhileBlocked(t *testing.T) {
+	cfg := DefaultConfig()
+	d := NewDetector(cfg)
+	t0 := day(0)
+	inst, thr := "i1", "t1"
+
+	for i := 0; i < 5; i++ {
+		got := d.Observe(Event{Time: t0.Add(time.Duration(i) * time.Second), Instance: inst, Thread: thr, Kind: KindUsageLimit, Excerpt: "usage limit reached"})
+		if i == 0 {
+			assertSignals(t, "first usage_limit event pages", got, []wantSig{{Code: CodeUsageLimit}})
+		} else {
+			assertSignals(t, "repeated usage_limit events within the same open episode: no duplicate", got, nil)
+		}
+	}
+
+	got := d.Observe(Event{Time: t0.Add(10 * time.Second), Instance: inst, Thread: thr, Kind: KindTurnEnd})
+	assertSignals(t, "the tail turn_end of the last hit: no recovered_errors, no error_loop (usage_limit never counts as an api_error)", got, nil)
+
+	if stats := d.Stats(inst); stats.APIErrors != 0 {
+		t.Errorf("APIErrors = %d, want 0: usage_limit must not count toward api_error stats", stats.APIErrors)
+	}
+}
+
+func TestUsageLimitCooldownAcrossInstance(t *testing.T) {
+	cfg := DefaultConfig()
+	d := NewDetector(cfg)
+	t0 := day(0)
+	inst := "i1"
+
+	got := d.Observe(Event{Time: t0, Instance: inst, Thread: "t1", Kind: KindUsageLimit, Excerpt: "usage limit reached"})
+	assertSignals(t, "first episode pages", got, []wantSig{{Code: CodeUsageLimit}})
+
+	// Force the episode "closed" without the thread having made progress,
+	// simulating an episode that ended some way other than the detector's
+	// own recovery paths (turn_end/activity/user_message).
+	d.instances[inst].usageLimitActive = false
+
+	got = d.Observe(Event{Time: t0.Add(time.Hour), Instance: inst, Thread: "t2", Kind: KindUsageLimit, Excerpt: "usage limit reached again"})
+	assertSignals(t, "a second episode within the 6h cooldown, no progress in between: stays quiet", got, nil)
+
+	// This second (suppressed) episode also "closes" without progress.
+	d.instances[inst].usageLimitActive = false
+
+	got = d.Observe(Event{Time: t0.Add(7 * time.Hour), Instance: inst, Thread: "t3", Kind: KindUsageLimit, Excerpt: "usage limit reached a third time"})
+	assertSignals(t, "past the 6h cooldown: pages again", got, []wantSig{{Code: CodeUsageLimit}})
+}
+
+func TestUsageLimitProgressBypassesCooldown(t *testing.T) {
+	cfg := DefaultConfig()
+	d := NewDetector(cfg)
+	t0 := day(0)
+	inst, thr := "i1", "t1"
+
+	d.Observe(Event{Time: t0, Instance: inst, Thread: thr, Kind: KindUsageLimit, Excerpt: "usage limit reached"})
+	d.Observe(Event{Time: t0.Add(time.Minute), Instance: inst, Thread: thr, Kind: KindActivity})     // tail, stays blocked
+	d.Observe(Event{Time: t0.Add(2 * time.Minute), Instance: inst, Thread: thr, Kind: KindActivity}) // real recovery: progressed=true
+
+	// A new episode well within the 6h cooldown, but after progress: pages
+	// immediately rather than waiting out the cooldown.
+	got := d.Observe(Event{Time: t0.Add(10 * time.Minute), Instance: inst, Thread: thr, Kind: KindUsageLimit, Excerpt: "usage limit reached again"})
+	assertSignals(t, "new episode after progress bypasses the cooldown", got, []wantSig{{Code: CodeUsageLimit}})
+}
+
+// --- awaiting_user evidence freshness (fix: stale/absent evidence) ---
+
+func TestTurnEndAfterAPIErrorWithNoFreshMessage_NoAwaitingUserAnchor(t *testing.T) {
+	cfg := DefaultConfig()
+	d := NewDetector(cfg)
+	t0 := day(0)
+	inst, thr := "i1", "t1"
+
+	// A much earlier turn ended with a real question; this must never leak
+	// into evidence for a later, unrelated turn that gets cut short by an
+	// API error with no fresh assistant message of its own.
+	d.Observe(Event{Time: t0, Instance: inst, Thread: thr, Kind: KindTurnEnd, Excerpt: "should I proceed with the migration?"})
+	d.Observe(Event{Time: t0.Add(time.Minute), Instance: inst, Thread: thr, Kind: KindUserMessage}) // new turn starts, clears stale evidence
+	d.Observe(Event{Time: t0.Add(2 * time.Minute), Instance: inst, Thread: thr, Kind: KindAPIError, Excerpt: "Prompt is too long"})
+	got := d.Observe(Event{Time: t0.Add(3 * time.Minute), Instance: inst, Thread: thr, Kind: KindTurnEnd})
+	assertSignals(t, "turn_end right after an api_error: recovered_errors insight only, no awaiting_user anchor",
+		got, []wantSig{{Code: CodeRecoveredErrors}})
+
+	got = d.Tick(t0.Add(20*time.Minute), []Instance{{Name: inst, Status: "idle"}})
+	assertSignals(t, "no stale evidence anchored an awaiting_user window", got, nil)
+}
+
+func TestUserMessageResetsStaleAssistantExcerpt(t *testing.T) {
+	cfg := DefaultConfig()
+	d := NewDetector(cfg)
+	t0 := day(0)
+	inst, thr := "i1", "t1"
+
+	d.Observe(Event{Time: t0, Instance: inst, Thread: thr, Kind: KindAssistantMsg, Excerpt: "should I delete the branch?"})
+	got := d.Tick(t0.Add(11*time.Minute), []Instance{{Name: inst, Status: "idle"}})
+	assertSignals(t, "fires with the real question as evidence", got, []wantSig{{Code: CodeAwaitingUser}})
+	if got[0].Evidence != "should I delete the branch?" {
+		t.Fatalf("evidence = %q, want the real question", got[0].Evidence)
+	}
+
+	// The operator replies; a later turn hits an API error with no
+	// assistant text before ending.
+	d.Observe(Event{Time: t0.Add(12 * time.Minute), Instance: inst, Thread: thr, Kind: KindUserMessage})
+	d.Observe(Event{Time: t0.Add(13 * time.Minute), Instance: inst, Thread: thr, Kind: KindAPIError, Excerpt: "rate limited"})
+	d.Observe(Event{Time: t0.Add(14 * time.Minute), Instance: inst, Thread: thr, Kind: KindTurnEnd})
+
+	got = d.Tick(t0.Add(30*time.Minute), []Instance{{Name: inst, Status: "idle"}})
+	assertSignals(t, "no stale question reused as evidence for the unrelated interrupted turn", got, nil)
 }

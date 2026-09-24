@@ -3,9 +3,9 @@
 Thread watch follows each instance's own turns — the same JSONL/log/SQLite
 records Claude Code, amp, and opencode already keep for themselves — and
 tells you when a session needs you: waiting on a question, stuck in a loop,
-or failed mid-turn. Everything else (a slow turn, a recovered error, a
-context-bloat pattern) is only logged, and rolls up into at most one nightly
-Discord digest instead of paging you. See
+failed mid-turn, or blocked by a usage/credit/rate limit. Everything else (a
+slow turn, a recovered error, a context-bloat pattern) is only logged, and
+rolls up into at most one nightly Discord digest instead of paging you. See
 [docs/design/thread-watch.md](design/thread-watch.md) for the full design
 and rationale; this page is the operator's guide to running it, including
 the nightly review.
@@ -65,6 +65,10 @@ alerts:
   cooldown: 1h          # per (instance, thread, code) dedup window
   max_per_hour: 6       # host-wide page budget; the rest roll into "N more"
   resolved_window: 1h   # only send a "resolved" notice within this window
+                         # (never sent at all for awaiting_user/usage_limit:
+                         # the operator resolving a wait themselves, or a
+                         # limit clearing on its own, isn't news — see
+                         # docs/design/thread-watch.md's "Alerting")
 
 jev:
   mode: shadow            # off | shadow | live — see "Shadow vs. live Jev" below
@@ -168,7 +172,26 @@ question, or the message or the pane tail shows a prompt or menu ("Do you
 want…", "(y/n)", a `❯ 1.` cursor, and similar). A finished summary is kept
 as an insight instead. In shadow mode the log records where Jev and this rule
 disagree (`shadow: jev says waiting …`), which is what to look at before
-switching to `live`.
+switching to `live`. A turn that ends without a fresh assistant message at
+all (an API error, an interrupt) never pages as "waiting on you" either — an
+older message from earlier in the thread is never reused as evidence for a
+later, unrelated turn. A usage/session/credit/rate limit is its own
+`usage_limit` signal (🪫), never `awaiting_user`, even in live mode.
+
+## Alerts
+
+Each intervene signal (`awaiting_user` ⏳, `error_loop` 🔁, `auth_failed` 🔑,
+`stalled_turn` 🧊, `died_mid_turn` 💥, `usage_limit` 🪫) becomes at most one
+Discord message: instance, thread, a one-line reason, evidence, and how to
+attach. Evidence is shown in up to two parts — the agent's own last words
+(cut to a sentence/line boundary, not mid-word), and, when a pane tail was
+captured, a `Pane:` block with box-drawing rules, status/keybinding chrome
+and bare prompt lines stripped out, keeping just the last few real lines —
+so an alert reads as what the agent actually said or was showing, not a
+cut-off fragment glued to its own input box. See
+[docs/design/thread-watch.md](design/thread-watch.md)'s "Alerting" for the
+full dedup/rate-limit/resolved rules, including why `awaiting_user` and
+`usage_limit` never get a "resolved" follow-up message.
 
 ## Running it
 

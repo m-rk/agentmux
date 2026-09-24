@@ -252,6 +252,36 @@ func TestBuildOpencodeEventsAuthError(t *testing.T) {
 	}
 }
 
+func TestBuildOpencodeEventsUsageLimit(t *testing.T) {
+	inst := Instance{Name: "probe"}
+	turnRows := []opencodeTurnRow{
+		{
+			SessionID: "ses1", TerminalID: "msg1", TerminalTimeUpdated: 1200,
+			Completed: 1200, StartTime: 1000,
+			ErrorName: "APIError", ErrorMessage: "You have exceeded your usage limit for this billing period",
+		},
+	}
+	events, _ := buildOpencodeEvents(inst, nil, nil, turnRows)
+	if len(events) != 1 || events[0].Kind != KindUsageLimit {
+		t.Fatalf("events = %+v, want single usage_limit", events)
+	}
+}
+
+func TestBuildOpencodeEventsUsageLimitFromErrorName(t *testing.T) {
+	inst := Instance{Name: "probe"}
+	turnRows := []opencodeTurnRow{
+		{
+			SessionID: "ses1", TerminalID: "msg1", TerminalTimeUpdated: 1200,
+			Completed: 1200, StartTime: 1000,
+			ErrorName: "QuotaExceededError", ErrorMessage: "",
+		},
+	}
+	events, _ := buildOpencodeEvents(inst, nil, nil, turnRows)
+	if len(events) != 1 || events[0].Kind != KindUsageLimit {
+		t.Fatalf("events = %+v, want single usage_limit", events)
+	}
+}
+
 func TestBuildOpencodeEventsUserMessage(t *testing.T) {
 	inst := Instance{Name: "probe"}
 	msgRows := []opencodeMessageRow{

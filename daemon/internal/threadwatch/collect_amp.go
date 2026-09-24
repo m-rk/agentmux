@@ -54,6 +54,15 @@ var ampAuthPatterns = []string{
 	" 401",
 }
 
+// ampUsageLimitPatterns match amp log text that indicates a usage/credit/
+// rate limit rather than a generic API failure.
+var ampUsageLimitPatterns = []string{
+	"out of credits",
+	"insufficient credit",
+	"usage limit",
+	"quota",
+}
+
 // ampAgentStateMessage carries a thread's agent state in its subtype:
 // working, streaming, tool_use, running_tools, compacting, then idle when
 // the turn ends.
@@ -189,6 +198,13 @@ func (c *AmpCollector) mapLine(line string, inst Instance) (Event, bool) {
 	if ampContainsAny(errText, ampAuthPatterns) {
 		ev := base
 		ev.Kind = KindAuthError
+		ev.Excerpt = Excerpt(errText)
+		return ev, true
+	}
+
+	if ampContainsAny(errText, ampUsageLimitPatterns) {
+		ev := base
+		ev.Kind = KindUsageLimit
 		ev.Excerpt = Excerpt(errText)
 		return ev, true
 	}
