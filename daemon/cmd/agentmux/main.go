@@ -43,6 +43,8 @@ func main() {
 		runNotifyCmd(args[1:])
 	case "collab":
 		runCollabCmd(args[1:])
+	case "threadwatch":
+		runThreadwatchCmd(args[1:])
 	case "-h", "--help", "help":
 		printUsage()
 	default:
@@ -85,5 +87,9 @@ Usage:
   agentmux collab read -instance NAME [-thread ID]
   agentmux collab post -instance NAME -topic TOPIC -summary SENTENCE [-shared] [-details FILE.md]
   agentmux collab post -instance NAME -thread ID -summary TEXT [-details FILE.md]
+  agentmux threadwatch serve [-dry-run] [-once]   follow agent sessions and alert on Discord (see -h)
+  agentmux threadwatch status [-since 24h] [-json]   show open intervene signals
+  agentmux threadwatch install -run-user USER     (Linux, root) install agentmux-threadwatch.service
+  agentmux threadwatch review ...                 nightly digest (see its own -h)
   agentmux help                show this message`)
 }

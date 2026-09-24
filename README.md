@@ -126,6 +126,10 @@ Every backend here aims for:
 - **A doctor after refresh** — one host-wide check daily at 03:30 verifies
   every session and escalates troubled ones to Claude for bounded repair.
   See [Doctor](docs/doctor.md).
+- **Thread watch** — an optional per-user service that follows each
+  instance's own turns in near real time and pages Discord only when a
+  session is stuck, waiting on you, or failing in a loop; everything else is
+  logged for a nightly digest. See [Thread watch](docs/thread-watch.md).
 - **Discord** — one outbound channel for everything agentmux needs to tell
   you: doctor findings and repairs plus Claude token-expiry warnings
   (`agentmux notify discord setup`), and cross-session collaboration through

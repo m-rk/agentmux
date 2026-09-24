@@ -1,6 +1,9 @@
 # Thread watch (design)
 
-Status: proposed. Nothing here is implemented yet.
+Status: phases 1-2 implemented (deterministic watch, Jev in shadow mode). See
+[docs/thread-watch.md](../thread-watch.md) for the operator's guide —
+installing it, `threadwatch.yaml`, `TYPESAFE_API_KEY`, and `threadwatch
+serve`/`status`.
 
 agentmux already knows whether a session is *up* (`agentmux list`, the daily
 doctor). It does not know whether the work inside a session is *going well*.
