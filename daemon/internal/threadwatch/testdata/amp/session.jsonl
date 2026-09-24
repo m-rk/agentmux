@@ -1,0 +1,9 @@
+{"@timestamp":"2026-01-01T00:00:00Z","level":"INFO","message":"NPM version comparison: current 1.2.3 latest 1.2.3"}
+{"@timestamp":"2026-01-01T00:00:01Z","level":"WARN","message":"reconnecting to thread after socket drop","threadId":"thread-1"}
+{"@timestamp":"2026-01-01T00:00:02Z","level":"ERROR","message":"failed to call tool","threadId":"thread-1","error":{"message":"ECONNRESET"}}
+{"@timestamp":"2026-01-01T00:00:03Z","level":"ERROR","message":"session expired, please log in again","threadId":"thread-1"}
+{"@timestamp":"2026-01-01T00:00:04Z","level":"WARN","message":"request failed with status 401","threadId":"thread-1"}
+{"@timestamp":"2026-01-01T00:00:05Z","level":"INFO","message":"turn complete","threadId":"thread-1"}
+{"@timestamp":"2026-01-01T00:00:06Z","level":"INFO","message":"tool call started","threadId":"thread-1"}
+{"@timestamp":"2026-01-01T00:00:07Z","level":"INFO","message":"runner registered"}
+{"@timestamp":"2026-01-01T00:00:08Z","level":"ERROR","message":"upload failed: Authorization: Bearer abcdefghijklmnop","threadId":"thread-1"}
