@@ -9,8 +9,10 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/m-rk/agentmux/daemon/internal/ampexec"
 	"github.com/m-rk/agentmux/daemon/internal/discordnotify"
 	"github.com/m-rk/agentmux/daemon/internal/runas"
 	"github.com/m-rk/agentmux/daemon/internal/threadwatch"
@@ -36,7 +38,9 @@ func runThreadwatchReview(args []string) {
 	fs := flag.NewFlagSet("threadwatch review", flag.ExitOnError)
 	since := fs.Duration("since", 24*time.Hour, "how far back to aggregate events/signals")
 	runUser := fs.String("run-user", "", "OS user whose threadwatch state, Claude login, and Discord webhook to use (root jobs default like doctor)")
-	model := fs.String("model", "", "optional Claude model override (empty uses the user's Claude default)")
+	configPath := fs.String("config", "", "threadwatch.yaml path (default ~/.config/agentmux/threadwatch.yaml for the resolved run user); mirrors `threadwatch serve`'s -config, mainly useful for testing a config change with -dry-run")
+	agent := fs.String("agent", "", "analysis backend: claude or amp (default: threadwatch.yaml's review.agent, else claude)")
+	model := fs.String("model", "", "optional Claude model override (empty uses the user's Claude default); unused for -agent amp")
 	dryRun := fs.Bool("dry-run", false, "print the digest; skip Discord and the report file")
 	noModel := fs.Bool("no-model", false, "skip the Claude review; build the digest from stats and cluster titles only")
 	timeout := fs.Duration("timeout", 10*time.Minute, "overall review timeout")
@@ -49,7 +53,11 @@ func runThreadwatchReview(args []string) {
 	}
 	home := identity.HomeDir
 
-	cfg, err := threadwatch.LoadConfig(threadwatch.DefaultConfigPath(home))
+	cfgPath := *configPath
+	if cfgPath == "" {
+		cfgPath = threadwatch.DefaultConfigPath(home)
+	}
+	cfg, err := threadwatch.LoadConfig(cfgPath)
 	if err != nil {
 		log.Fatalf("threadwatch review: %v", err)
 	}
@@ -75,7 +83,15 @@ func runThreadwatchReview(args []string) {
 
 	input := threadwatch.BuildReview(events, signals, cfg, sinceTime, until)
 
-	result, modelFailed := reviewResult(ctx, input, identity, home, *model, *noModel)
+	reviewAgent := strings.TrimSpace(*agent)
+	if reviewAgent == "" {
+		reviewAgent = cfg.Review.Agent
+	}
+	if reviewAgent != "claude" && reviewAgent != "amp" {
+		log.Fatalf("threadwatch review: invalid -agent %q (want claude or amp)", reviewAgent)
+	}
+
+	result, modelFailed := reviewResult(ctx, input, identity, home, reviewAgent, *model, *noModel, cfg.Review.Amp)
 
 	host, _ := os.Hostname()
 	digest := threadwatch.FormatDigest(host, input, result)
@@ -124,17 +140,24 @@ func runThreadwatchReview(args []string) {
 	}
 }
 
-// reviewResult runs the bounded Claude escalation unless noModel is set,
-// falling back to FallbackReview either way it can't run: -no-model itself,
-// or any failure from Claude (network, auth, a bad reply — the design doc's
-// "never alert less" principle applies here too: a broken model step must
-// not silence the review). The second return reports whether Claude was
-// attempted and failed, so the caller can flag it in the digest.
-func reviewResult(ctx context.Context, input threadwatch.ReviewInput, identity *user.User, home, model string, noModel bool) (threadwatch.ReviewResult, bool) {
+// reviewResult runs the bounded model escalation (Claude or amp, per agent)
+// unless noModel is set, falling back to FallbackReview either way it can't
+// run: -no-model itself, or any failure from the model (network, auth, a
+// bad reply — the design doc's "never alert less" principle applies here
+// too: a broken model step must not silence the review). The second return
+// reports whether a model was attempted and failed, so the caller can flag
+// it in the digest.
+func reviewResult(ctx context.Context, input threadwatch.ReviewInput, identity *user.User, home, agent, model string, noModel bool, ampCfg threadwatch.AmpConfig) (threadwatch.ReviewResult, bool) {
 	if noModel {
 		return threadwatch.FallbackReview(input), false
 	}
+	if agent == "amp" {
+		return ampReviewResult(ctx, input, identity, home, ampCfg)
+	}
+	return claudeReviewResult(ctx, input, identity, home, model)
+}
 
+func claudeReviewResult(ctx context.Context, input threadwatch.ReviewInput, identity *user.User, home, model string) (threadwatch.ReviewResult, bool) {
 	command := threadwatch.CommandFactory(runas.CurrentUserCommandContext)
 	if os.Geteuid() == 0 {
 		command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
@@ -145,6 +168,30 @@ func reviewResult(ctx context.Context, input threadwatch.ReviewInput, identity *
 	result, err := reviewer.Review(ctx, input)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "threadwatch review: Claude review failed, falling back to stats only: %v\n", err)
+		return threadwatch.FallbackReview(input), true
+	}
+	return result, false
+}
+
+func ampReviewResult(ctx context.Context, input threadwatch.ReviewInput, identity *user.User, home string, ampCfg threadwatch.AmpConfig) (threadwatch.ReviewResult, bool) {
+	logAmpRunnerWarning("threadwatch review", ampCfg.Executor)
+
+	command := ampexec.CommandFactory(runas.CurrentUserCommandContext)
+	var owner *user.User
+	if os.Geteuid() == 0 {
+		command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			return runas.CommandContext(ctx, identity.Username, name, args...)
+		}
+		owner = identity
+	}
+
+	apiKey, keyNote := ampAPIKey(ctx, ampCfg)
+	log.Println("threadwatch review: " + keyNote)
+
+	reviewer := threadwatch.AmpReviewer{Command: command, Config: ampExecConfig(ampCfg, home, apiKey, owner)}
+	result, err := reviewer.Review(ctx, input)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "threadwatch review: amp review failed, falling back to stats only: %v\n", err)
 		return threadwatch.FallbackReview(input), true
 	}
 	return result, false

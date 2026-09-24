@@ -11,11 +11,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/m-rk/agentmux/daemon/internal/ampexec"
 	"github.com/m-rk/agentmux/daemon/internal/daemoninstall"
 	"github.com/m-rk/agentmux/daemon/internal/dailycheck"
 	"github.com/m-rk/agentmux/daemon/internal/discordnotify"
 	"github.com/m-rk/agentmux/daemon/internal/discovery"
 	"github.com/m-rk/agentmux/daemon/internal/runas"
+	"github.com/m-rk/agentmux/daemon/internal/threadwatch"
 	"github.com/m-rk/agentmux/daemon/internal/tuiclient"
 )
 
@@ -26,8 +28,10 @@ func runDoctorCmd(args []string) {
 	fs := flag.NewFlagSet("doctor", flag.ExitOnError)
 	socketPath := fs.String("socket", daemoninstall.SocketPath(), "Unix socket agentmuxd is listening on")
 	runUser := fs.String("run-user", "", "OS user whose Claude login and Discord webhook to use (Linux root jobs default to the first Claude Code instance owner)")
-	checker := fs.String("checker", "claude", "analysis CLI used only when deterministic probes find trouble (Claude Code by default)")
-	model := fs.String("model", "", "optional Claude model override (empty uses the user's Claude default)")
+	checker := fs.String("checker", "claude", "analysis CLI used only when deterministic probes find trouble: claude (default), amp, or another claude-compatible binary name")
+	model := fs.String("model", "", "optional Claude model override (empty uses the user's Claude default); unused for -checker amp")
+	ampExecutorFlag := fs.String("amp-executor", "", "-checker amp only: override review.amp.executor (local or runner:<id>) from threadwatch.yaml")
+	ampWorkdirFlag := fs.String("amp-workdir", "", "-checker amp only: override review.amp.workdir from threadwatch.yaml (default: the run user's home)")
 	paneLines := fs.Int("lines", 20, "trailing pane lines to include in each capped snapshot")
 	maxPaneBytes := fs.Int("max-pane-bytes", 12*1024, "maximum pane bytes sent per session")
 	dryRun := fs.Bool("dry-run", false, "report proposed repairs without applying them")
@@ -52,17 +56,26 @@ func runDoctorCmd(args []string) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	command := dailycheck.CommandFactory(runas.CurrentUserCommandContext)
-	if os.Geteuid() == 0 {
-		command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-			return runas.CommandContext(ctx, identity.Username, name, args...)
+
+	var analyzer dailycheck.Analyzer
+	if *checker == "amp" {
+		analyzer, err = ampDoctorAnalyzer(ctx, identity, *ampExecutorFlag, *ampWorkdirFlag)
+		if err != nil {
+			log.Fatalf("doctor: %v", err)
 		}
-	}
-	analyzer := dailycheck.ClaudeAnalyzer{
-		Command: command,
-		Binary:  *checker,
-		Model:   *model,
-		Dir:     identity.HomeDir,
+	} else {
+		command := dailycheck.CommandFactory(runas.CurrentUserCommandContext)
+		if os.Geteuid() == 0 {
+			command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+				return runas.CommandContext(ctx, identity.Username, name, args...)
+			}
+		}
+		analyzer = dailycheck.ClaudeAnalyzer{
+			Command: command,
+			Binary:  *checker,
+			Model:   *model,
+			Dir:     identity.HomeDir,
+		}
 	}
 	report, runErr := dailycheck.Run(ctx, client, analyzer, dailycheck.Options{
 		PaneLines:      int32(*paneLines),
@@ -160,6 +173,43 @@ func sendDoctorNotification(home, statePath, message string, nextState dailychec
 		return fmt.Errorf("clearing pending Discord report: %w", err)
 	}
 	return nil
+}
+
+// ampDoctorAnalyzer builds the amp-backed doctor escalation for `agentmux
+// doctor -checker amp`: it reads review.amp from the run user's own
+// threadwatch.yaml (documented in docs/doctor.md as the same block the
+// nightly review's -agent amp uses), applies -amp-executor/-amp-workdir
+// overrides, resolves the optional amp key the same way the review does,
+// and — matching the claude path just above — drops root privilege via
+// runas for the amp subprocess itself when doctor runs as root.
+func ampDoctorAnalyzer(ctx context.Context, identity *user.User, executorFlag, workdirFlag string) (dailycheck.Analyzer, error) {
+	twCfg, err := threadwatch.LoadConfig(threadwatch.DefaultConfigPath(identity.HomeDir))
+	if err != nil {
+		return nil, fmt.Errorf("loading %s for amp settings: %w", threadwatch.DefaultConfigPath(identity.HomeDir), err)
+	}
+	ampCfg := twCfg.Review.Amp
+	if executorFlag != "" {
+		ampCfg.Executor = executorFlag
+	}
+	if workdirFlag != "" {
+		ampCfg.Workdir = workdirFlag
+	}
+
+	logAmpRunnerWarning("doctor", ampCfg.Executor)
+
+	command := ampexec.CommandFactory(runas.CurrentUserCommandContext)
+	var owner *user.User
+	if os.Geteuid() == 0 {
+		command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			return runas.CommandContext(ctx, identity.Username, name, args...)
+		}
+		owner = identity
+	}
+
+	apiKey, keyNote := ampAPIKey(ctx, ampCfg)
+	log.Println("doctor: " + keyNote)
+
+	return dailycheck.AmpAnalyzer{Command: command, Config: ampExecConfig(ampCfg, identity.HomeDir, apiKey, owner)}, nil
 }
 
 func doctorIdentity(explicit string) (*user.User, error) {

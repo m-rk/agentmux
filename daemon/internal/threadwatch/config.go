@@ -12,6 +12,7 @@ type Config struct {
 	Thresholds Thresholds              `yaml:"thresholds"`
 	Alerts     AlertConfig             `yaml:"alerts"`
 	Jev        JevConfig               `yaml:"jev"`
+	Review     ReviewConfig            `yaml:"review"`
 	Instances  map[string]InstanceConf `yaml:"instances,omitempty"`
 }
 
@@ -51,6 +52,38 @@ type JevConfig struct {
 	KeyProblem string `yaml:"-"`
 }
 
+// ReviewConfig controls the bounded model escalation both the nightly
+// review (`agentmux threadwatch review`) and, for its Amp field only, the
+// daily doctor (`agentmux doctor -checker amp`) use. See
+// docs/thread-watch.md and docs/doctor.md.
+type ReviewConfig struct {
+	Agent string    `yaml:"agent"` // claude | amp (default claude)
+	Model string    `yaml:"model"` // optional Claude model override; unused for agent: amp
+	Amp   AmpConfig `yaml:"amp"`
+}
+
+// AmpConfig configures the amp CLI backend used when review.agent is "amp",
+// and read as-is by `agentmux doctor -checker amp` (see -amp-executor/
+// -amp-workdir there for the doctor's own flag overrides).
+type AmpConfig struct {
+	Executor  string `yaml:"executor"`   // local (default) | runner:<id> — see ampexec.Run
+	Workdir   string `yaml:"workdir"`    // local executor's cwd; default the run user's home
+	RunnerDir string `yaml:"runner_dir"` // runner executor's --runner-dir; optional
+	Mode      string `yaml:"mode"`       // optional amp -m/--mode override
+	Label     string `yaml:"label"`      // amp -l/--label; default "agentmux-review"
+
+	// The amp access token is optional; without one amp falls back to its
+	// own stored `amp login` session. Give at most one: the key itself
+	// (the config file must then be private, mode 600), or a 1Password
+	// secret reference, op://<vault-id>/<item-id>/<field>, resolved at
+	// startup with the host's service account token. AMP_API_KEY in the
+	// environment overrides both — same contract as jev's APIKey/APIKeyRef.
+	APIKey    string `yaml:"api_key"`
+	APIKeyRef string `yaml:"api_key_ref"`
+	// KeyProblem explains why a configured key was dropped at load time.
+	KeyProblem string `yaml:"-"`
+}
+
 // InstanceConf overrides per instance.
 type InstanceConf struct {
 	Disabled   bool        `yaml:"disabled,omitempty"`
@@ -73,6 +106,10 @@ func DefaultConfig() Config {
 		},
 		Alerts: AlertConfig{Cooldown: time.Hour, MaxPerHour: 6, ResolvedAfter: time.Hour},
 		Jev:    JevConfig{Mode: "shadow", Model: "jev-latest", PageUrgency: 4, PageConfidence: 0.6, AwaitingMinProb: 0.5},
+		Review: ReviewConfig{
+			Agent: "claude",
+			Amp:   AmpConfig{Executor: "local", Label: "agentmux-review"},
+		},
 	}
 }
 

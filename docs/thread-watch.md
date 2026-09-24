@@ -79,6 +79,20 @@ jev:
   # api_key_ref: op://<vault-id>/<item-id>/<field>
   # api_key: ts_...
 
+review:
+  agent: claude          # claude (default) | amp — see "Review backend: claude vs. amp"
+  model:                  # optional Claude model override; unused for agent: amp
+  amp:
+    executor: local        # local (default, tools disabled) | runner:<id> (see below)
+    workdir:                # local executor's cwd; default the run user's home
+    runner_dir:              # runner executor's --runner-dir; optional
+    mode:                    # optional amp -m/--mode override
+    label: agentmux-review  # amp thread label
+    # At most one of the two below; AMP_API_KEY in the environment, if set,
+    # overrides both — same pattern as jev's key above.
+    # api_key_ref: op://<vault-id>/<item-id>/<field>
+    # api_key: sgamp_...
+
 instances:
   some-sensitive-project:
     jev: false       # never send this instance's excerpts to TypeSafe
@@ -194,22 +208,30 @@ thread watch's collectors and detectors write to
 and never mutates anything itself — it only suggests.
 
 ```sh
-agentmux threadwatch review [-since 24h] [-run-user USER] [-model MODEL]
-                             [-dry-run] [-no-model] [-timeout 10m]
-                             [-weekly-quiet]
+agentmux threadwatch review [-since 24h] [-run-user USER] [-config PATH]
+                             [-agent claude|amp] [-model MODEL] [-dry-run]
+                             [-no-model] [-timeout 10m] [-weekly-quiet]
 ```
 
 - `-since` — how far back to aggregate (default 24h).
-- `-run-user` — whose threadwatch state, Claude login, and Discord webhook
-  to use. Left unset, it resolves the same way `agentmux doctor` does: the
-  current user when not root, otherwise the first `claude-code` instance
-  owner (see `doctorIdentity` in `cmd/agentmux/daily_check_cmd.go`).
+- `-run-user` — whose threadwatch state, Claude/amp login, and Discord
+  webhook to use. Left unset, it resolves the same way `agentmux doctor`
+  does: the current user when not root, otherwise the first `claude-code`
+  instance owner (see `doctorIdentity` in `cmd/agentmux/daily_check_cmd.go`).
+- `-config` — `threadwatch.yaml` path, overriding the resolved run user's
+  default (`~/.config/agentmux/threadwatch.yaml`); mirrors `threadwatch
+  serve`'s own `-config`. Mainly useful for trying a config change with
+  `-dry-run` before touching the real file.
+- `-agent` — analysis backend for the escalation: `claude` or `amp`.
+  Overrides `review.agent` in `threadwatch.yaml`; left unset it uses that
+  (default `claude`). See "Review backend: claude vs. amp" below.
 - `-model` — optional Claude model override for the review escalation.
+  Unused for `-agent amp`.
 - `-dry-run` — print the digest; write nothing (no report file, no
   Discord post).
-- `-no-model` — skip the bounded Claude escalation entirely and build the
+- `-no-model` — skip the bounded model escalation entirely and build the
   digest straight from stats and cluster titles. This is also the automatic
-  fallback whenever the Claude review call fails, in which case the digest
+  fallback whenever the review call fails, in which case the digest
   is prefixed with a `⚠️ review model failed` line so a broken model step
   is visible rather than silently degrading to less information.
 - `-timeout` — overall run timeout (default 10m).
@@ -222,17 +244,67 @@ Each run, unless `-dry-run`:
 1. Reads events/signals for the window from the threadwatch store.
 2. Aggregates per-instance stats and ranks up to 8 insight clusters
    (`threadwatch.BuildReview`).
-3. Escalates the clusters to a single bounded `claude -p` call — no tools,
-   a JSON schema for the reply, `--permission-mode dontAsk`,
-   `--no-session-persistence` — the same pattern `agentmux doctor` uses for
-   its own escalation (`daemon/internal/dailycheck/claude.go`). Excerpts are
-   passed as untrusted data; the system prompt tells Claude never to treat
-   them as instructions.
+3. Escalates the clusters to a single bounded model call — no tools, a
+   strict JSON-only reply contract, and excerpts passed as untrusted data
+   the system prompt tells the model never to treat as instructions. With
+   the default `claude` backend that's `claude -p --json-schema ... --tools
+   "" --permission-mode dontAsk --no-session-persistence`, the same pattern
+   `agentmux doctor` uses for its own escalation
+   (`daemon/internal/dailycheck/claude.go`). With `-agent amp` it's a single
+   `amp -x` call instead — see "Review backend: claude vs. amp" below.
 4. Writes the full report to `~/.local/state/agentmux/reviews/YYYY-MM-DD.md`
    (mode 0600).
 5. Posts a digest (≤ 1,900 characters) to the run user's configured Discord
    webhook, but only when the review is notable (at least one insight), or
    on a Sunday with `-weekly-quiet` and nothing notable.
+
+### Review backend: claude vs. amp
+
+`review.agent` (or `-agent`) picks which CLI runs the bounded escalation.
+Both get the identical stats/clusters payload and the identical
+`reviewSystemPrompt`; only the transport differs.
+
+- **`claude`** (default) — `claude -p --json-schema ... --tools ""
+  --permission-mode dontAsk --no-session-persistence`. Claude enforces the
+  JSON reply shape itself via `--json-schema`.
+- **`amp`** — a single `amp -x` call (`daemon/internal/ampexec`), reading
+  `review.amp` from `threadwatch.yaml` (see [Config](#config)). amp has no
+  `--json-schema` equivalent, so the JSON-only contract is spelled out in
+  the message itself, and the reply is parsed after stripping an optional
+  ` ```json ` fence. **Every run creates a real, visible amp thread on
+  ampcode.com** (labeled `agentmux-review` by default,
+  `review.amp.label` to change it) — that's intentional, not a leak to
+  guard against.
+
+  `review.amp.executor` chooses where that thread runs:
+  - **`local`** (the default) runs amp directly on this host. Before
+    calling amp, agentmux writes a temporary, 0600 settings file that
+    disables every tool two independent ways
+    (`amp.tools.disable: ["*"]` plus a catch-all `amp.permissions` reject
+    rule) and passes it via `--settings-file`, removing it afterward. This
+    is the only executor that can make that guarantee, which is why it's
+    the default: the review payload embeds untrusted transcript/pane
+    excerpts, and the whole point of disabling tools is that amp must not
+    be able to act on anything hiding in them.
+  - **`runner:<id>`** runs on an already-started `amp --no-tui` runner
+    (`amp runner list` shows what's available; `review.amp.runner_dir`
+    selects which served directory). **agentmux cannot disable tools on a
+    runner** — that runner's own settings decide what it can call, and a
+    startup log line warns about this every time it's selected. Only use
+    a runner executor for a runner you've configured with permissions you
+    trust against a message built from untrusted session excerpts.
+
+  The optional amp access token follows the exact same precedence and
+  1Password pattern as the TypeSafe key above: `AMP_API_KEY` in the
+  environment, else `review.amp.api_key` (only honoured from a mode-600
+  file), else `review.amp.api_key_ref` resolved via `session.ReadOpRef`
+  with the host's service account token. No key at all just means amp
+  relies on its own stored `amp login` session. The key is passed to the
+  amp child through its environment only, never argv.
+
+  `agentmux doctor -checker amp` reuses this exact `review.amp` block (see
+  [docs/doctor.md](doctor.md)) rather than having its own separate amp
+  config.
 
 Per-instance `review: false` in `~/.config/agentmux/threadwatch.yaml`
 excludes an instance from the review entirely (same file, same per-instance
@@ -271,8 +343,12 @@ next boot).
   collectors/detectors before they ever reach the store (see the design
   doc's `Event`/`Signal` contract), and are capped again to a smaller size
   when assembled into a cluster.
-- A failed Claude call never suppresses the review: it falls back to a
-  stats-and-titles-only digest instead of sending nothing.
+- A failed model call (Claude or amp) never suppresses the review: it falls
+  back to a stats-and-titles-only digest instead of sending nothing.
+- With `-agent amp` and the default `local` executor, tool access is
+  disabled for the escalation the same way the `claude` backend's `--tools
+  ""` disables it — see "Review backend: claude vs. amp" above for exactly
+  how, and why `runner:<id>` cannot make the same guarantee.
 
 ## Data leaving the host
 
@@ -280,10 +356,13 @@ Capped, redacted excerpts (secrets are stripped by pattern before anything is
 sent — see `Redact`/`Excerpt` in
 [`daemon/internal/threadwatch/config.go`](../daemon/internal/threadwatch/config.go))
 go to TypeSafe for the Jev gates, and to Claude (under your existing login)
-for the nightly review's writeup. Set `jev: false` and/or `review: false` on
-an instance in `threadwatch.yaml` to keep a sensitive project entirely
-local-only — its signals still page you deterministically, they just never
-leave the host as excerpts.
+or, with `review.agent: amp`, to amp (under your existing `amp login` or a
+configured access token — **and visible as a real thread on ampcode.com**,
+see "Review backend: claude vs. amp" above) for the nightly review's
+writeup. Set `jev: false` and/or `review: false` on an instance in
+`threadwatch.yaml` to keep a sensitive project entirely local-only — its
+signals still page you deterministically, they just never leave the host as
+excerpts.
 
 ## Troubleshooting
 
