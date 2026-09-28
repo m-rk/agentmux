@@ -803,3 +803,12 @@ func TestUserMessageResetsStaleAssistantExcerpt(t *testing.T) {
 	got = d.Tick(t0.Add(30*time.Minute), []Instance{{Name: inst, Status: "idle"}})
 	assertSignals(t, "no stale question reused as evidence for the unrelated interrupted turn", got, nil)
 }
+
+func TestStalledTurnIgnoresAbandonedTurn(t *testing.T) {
+	d := NewDetector(DefaultConfig())
+	t0 := day(0)
+	instances := []Instance{{Name: "i1", Status: "running"}}
+	d.Observe(Event{Time: t0, Instance: "i1", Thread: "t1", Kind: KindUserMessage})
+	got := d.Tick(t0.Add(23*time.Hour), instances)
+	assertSignals(t, "abandoned turn is not stalled", got, nil)
+}

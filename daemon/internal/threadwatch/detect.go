@@ -647,7 +647,9 @@ func (d *Detector) Tick(now time.Time, instances []Instance) []Signal {
 
 			// stalled_turn
 			if ts.open && is.status == "running" && !ts.lastEventTime.IsZero() {
-				if silence := now.Sub(ts.lastEventTime); silence >= thr.StalledTurnAfter && !ts.stalledSignaled {
+				// Past openTurnStaleAfter the turn is abandoned (e.g. the
+				// session was restarted mid-turn), not stalled.
+				if silence := now.Sub(ts.lastEventTime); silence >= thr.StalledTurnAfter && silence <= openTurnStaleAfter && !ts.stalledSignaled {
 					ts.stalledSignaled = true
 					out = append(out, newSignal(now, inst.Name, thread, CodeStalledTurn, TierIntervene,
 						fmt.Sprintf("no activity for %s while the turn is running", roundDuration(silence)),
