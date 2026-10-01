@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -59,25 +58,39 @@ func runPaseoUpdate(args []string) {
 		return string(out), err
 	}
 
-	// A desktop-app-managed daemon is updated by the app; replacing the npm
-	// package underneath it would just be undone or break it.
+	deps := paseoupdate.Deps{
+		Run:     run,
+		Restart: func(ctx context.Context) error { return restartPaseo(ctx, run, identity.HomeDir) },
+		Logf:    func(f string, a ...any) { log.Printf("paseo update: "+f, a...) },
+	}
+	if !*noNotify && !*check {
+		deps.Notify = paseoDiscordNotifier(identity.HomeDir)
+	}
+
+	// A supervisor still on the removed --foreground flag, or crash looping,
+	// would fail the post-update health check and the rollback after it.
+	if problem := paseoSupervisorProblem(ctx, identity.HomeDir); problem != "" {
+		if !*check {
+			log.Fatalf("paseo update: not updating: %s", problem)
+		}
+		fmt.Println("warning: " + problem)
+	}
+
+	// The desktop app runs a daemon bundled inside Paseo.app and updates it
+	// with the app; the npm CLI is not what it runs.
 	if out, err := run(ctx, "paseo", "daemon", "status", "--json"); err == nil {
 		var st struct {
 			DesktopManaged bool `json:"desktopManaged"`
 		}
 		if json.Unmarshal([]byte(out), &st) == nil && st.DesktopManaged {
-			fmt.Println("paseo daemon is managed by the Paseo desktop app; update it there. Nothing to do.")
+			fmt.Println("paseo daemon is managed by the Paseo desktop app, which updates it. Nothing to do.")
+			if *check {
+				if res, err := paseoupdate.Update(ctx, deps, true); err == nil {
+					fmt.Printf("paseo CLI %s installed, latest %s (the app's daemon does not use it)\n", res.From, res.To)
+				}
+			}
 			return
 		}
-	}
-
-	deps := paseoupdate.Deps{
-		Run:     run,
-		Restart: func(ctx context.Context) error { return restartPaseo(ctx, run) },
-		Logf:    func(f string, a ...any) { log.Printf("paseo update: "+f, a...) },
-	}
-	if !*noNotify && !*check {
-		deps.Notify = paseoDiscordNotifier(identity.HomeDir)
 	}
 
 	res, err := paseoupdate.Update(ctx, deps, *check)
@@ -100,21 +113,16 @@ func runPaseoUpdate(args []string) {
 	}
 }
 
-// restartPaseo restarts the daemon the way this host supervises it: the
-// paseo-daemon systemd unit on Linux when one exists (needs root), otherwise
-// the paseo CLI's own stop/start for a user-level daemon (macOS, or Linux
-// without a unit).
-func restartPaseo(ctx context.Context, run func(context.Context, string, ...string) (string, error)) error {
-	if runtime.GOOS == "linux" {
-		if exec.CommandContext(ctx, "systemctl", "cat", paseoUnit).Run() == nil {
-			if os.Geteuid() != 0 {
-				return fmt.Errorf("%s is a system unit; run as root (the installed timer does)", paseoUnit)
-			}
-			if out, err := exec.CommandContext(ctx, "systemctl", "restart", paseoUnit).CombinedOutput(); err != nil {
-				return fmt.Errorf("systemctl restart %s: %w: %s", paseoUnit, err, strings.TrimSpace(string(out)))
-			}
-			return nil
-		}
+// restartPaseo restarts the daemon the way this host supervises it: through
+// its systemd unit or LaunchAgent when one exists, otherwise with the paseo
+// CLI's own stop/start for a daemon it daemonized itself.
+func restartPaseo(ctx context.Context, run func(context.Context, string, ...string) (string, error), home string) error {
+	sup, err := findPaseoSupervisor(ctx, home)
+	if err != nil {
+		return err
+	}
+	if sup != nil {
+		return restartPaseoSupervisor(ctx, sup)
 	}
 	_, _ = run(ctx, "paseo", "daemon", "stop") // may already be stopped
 	if out, err := run(ctx, "paseo", "daemon", "start"); err != nil {

@@ -19,9 +19,15 @@ type fakeHost struct {
 	broken    map[string]bool
 	flaky     map[string]bool
 	failNpm   map[string]bool
-	restarts  int
-	sleeps    int
-	notes     []string
+	// noVersion makes status omit daemonVersion, as the CLI does when it
+	// cannot authenticate to a password-protected daemon; noOpRestart makes
+	// Restart report success without actually restarting anything.
+	noVersion   bool
+	noOpRestart bool
+	pid         int
+	restarts    int
+	sleeps      int
+	notes       []string
 }
 
 func (h *fakeHost) deps() Deps {
@@ -45,12 +51,19 @@ func (h *fakeHost) deps() Deps {
 				if h.running {
 					state = "running"
 				}
-				return fmt.Sprintf(`{"localDaemon":%q,"daemonVersion":%q}`, state, h.daemonVer), nil
+				if h.noVersion {
+					return fmt.Sprintf(`{"localDaemon":%q,"pid":%d}`, state, h.pid), nil
+				}
+				return fmt.Sprintf(`{"localDaemon":%q,"daemonVersion":%q,"pid":%d}`, state, h.daemonVer, h.pid), nil
 			}
 			return "", fmt.Errorf("unexpected command %q", cmd)
 		},
 		Restart: func(context.Context) error {
 			h.restarts++
+			if h.noOpRestart {
+				return nil
+			}
+			h.pid++
 			h.daemonVer = h.installed
 			h.running = !h.broken[h.installed]
 			return nil
@@ -71,7 +84,7 @@ func (h *fakeHost) deps() Deps {
 
 func newHost() *fakeHost {
 	return &fakeHost{
-		installed: "0.8.0", latest: "0.10.2", daemonVer: "0.8.0", running: true,
+		installed: "0.8.0", latest: "0.10.2", daemonVer: "0.8.0", running: true, pid: 100,
 		broken: map[string]bool{}, flaky: map[string]bool{}, failNpm: map[string]bool{},
 	}
 }
@@ -157,5 +170,23 @@ func TestRollbackFailureIsLoud(t *testing.T) {
 	res, _ := Update(context.Background(), h.deps(), false)
 	if res.Outcome != RollbackFailed || len(h.notes) != 1 || !strings.Contains(h.notes[0], "manual attention") {
 		t.Fatalf("got %+v notes=%q", res, h.notes)
+	}
+}
+
+func TestUpdateSucceedsWithoutDaemonVersion(t *testing.T) {
+	h := newHost()
+	h.noVersion = true
+	res, err := Update(context.Background(), h.deps(), false)
+	if err != nil || res.Outcome != Updated || h.restarts != 1 {
+		t.Fatalf("got %+v err=%v restarts=%d", res, err, h.restarts)
+	}
+}
+
+func TestRollsBackWhenDaemonWasNotRestarted(t *testing.T) {
+	h := newHost()
+	h.noVersion, h.noOpRestart = true, true
+	res, _ := Update(context.Background(), h.deps(), false)
+	if res.Outcome != RollbackFailed || !strings.Contains(res.Detail, "was not restarted") {
+		t.Fatalf("got %+v", res)
 	}
 }

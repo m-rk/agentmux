@@ -117,17 +117,18 @@ func (d Deps) apply(ctx context.Context, version string) string {
 	if got, err := d.cliVersion(ctx); err != nil || got != version {
 		return fmt.Sprintf("installed CLI reports %q, want %s", got, version)
 	}
+	before, _ := d.status(ctx)
 	if err := d.Restart(ctx); err != nil {
 		return "restart failed: " + err.Error()
 	}
-	return d.waitHealthy(ctx, version)
+	return d.waitHealthy(ctx, version, before)
 }
 
-func (d Deps) waitHealthy(ctx context.Context, version string) string {
+func (d Deps) waitHealthy(ctx context.Context, version string, before daemonStatus) string {
 	deadline := time.Now().Add(d.HealthTimeout)
 	last := "daemon never reported running"
 	for {
-		ok, why := d.healthy(ctx, version)
+		ok, why := d.healthy(ctx, version, before)
 		if ok {
 			break
 		}
@@ -138,7 +139,7 @@ func (d Deps) waitHealthy(ctx context.Context, version string) string {
 		d.Sleep(d.Poll)
 	}
 	d.Sleep(d.Settle)
-	if ok, why := d.healthy(ctx, version); !ok {
+	if ok, why := d.healthy(ctx, version, before); !ok {
 		return "daemon did not stay up: " + why
 	}
 	return ""
@@ -147,22 +148,46 @@ func (d Deps) waitHealthy(ctx context.Context, version string) string {
 type daemonStatus struct {
 	LocalDaemon   string `json:"localDaemon"`
 	DaemonVersion string `json:"daemonVersion"`
+	PID           int    `json:"pid"`
+	StartedAt     string `json:"startedAt"`
 }
 
-func (d Deps) healthy(ctx context.Context, version string) (bool, string) {
+func (d Deps) status(ctx context.Context) (daemonStatus, string) {
 	out, err := d.Run(ctx, "paseo", "daemon", "status", "--json")
 	if err != nil && out == "" {
-		return false, "status failed: " + err.Error()
+		return daemonStatus{}, "status failed: " + err.Error()
 	}
 	var st daemonStatus
 	if jerr := json.Unmarshal([]byte(out), &st); jerr != nil {
-		return false, "unreadable status output"
+		return daemonStatus{}, "unreadable status output"
+	}
+	return st, ""
+}
+
+// healthy reports whether the daemon is running version. The CLI only
+// reports daemonVersion when it can authenticate to the daemon, which a
+// password-protected daemon refuses without PASEO_PASSWORD. Without it, a
+// daemon that started after the restart (new pid or start time) is running
+// the package apply just installed and verified, so that counts instead.
+func (d Deps) healthy(ctx context.Context, version string, before daemonStatus) (bool, string) {
+	st, why := d.status(ctx)
+	if why != "" {
+		return false, why
 	}
 	if st.LocalDaemon != "running" {
 		return false, "daemon is " + st.LocalDaemon
 	}
-	if st.DaemonVersion != version {
-		return false, fmt.Sprintf("daemon runs %q, want %s", st.DaemonVersion, version)
+	if st.DaemonVersion != "" {
+		if st.DaemonVersion != version {
+			return false, fmt.Sprintf("daemon runs %q, want %s", st.DaemonVersion, version)
+		}
+		return true, ""
+	}
+	if st.PID == 0 && st.StartedAt == "" {
+		return false, "status reports neither daemonVersion nor pid/startedAt"
+	}
+	if st.PID == before.PID && st.StartedAt == before.StartedAt {
+		return false, fmt.Sprintf("daemon was not restarted (pid %d unchanged)", st.PID)
 	}
 	return true, ""
 }
