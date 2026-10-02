@@ -1,0 +1,13 @@
+{"type":"permission-mode","permissionMode":"default","sessionId":"sess-main"}
+{"type":"ai-title","aiTitle":"Fix the widget","sessionId":"sess-main"}
+{"type":"user","uuid":"u1","isSidechain":false,"timestamp":"2026-01-02T03:04:05.000Z","message":{"role":"user","content":"please fix the widget, key sk-ant-FAKEKEY123456"}}
+{"type":"user","uuid":"u-meta","isMeta":true,"timestamp":"2026-01-02T03:04:06.000Z","message":{"role":"user","content":"meta caveat text"}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-01-02T03:04:07.000Z","message":{"id":"msg_1","role":"assistant","content":[{"type":"thinking","thinking":"secret reasoning","signature":"x"}]}}
+{"type":"assistant","uuid":"a2","timestamp":"2026-01-02T03:04:08.000Z","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"Looking at it."}]}}
+{"type":"assistant","uuid":"a3","timestamp":"2026-01-02T03:04:09.000Z","message":{"id":"msg_1","role":"assistant","content":[{"type":"tool_use","id":"tu_1","name":"Bash","input":{"command":"ls -la","description":"list","timeout":5}}]}}
+{"type":"assistant","uuid":"s1","isSidechain":true,"timestamp":"2026-01-02T03:04:09.500Z","message":{"id":"msg_side","role":"assistant","content":[{"type":"text","text":"subagent chatter"}]}}
+{"type":"user","uuid":"u2","timestamp":"2026-01-02T03:04:10.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","is_error":true,"content":"boom"}]}}
+{"type":"assistant","uuid":"a4","timestamp":"2026-01-02T03:04:11.000Z","message":{"id":"msg_2","role":"assistant","content":[{"type":"text","text":"It failed."},{"type":"tool_use","id":"tu_2","name":"Read","input":{"file_path":"/work/proj/a.go"}}]}}
+{"type":"user","uuid":"u3","timestamp":"2026-01-02T03:04:12.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_2","content":"ok"}]}}
+{"type":"user","uuid":"u4","timestamp":"2026-01-02T03:04:13.000Z","message":{"role":"user","content":[{"type":"text","text":"thanks"}]}}
+not json at all
