@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/m-rk/agentmux/daemon/internal/address"
 	"github.com/m-rk/agentmux/daemon/internal/daemoninstall"
 	"github.com/m-rk/agentmux/daemon/internal/hostsconfig"
 	"github.com/m-rk/agentmux/daemon/internal/tuiclient"
@@ -19,6 +20,7 @@ import (
 // stays stable even if the proto gains internal-only fields later.
 type listRow struct {
 	Host             string `json:"host"`
+	Address          string `json:"address"` // <instance>@<host>; see internal/address
 	Name             string `json:"name"`
 	Agent            string `json:"agent"`
 	Provider         string `json:"provider"`
@@ -63,38 +65,7 @@ func runListCmd(args []string) {
 		hosts = filtered
 	}
 
-	var rows []listRow
-	var errs []string
-	for _, h := range hosts {
-		c, err := tuiclient.Dial(h.Name, h.Address)
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %v", h.Name, err))
-			continue
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		instances, err := c.ListInstances(ctx)
-		cancel()
-		c.Close()
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %v", h.Name, err))
-			continue
-		}
-		for _, inst := range instances {
-			rows = append(rows, listRow{
-				Host:             h.Name,
-				Name:             inst.Name,
-				Agent:            inst.Agent,
-				Provider:         inst.Provider,
-				Model:            inst.Model,
-				Status:           statusLabel(inst.Status),
-				Workdir:          inst.Workdir,
-				TmuxSession:      inst.TmuxSession,
-				Pid:              inst.Pid,
-				LastActivityUnix: inst.LastActivityUnix,
-				StartedAtUnix:    inst.StartedAtUnix,
-			})
-		}
-	}
+	rows, errs := collectRows(hosts)
 
 	if *jsonOut {
 		enc := json.NewEncoder(os.Stdout)
@@ -117,4 +88,42 @@ func runListCmd(args []string) {
 	if len(errs) > 0 && len(rows) == 0 {
 		os.Exit(1)
 	}
+}
+
+// collectRows lists every instance on each host. A host that can't be
+// reached or listed is reported in errs and skipped, so one down device
+// doesn't hide the rest.
+func collectRows(hosts []hostsconfig.Host) (rows []listRow, errs []string) {
+	for _, h := range hosts {
+		c, err := tuiclient.Dial(h.Name, h.Address)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", h.Name, err))
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		instances, err := c.ListInstances(ctx)
+		cancel()
+		c.Close()
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", h.Name, err))
+			continue
+		}
+		for _, inst := range instances {
+			rows = append(rows, listRow{
+				Host:             h.Name,
+				Address:          address.Address{Instance: inst.Name, Host: address.Canonical(h.Name)}.String(),
+				Name:             inst.Name,
+				Agent:            inst.Agent,
+				Provider:         inst.Provider,
+				Model:            inst.Model,
+				Status:           statusLabel(inst.Status),
+				Workdir:          inst.Workdir,
+				TmuxSession:      inst.TmuxSession,
+				Pid:              inst.Pid,
+				LastActivityUnix: inst.LastActivityUnix,
+				StartedAtUnix:    inst.StartedAtUnix,
+			})
+		}
+	}
+	return rows, errs
 }

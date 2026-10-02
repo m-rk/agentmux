@@ -117,13 +117,34 @@ The gateway needs, for sends:
   Identify a tagged node by node name and tags, since `whois` reports its user
   as the tagged-devices placeholder. No bearer-token path is needed; add one
   only if a host off the tailnet ever joins.
-- Authorization from a Tailscale grant with a custom app capability, for
-  example `<owned-domain>/cap/agentmux-gateway`, whose value lists the
-  operations and instance patterns the source may use. The capability arrives
-  in the `whois` response's `CapMap`, so the allowlist lives in the tailnet
-  policy next to the network grant, not in per-host files. Default deny when
-  the capability is absent. Capability names must use the
-  `{domain}/{path}` form and a domain the operator controls.
+- Authorization from one Tailscale grant covering every host. It opens the
+  gateway port and attaches the app capability
+  `<owned-domain>/cap/agentmux-gateway`, using a domain the operator controls
+  (Tailscale requires the `{domain}/{path}` form; the domain is only a
+  namespace and is never contacted). The capability arrives in the `whois`
+  response's `CapMap`, so the allowlist lives in the tailnet policy, not in
+  per-host files. Default deny when the capability is absent.
+
+  Each value entry pairs operations with address globs; a request is allowed
+  if any entry matches. Operations are `list`, `read`, `status`, `events` and
+  `send`:
+
+  ```json
+  "grants": [{
+    "src": ["tag:orchestrator"],
+    "dst": ["tag:agentmux-host"],
+    "ip":  ["tcp:<gateway-port>"],
+    "app": {
+      "<owned-domain>/cap/agentmux-gateway": [
+        {"ops": ["list", "read", "status", "events"], "sessions": ["*@*"]},
+        {"ops": ["send"], "sessions": ["mergentic*@*"]}
+      ]
+    }
+  }]
+  ```
+
+  Tagging the hosts (`tag:agentmux-host`) keeps the one grant stable as hosts
+  join; listing them by name also works.
 - A per-principal rate limit.
 - An append-only audit log (JSON lines): time, principal, target, message
   length and SHA-256, outcome. It never records message text.
@@ -144,8 +165,13 @@ hosts, uniqueness comes from the pair. Define:
                               threadId, opencode session id)
 ```
 
-`<host>` is the `hosts.yaml` name, so host names must be unique across the
-whole fleet. Needed: a resolver (`agentmux resolve <address>`, and the same in
+`<host>` is the host's name in `hosts.yaml`, lower-cased. The `local` entry
+(and the implicit local host when there is no `hosts.yaml`) becomes this
+machine's host name up to the first dot, so `build-box.lan` is
+`build-box`. Name the other `hosts.yaml` entries after their tailnet
+machine names so every client produces the same addresses. Host names must be
+unique once canonicalized; `agentmux` refuses a `hosts.yaml` where two
+entries collide. Needed: a resolver (`agentmux resolve <address>`, and the same in
 the gateway) returning host, instance, agent, workdir, and current thread; and
 a check that fails loudly when two hosts claim one name. Rename already exists
 (`RenameInstance`). The mergentic open question "where does the registry live"
@@ -218,9 +244,12 @@ what to do with it.
 Each phase is shippable and useful alone. Mergentic phases refer to its
 `docs/roadmap.md`.
 
-1. **CLI core and addressing.** `agentmux sessions list|status|resolve --json`,
-   address parsing, fleet name-collision check. Local only. (Needed by
-   mergentic phase 3 to launch or message a named agent.)
+1. **Addressing.** Done: `internal/address` parses and prints addresses;
+   `agentmux list -json` includes each session's `address`;
+   `agentmux sessions resolve [-json] <address>` returns the session it names;
+   `hosts.yaml` entries that collide are rejected. Richer status lands in the
+   gateway phases. (Needed by mergentic phase 3 to launch or message a named
+   agent.)
 2. **Transcript reader.** Claude and opencode readers from local records, amp
    through `amp threads export`; cursor pagination, redaction. Works on macOS
    and Linux.
@@ -257,11 +286,9 @@ Checked on 2026-10-02 with the CLIs on a fleet host and the vendors' docs.
 - **Event retention.** Reuse thread watch's 14-day day files and a file and
   offset cursor. See gap 6.
 
-## Open questions
-
-- Which domain to use for the gateway's app capability name.
-- The value schema for that capability (operations and instance patterns), and
-  whether one grant covers all hosts or each host gets its own.
-- Whether amp threads that a runner serves should be listed by scanning
-  `amp threads list` plus cached exports, or whether Amp exposes a runner
-  filter; the CLI has none today.
+- **Capability name and grant.** A domain the operator owns; one grant
+  covers all hosts. Value format in gap 4.
+- **Listing amp threads per runner.** The CLI has no runner filter, so scan
+  `amp threads list --json` and map each thread to a runner through a cached
+  export (`env.initial.runnerID`). Only threads updated since the last scan
+  need a new export.

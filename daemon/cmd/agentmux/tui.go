@@ -84,6 +84,9 @@ func loadHosts(hostsPath, socketPath string) ([]hostsconfig.Host, error) {
 	if len(cfg.Hosts) == 0 {
 		return nil, fmt.Errorf("%s: no hosts configured", hostsPath)
 	}
+	if err := hostsconfig.CheckUnique(cfg.Hosts); err != nil {
+		return nil, fmt.Errorf("%s: %w", hostsPath, err)
+	}
 	return cfg.Hosts, nil
 }
 

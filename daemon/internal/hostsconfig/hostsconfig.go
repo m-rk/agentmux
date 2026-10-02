@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/m-rk/agentmux/daemon/internal/address"
 	"gopkg.in/yaml.v3"
 )
 
@@ -54,4 +55,19 @@ func Load(path string) (*Config, error) {
 		}
 	}
 	return &cfg, nil
+}
+
+// CheckUnique fails when two hosts share a name once canonicalized for
+// addresses ("local" becomes this machine's host name, case is folded), since
+// <instance>@<host> would then name two sessions.
+func CheckUnique(hosts []Host) error {
+	seen := map[string]string{}
+	for _, h := range hosts {
+		c := address.Canonical(h.Name)
+		if prev, ok := seen[c]; ok {
+			return fmt.Errorf("hosts %q and %q both resolve to host name %q; addresses would be ambiguous", prev, h.Name, c)
+		}
+		seen[c] = h.Name
+	}
+	return nil
 }

@@ -29,6 +29,8 @@ func main() {
 		runSessionCmd(args[1:])
 	case "list":
 		runListCmd(args[1:])
+	case "sessions":
+		runSessionsCmd(args[1:])
 	case "control":
 		runControlCmd(args[1:])
 	case "view":
@@ -70,6 +72,8 @@ Usage:
   agentmux rename ...          rename an instance's tmux session/display name
   agentmux resume-list ...     list resumable Claude Code sessions for a workdir
   agentmux list                headless instance status (name/agent/model/status/workdir); add -json for scripts
+  agentmux sessions resolve [-json] INSTANCE@HOST[#THREAD]
+                               look up the session an address names (see docs/design/gateway.md)
   agentmux control ...         start/stop/restart an instance without an attached terminal
   agentmux view -instance NAME        headless read-only snapshot of an instance's tmux pane
   agentmux send-keys -instance NAME KEY...   headless equivalent of typing into an instance's pane
