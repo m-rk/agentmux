@@ -68,7 +68,7 @@ and redacted.
 | --- | --- | --- |
 | claude-code | `~/.claude/projects/<slug>/*.jsonl` | Reuse the collector's file discovery. |
 | opencode | `~/.local/share/opencode/opencode.db` | Read-only SQLite, `message` and `part` tables. |
-| amp | none on the host | Thread content is server-side; the runner log only has liveness and errors. Report `transcript: unsupported` and fall back to `ViewPane`. Reading amp threads would need the Amp API; open question. |
+| amp | `amp threads export <id>` (JSON) or `amp threads markdown <id>` | Content is server-side; read it through the CLI with the instance's `AMP_API_KEY` (the `op run` env-file from `docs/amp-secrets.md`). `amp threads list --json` gives id, title, updated time, working tree and message count but not the runner; the export's `env.initial.runnerID` maps a thread to the instance whose `AGENTMUX_AMP_RUNNER_ID` matches. Cache that mapping per thread id, since exports of long threads are large. |
 
 Redaction matters more here than in thread watch, because transcripts leave
 the host. Reuse the excerpt redactor and add a test corpus of secret shapes.
@@ -87,7 +87,14 @@ can take input. Required behaviour:
 - Return an acknowledgement that the text was submitted, not that the agent
   acted on it. Confirm by observing the transcript or pane change.
 - amp runners take their input from threads on ampcode.com, not from the
-  tmux pane, so `send` is unsupported for amp until there is an API path.
+  tmux pane, so amp send goes through the CLI, not tmux:
+  `amp threads continue <id> -ox "<message>"` posts to an existing thread and
+  runs it on that thread's own executor (the runner), and
+  `amp -x "<message>" --executor runner:<id> [--runner-dir <dir>]` starts a
+  new thread on a runner. Both need `AMP_API_KEY` and stdin closed (with stdin
+  left open the CLI waits and fails with "Timeout while reading from stdin").
+  Verified on 2026-10-02 against amp 0.0.1789646488: both messages appeared in
+  the thread export and in the runner's `no-tui.log`.
 
 ### 3. Status is too coarse
 
@@ -95,20 +102,31 @@ can take input. Required behaviour:
 service need: turn in progress, awaiting user (and what kind: question,
 permission, plan), last turn error kind, usage-limit, auth failure, last
 activity. Thread watch already derives these; expose them per session from its
-store instead of recomputing.
+store instead of recomputing. For amp, the thread export also carries
+`meta.lastKnownAgentState.state` (for example `idle`).
 
 ### 4. No principal, allowlist, rate limit, or audit
 
 The gateway needs, for sends:
 
-- A caller identity. Preferred: the tailnet peer identity from the local
-  Tailscale API (`whois`), which needs no shared secret. Fallback: a bearer
-  token resolved through `op run`, never stored in config.
-- A config allowlist of principal to instances it may send to. Default deny.
+- A caller identity from the tailnet peer: Tailscale `whois` on the
+  connection's remote address, through LocalAPI in Go
+  (`tailscale.com/client/local`) with `tailscale whois --json` as the
+  fallback. It needs no shared secret. Every fleet host is on the tailnet, and
+  `whois` works on the macOS hosts (checked on Tailscale 1.102) and on Linux.
+  Identify a tagged node by node name and tags, since `whois` reports its user
+  as the tagged-devices placeholder. No bearer-token path is needed; add one
+  only if a host off the tailnet ever joins.
+- Authorization from a Tailscale grant with a custom app capability, for
+  example `<owned-domain>/cap/agentmux-gateway`, whose value lists the
+  operations and instance patterns the source may use. The capability arrives
+  in the `whois` response's `CapMap`, so the allowlist lives in the tailnet
+  policy next to the network grant, not in per-host files. Default deny when
+  the capability is absent. Capability names must use the
+  `{domain}/{path}` form and a domain the operator controls.
 - A per-principal rate limit.
 - An append-only audit log (JSON lines): time, principal, target, message
-  length and hash, outcome. Message text is optional in the log and off by
-  default.
+  length and SHA-256, outcome. It never records message text.
 
 Reads are scoped by the same allowlist. The orchestrator cannot approve
 anything on the person's behalf; the gateway has no operation for that, and
@@ -134,8 +152,24 @@ a check that fails loudly when two hosts claim one name. Rename already exists
 is answered here: each host is authoritative for its own instance names, and
 the fleet view is `hosts.yaml` plus a fan-out query. No central store.
 
-paseo names sessions separately. Whether paseo exposes thread read/write the
-gateway could reuse is unanswered; check before building duplicate paths.
+paseo names its own agents separately. It already provides list, read, send
+and status for the agents it runs: CLI `paseo ls`, `logs`, `send`, `inspect`,
+`wait`, and an MCP server with `list_agents`, `get_agent_activity`,
+`send_agent_prompt` and `get_agent_status`, reachable across hosts with
+`--host` (TCP, SSH, or a pairing URL). It does not drive agentmux's tmux
+sessions, so the gateway cannot reuse it for them. `paseo import` resumes a
+provider session as a new Paseo agent, which would put a second process on the
+same session, so it is not a bridge either. The split:
+
+- Paseo-run agents: the orchestrator uses Paseo directly. Paseo's MCP also
+  exposes `respond_to_permission`, which would let the orchestrator approve
+  on the person's behalf; remove it with the provider's `disabledTools` for
+  the orchestrator. A Paseo daemon with password auth needs the password for
+  CLI queries, resolved through `op run`.
+- agentmux sessions: the gateway.
+
+The gateway's `list_sessions` can include Paseo agents read-only later, so the
+orchestrator sees one inventory; not needed for the first phases.
 
 ### 6. Events
 
@@ -143,6 +177,12 @@ gateway could reuse is unanswered; check before building duplicate paths.
 dispatcher need turn-end, awaiting-user, error and limit events. Expose thread
 watch's event stream through the gateway as a filtered server stream, with a
 cursor so a reconnecting consumer resumes without loss.
+
+Thread watch already persists events as per-day JSON-lines files under
+`~/.local/state/agentmux/threadwatch` and prunes days older than 14 days. The
+cursor is the day file plus byte offset. A consumer can resume anywhere in
+that window; a cursor older than the window gets a `gap` marker and resumes
+from the oldest retained event. No separate event store.
 
 ### 7. Platform coverage
 
@@ -181,12 +221,15 @@ Each phase is shippable and useful alone. Mergentic phases refer to its
 1. **CLI core and addressing.** `agentmux sessions list|status|resolve --json`,
    address parsing, fleet name-collision check. Local only. (Needed by
    mergentic phase 3 to launch or message a named agent.)
-2. **Transcript reader.** Claude and opencode readers, cursor pagination,
-   redaction, amp reports unsupported. Works on macOS and Linux.
+2. **Transcript reader.** Claude and opencode readers from local records, amp
+   through `amp threads export`; cursor pagination, redaction. Works on macOS
+   and Linux.
 3. **Safe send.** `agentmux sessions send` with refusal rules, provenance
-   prefix, acknowledgement, audit log. (Mergentic phase 3 dispatch.)
+   prefix, acknowledgement, audit log; tmux for Claude and opencode,
+   `amp threads continue -ox` for amp. (Mergentic phase 3 dispatch.)
 4. **Gateway service.** Separate listener, tailnet bind, `whois` identity,
-   allowlist, rate limit. Exposes list, read, send, status.
+   app-capability authorization, rate limit. Exposes list, read, send,
+   status.
 5. **Events.** Filtered, resumable thread-watch event stream through the
    gateway. (Mergentic phase 4 queue service.)
 6. **MCP server.** `agentmux mcp` across `hosts.yaml`. (Mergentic phase 5.)
@@ -196,17 +239,29 @@ Each phase is shippable and useful alone. Mergentic phases refer to its
 Phases 1 to 3 are usable without any network exposure, which lets mergentic's
 dispatcher work against a local host first.
 
+## Resolved questions
+
+Checked on 2026-10-02 with the CLIs on a fleet host and the vendors' docs.
+
+- **Amp read and send.** Yes, through the CLI with an access token: export or
+  markdown to read, `threads continue -ox` to send to a runner thread,
+  `--executor runner:<id>` to start one. Verified live. See gaps 1 to 3.
+- **Paseo reuse.** Use Paseo for agents Paseo runs; it cannot drive agentmux's
+  tmux sessions. See gap 5.
+- **Hosts without the Tailscale local API.** None: every fleet host is on the
+  tailnet and `whois` is available through LocalAPI or the CLI. No bearer
+  token. Authorization comes from a grant app capability. See gap 4.
+- **Audit log message text.** Not recorded. Length and hash only.
+- **Thread watch on `main`.** It is merged; this branch is based on
+  `origin/main`.
+- **Event retention.** Reuse thread watch's 14-day day files and a file and
+  offset cursor. See gap 6.
+
 ## Open questions
 
-- Amp: is there an API to read and post to a thread, and does the runner accept
-  messages that way? Until answered, amp is list and status only.
-- Does paseo already expose read and write we should call instead of building
-  our own for sessions it manages?
-- `whois` requires the Tailscale local API on every host. Is bearer-token auth
-  needed for hosts without it?
-- Should the audit log record message text? Default no; a per-principal opt-in.
-- Thread watch is not merged to `main`. This branch is based on
-  `paseo-autoupdate`, which contains it, so phase 2 can reuse the collectors.
-  Decide the merge order before opening a PR.
-- Cursor and retention for the event stream: how much history the gateway
-  keeps for a consumer that reconnects after an outage.
+- Which domain to use for the gateway's app capability name.
+- The value schema for that capability (operations and instance patterns), and
+  whether one grant covers all hosts or each host gets its own.
+- Whether amp threads that a runner serves should be listed by scanning
+  `amp threads list` plus cached exports, or whether Amp exposes a runner
+  filter; the CLI has none today.
