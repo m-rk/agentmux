@@ -250,9 +250,16 @@ Each phase is shippable and useful alone. Mergentic phases refer to its
    `hosts.yaml` entries that collide are rejected. Richer status lands in the
    gateway phases. (Needed by mergentic phase 3 to launch or message a named
    agent.)
-2. **Transcript reader.** Claude and opencode readers from local records, amp
-   through `amp threads export`; cursor pagination, redaction. Works on macOS
-   and Linux.
+2. **Transcript reader.** Done: `internal/transcript` reads Claude Code
+   JSONL, opencode SQLite (through the `sqlite3` CLI) and amp threads
+   (through `amp threads export`, with a thread-to-runner cache at
+   `~/.cache/agentmux/amp-thread-runners.json`), redacted and paged by cursor.
+   CLI: `agentmux sessions threads|read <address>`, local host only until
+   phase 4. Follow-ups: keyset paging in SQL for large opencode sessions
+   (a 2,500-message session takes about 5 s); amp listing is slow on a cold
+   cache (tens of seconds, capped at 20 exports per call); a per-thread state
+   on the `Reader` interface so status (gap 3) needn't special-case amp's
+   `AmpThreadState`.
 3. **Safe send.** `agentmux sessions send` with refusal rules, provenance
    prefix, acknowledgement, audit log; tmux for Claude and opencode,
    `amp threads continue -ox` for amp. (Mergentic phase 3 dispatch.)
