@@ -1,0 +1,6 @@
+[
+ {"id":"T-00000000-0000-4000-8000-000000000001","title":"first","updated":"2026-01-01T10:00:00.000Z","tree":"file:///work/proj","messageCount":4},
+ {"id":"T-00000000-0000-4000-8000-000000000002","title":"sub dir","updated":"2026-01-03T10:00:00.000Z","tree":"file:///work/proj/sub","messageCount":2},
+ {"id":"T-00000000-0000-4000-8000-000000000003","title":"other runner, same tree","updated":"2026-01-02T10:00:00.000Z","tree":"file:///work/proj","messageCount":9},
+ {"id":"T-00000000-0000-4000-8000-000000000004","title":"elsewhere","updated":"2026-01-04T10:00:00.000Z","tree":"file:///work/project-two","messageCount":1}
+]

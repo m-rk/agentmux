@@ -1,0 +1,15 @@
+{"v":1,"id":"T-00000000-0000-4000-8000-000000000001","title":"first","env":{"initial":{"runnerID":"runner-a","workingDirectory":"/work/proj"}},
+ "meta":{"lastKnownAgentState":{"state":"idle"}},
+ "messages":[
+  {"role":"user","messageId":"M-1","createdAt":"2026-01-01T10:00:00.000Z","content":[{"type":"text","text":"list the files, key is sgamp_FAKEFAKEFAKE1234"}]},
+  {"role":"assistant","messageId":"M-2","createdAt":"2026-01-01T10:00:01.000Z","content":[
+    {"type":"thinking","thinking":"private reasoning"},
+    {"type":"text","text":"Running ls."},
+    {"type":"tool_use","id":"TU-1","name":"shell_command","input":{"command":"ls -la","workdir":"/work/proj"}},
+    {"type":"tool_use","id":"TU-2","name":"Read","input":{"path":"/work/proj/a.txt"}}]},
+  {"role":"user","messageId":"M-3","createdAt":"2026-01-01T10:00:02.000Z","content":[
+    {"type":"tool_result","toolUseID":"TU-1","run":{"status":"done","result":{"output":"a.txt\nb.txt","exitCode":0}}},
+    {"type":"tool_result","toolUseID":"TU-2","run":{"status":"error","error":{"message":"no such file"}}}]},
+  {"role":"assistant","messageId":"M-4","createdAt":"2026-01-01T10:00:03.000Z","content":[{"type":"thinking","thinking":"only thinking"}]},
+  {"role":"assistant","messageId":"M-5","createdAt":"2026-01-01T10:00:04.000Z","content":[{"type":"text","text":"Done."}]}
+ ]}
