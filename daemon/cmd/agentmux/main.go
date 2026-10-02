@@ -74,6 +74,8 @@ Usage:
   agentmux list                headless instance status (name/agent/model/status/workdir); add -json for scripts
   agentmux sessions resolve [-json] INSTANCE@HOST[#THREAD]
                                look up the session an address names (see docs/design/gateway.md)
+  agentmux sessions threads|read [-json] INSTANCE@HOST[#THREAD]
+                               list a local session's threads, or page through its transcript
   agentmux control ...         start/stop/restart an instance without an attached terminal
   agentmux view -instance NAME        headless read-only snapshot of an instance's tmux pane
   agentmux send-keys -instance NAME KEY...   headless equivalent of typing into an instance's pane
