@@ -889,7 +889,14 @@ type CreateInstanceRequest struct {
 	// present): for runners that self-update via
 	// amp.runner.autoUpdate.enabled, where an agentmux-driven `amp update`
 	// would fight the runner's own updater.
-	AmpUpdate     string `protobuf:"bytes,14,opt,name=amp_update,json=ampUpdate,proto3" json:"amp_update,omitempty"`
+	AmpUpdate string `protobuf:"bytes,14,opt,name=amp_update,json=ampUpdate,proto3" json:"amp_update,omitempty"`
+	// Absolute paths of individual files outside the workdir that the agent
+	// may read and edit (exactly those files, not their directories), e.g. a
+	// task note kept in a notes vault. Validated and symlink-resolved by
+	// internal/allowfiles; stored in the registry so restarts keep them. Only
+	// claude-code applies them so far; other agents store the list and report
+	// that it isn't applied yet. See docs/allow-file.md.
+	AllowFiles    []string `protobuf:"bytes,15,rep,name=allow_files,json=allowFiles,proto3" json:"allow_files,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1020,6 +1027,13 @@ func (x *CreateInstanceRequest) GetAmpUpdate() string {
 		return x.AmpUpdate
 	}
 	return ""
+}
+
+func (x *CreateInstanceRequest) GetAllowFiles() []string {
+	if x != nil {
+		return x.AllowFiles
+	}
+	return nil
 }
 
 type CreateInstanceResponse struct {
@@ -1776,7 +1790,7 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\x06action\x18\x02 \x01(\x0e2\x1b.agentmuxd.v1.ControlActionR\x06action\";\n" +
 	"\x0fControlResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\xf1\x03\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\x92\x04\n" +
 	"\x15CreateInstanceRequest\x12#\n" +
 	"\rinstance_name\x18\x01 \x01(\tR\finstanceName\x12\x14\n" +
 	"\x05agent\x18\x02 \x01(\tR\x05agent\x12\x1a\n" +
@@ -1793,7 +1807,9 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\bamp_dirs\x18\f \x01(\tR\aampDirs\x12*\n" +
 	"\x11amp_discover_dirs\x18\r \x01(\bR\x0fampDiscoverDirs\x12\x1d\n" +
 	"\n" +
-	"amp_update\x18\x0e \x01(\tR\tampUpdate\"B\n" +
+	"amp_update\x18\x0e \x01(\tR\tampUpdate\x12\x1f\n" +
+	"\vallow_files\x18\x0f \x03(\tR\n" +
+	"allowFiles\"B\n" +
 	"\x16CreateInstanceResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"\x19\n" +

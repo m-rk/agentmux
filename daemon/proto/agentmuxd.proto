@@ -192,6 +192,13 @@ message CreateInstanceRequest {
   // amp.runner.autoUpdate.enabled, where an agentmux-driven `amp update`
   // would fight the runner's own updater.
   string amp_update = 14;
+  // Absolute paths of individual files outside the workdir that the agent
+  // may read and edit (exactly those files, not their directories), e.g. a
+  // task note kept in a notes vault. Validated and symlink-resolved by
+  // internal/allowfiles; stored in the registry so restarts keep them. Only
+  // claude-code applies them so far; other agents store the list and report
+  // that it isn't applied yet. See docs/allow-file.md.
+  repeated string allow_files = 15;
 }
 
 message CreateInstanceResponse {
