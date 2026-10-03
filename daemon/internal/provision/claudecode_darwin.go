@@ -2,6 +2,7 @@ package provision
 
 import (
 	"fmt"
+	"github.com/m-rk/agentmux/daemon/internal/allowfiles"
 	"os"
 	"os/exec"
 	"os/user"
@@ -151,6 +152,11 @@ func createClaudeCode(opts Options) (string, error) {
 	label := "com.agentmux." + name
 	updateLabel := label + ".update"
 
+	allowFiles, err := prepareAllowFiles(opts, workdir)
+	if err != nil {
+		return "", err
+	}
+
 	regPath, err := writeRegistry(name, []kv{
 		{"AGENTMUX_INSTANCE_NAME", name},
 		{"AGENTMUX_SESSION_NAME", sessionName},
@@ -159,6 +165,7 @@ func createClaudeCode(opts Options) (string, error) {
 		{"AGENTMUX_HOST_NAME", hostName},
 		{"AGENTMUX_SERVICE_NAME", label},
 		{"AGENTMUX_WORKDIR", workdir},
+		{allowfiles.RegistryKey, allowFiles},
 		{"AGENTMUX_RESUME", opts.ResumeSessionID},
 		{"AGENTMUX_COMPACT_ON_UPDATE", opts.CompactOnUpdate},
 	})

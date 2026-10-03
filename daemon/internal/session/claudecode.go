@@ -6,9 +6,11 @@ import (
 	"hash/fnv"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/m-rk/agentmux/daemon/internal/allowfiles"
 	"github.com/m-rk/agentmux/daemon/internal/discordnotify"
 	"github.com/m-rk/agentmux/daemon/internal/provision"
 )
@@ -117,10 +119,7 @@ func RunClaudeCode(name string) error {
 		return ensureClaudeRemoteControl(tmux, name, socket, session)
 	}
 
-	claudeArgs := []string{"--remote-control", display}
-	if resume != "" {
-		claudeArgs = append(claudeArgs, "--resume", resume)
-	}
+	claudeArgs := claudeLaunchArgs(display, resume, prepareClaudeAllowSettings(name, workdir, fields))
 	// exec.Command takes args as a slice, not a shell string, so unlike
 	// rc-start.sh there's no manual shell-quoting to get right here.
 	tmuxArgs := append([]string{"-L", socket, "new-session", "-d", "-s", session, "-c", workdir, "claude"}, claudeArgs...)
@@ -136,6 +135,98 @@ func RunClaudeCode(name string) error {
 	// the pane is still busy replaying a large transcript, in which case the
 	// next tick covers it exactly as before.
 	return ensureClaudeRemoteControl(tmux, name, socket, session)
+}
+
+// claudeLaunchArgs builds the arguments after `claude`. settingsPath is
+// the per-instance allow-file settings file, or "" for none, in which case
+// the arguments are exactly what instances without allow-files always got.
+func claudeLaunchArgs(display, resume, settingsPath string) []string {
+	args := []string{"--remote-control", display}
+	if resume != "" {
+		args = append(args, "--resume", resume)
+	}
+	if settingsPath != "" {
+		args = append(args, "--settings", settingsPath)
+	}
+	return args
+}
+
+// claudeAllowSettingsPath is where an instance's generated settings live:
+// outside the workdir (so they can't be committed or edited by the agent's
+// git operations), in a dot directory so no instance's default workdir
+// (~/.agentmux/<name>) can collide with it.
+func claudeAllowSettingsPath(home, name string) string {
+	return filepath.Join(home, ".agentmux", ".settings", name+".claude.json")
+}
+
+// prepareClaudeAllowSettings (re)writes the instance's allow-file settings
+// from the registry and returns their path, or "" when the instance has no
+// usable allow-files — in which case any stale settings file is removed.
+// It never fails the launch: a problem is logged and the session starts
+// without the grant. Runs as the instance's own user, so the files are
+// owned by it without any chown.
+func prepareClaudeAllowSettings(name, workdir string, fields map[string]string) string {
+	home, herr := os.UserHomeDir()
+	if herr != nil {
+		fmt.Fprintf(os.Stderr, "%s: allow-file: resolving home: %v\n", name, herr)
+		return ""
+	}
+	path := claudeAllowSettingsPath(home, name)
+	files, err := allowfiles.Decode(fields[allowfiles.RegistryKey])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: allow-file: %v\n", name, err)
+	}
+	files, warns := allowfiles.Existing(files)
+	for _, w := range warns {
+		fmt.Fprintf(os.Stderr, "%s: allow-file: skipping: %s\n", name, w)
+	}
+	if len(files) == 0 {
+		_ = os.Remove(path)
+		return ""
+	}
+	blocked := allowfiles.ClaudeBlocksOutsideReads(
+		filepath.Join(home, ".claude", "settings.json"),
+		filepath.Join(workdir, ".claude", "settings.json"),
+		filepath.Join(workdir, ".claude", "settings.local.json"),
+	)
+	data, warns, err := allowfiles.ClaudeSettings(files, blocked)
+	for _, w := range warns {
+		fmt.Fprintf(os.Stderr, "%s: allow-file: %s\n", name, w)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: allow-file: rendering settings: %v\n", name, err)
+		return ""
+	}
+	if err := writeFileAtomic(path, data); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: allow-file: writing %s: %v\n", name, path, err)
+		return ""
+	}
+	return path
+}
+
+// writeFileAtomic writes data to path (0600) via a rename, creating its
+// directory 0700, so claude never reads a half-written settings file.
+func writeFileAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".tmp-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }
 
 // StopClaudeCode is the instance unit's ExecStop.

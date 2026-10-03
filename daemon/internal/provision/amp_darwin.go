@@ -2,6 +2,7 @@ package provision
 
 import (
 	"fmt"
+	"github.com/m-rk/agentmux/daemon/internal/allowfiles"
 	"os"
 	"os/exec"
 	"os/user"
@@ -154,6 +155,11 @@ func createAmp(opts Options) (string, error) {
 
 	_, alreadyExisted := existingAgentFor(name)
 
+	allowFiles, err := prepareAllowFiles(opts, workdir)
+	if err != nil {
+		return "", err
+	}
+
 	regPath, err := writeRegistry(name, []kv{
 		{"AGENTMUX_INSTANCE_NAME", name},
 		{"AGENTMUX_AGENT", "amp"},
@@ -165,6 +171,7 @@ func createAmp(opts Options) (string, error) {
 		{"AGENTMUX_TMUX_SESSION_NAME", sessionName},
 		{"AGENTMUX_HOST_NAME", hostName},
 		{"AGENTMUX_WORKDIR", workdir},
+		{allowfiles.RegistryKey, allowFiles},
 		{"AGENTMUX_RUN_USER", u.Username},
 		{"AGENTMUX_SERVICE_NAME", label},
 	})

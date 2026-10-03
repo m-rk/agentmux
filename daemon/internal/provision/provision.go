@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/m-rk/agentmux/daemon/internal/allowfiles"
 	"github.com/m-rk/agentmux/daemon/internal/discovery"
 )
 
@@ -28,12 +29,13 @@ type Options struct {
 	Workdir         string
 	ResumeSessionID string
 	RunUser         string
-	CompactOnUpdate string // claude-code only: "", "on", or "off" — see proto doc
-	BaseURL         string // zero/opencode/kilo only; see proto doc
-	APIKeyEnv       string // kilo/opencode only, not zero; see proto doc
-	AmpDirs         string // amp only; comma-separated absolute extra --dir paths — see proto doc
-	AmpDiscoverDirs bool   // amp only; pass --discover-dirs — see proto doc
-	AmpUpdate       string // amp only: "", "on", or "off" — see proto doc
+	CompactOnUpdate string   // claude-code only: "", "on", or "off" — see proto doc
+	BaseURL         string   // zero/opencode/kilo only; see proto doc
+	APIKeyEnv       string   // kilo/opencode only, not zero; see proto doc
+	AmpDirs         string   // amp only; comma-separated absolute extra --dir paths — see proto doc
+	AmpDiscoverDirs bool     // amp only; pass --discover-dirs — see proto doc
+	AmpUpdate       string   // amp only: "", "on", or "off" — see proto doc
+	AllowFiles      []string // files outside the workdir the agent may read and edit — see proto doc
 }
 
 var identifierRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
@@ -81,6 +83,17 @@ func Create(opts Options) (string, error) {
 		return "", fmt.Errorf("amp-only options (-amp-dirs, -amp-discover-dirs, -amp-update) are not supported for the %q agent", opts.Agent)
 	}
 
+	msg, err := createForAgent(opts)
+	if err != nil {
+		return "", err
+	}
+	if len(opts.AllowFiles) > 0 && !allowfiles.Supported(opts.Agent) {
+		msg += fmt.Sprintf("\nwarning: -allow-file is stored but not applied yet for the %q agent", opts.Agent)
+	}
+	return msg, nil
+}
+
+func createForAgent(opts Options) (string, error) {
 	switch opts.Agent {
 	case "claude-code":
 		return createClaudeCode(opts)
@@ -91,6 +104,17 @@ func Create(opts Options) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported agent %q (want claude-code, zero, opencode, kilo, or amp)", opts.Agent)
 	}
+}
+
+// prepareAllowFiles validates opts.AllowFiles against the resolved workdir
+// and returns the registry value (empty when none, which also clears a
+// previous grant on re-provisioning, like every other field).
+func prepareAllowFiles(opts Options, workdir string) (string, error) {
+	files, err := allowfiles.Validate(opts.AllowFiles, workdir)
+	if err != nil {
+		return "", err
+	}
+	return allowfiles.Encode(files), nil
 }
 
 // guardAgentMismatch refuses to proceed if name is already in use by a
