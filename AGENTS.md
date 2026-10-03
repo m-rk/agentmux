@@ -154,6 +154,15 @@ the same op reference pattern as everything else in "Reading secrets from
 checks it and only ever prints Jev's verdict, never the key itself. See
 [docs/thread-watch.md](docs/thread-watch.md).
 
+## Paseo daemon updates
+
+`agentmux paseo update -check` says whether a newer stable Paseo release
+exists; `agentmux paseo update` installs it, restarts the daemon, and rolls
+back automatically (with a Discord message) if it doesn't come back healthy.
+Prefer it over a manual `npm install -g @getpaseo/cli`. It restarts the
+daemon, which can interrupt running Paseo agents. See
+[docs/paseo-update.md](docs/paseo-update.md).
+
 ## Developing agentmux itself
 
 ### UX screenshots in pull requests

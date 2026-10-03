@@ -47,6 +47,8 @@ func main() {
 		runCollabCmd(args[1:])
 	case "threadwatch":
 		runThreadwatchCmd(args[1:])
+	case "paseo":
+		runPaseoCmd(args[1:])
 	case "-h", "--help", "help":
 		printUsage()
 	default:
@@ -101,5 +103,7 @@ Usage:
   agentmux threadwatch jev-test [-config PATH]    check the optional TypeSafe key with one synthetic judgment
   agentmux threadwatch review ...                 nightly digest (see its own -h)
   agentmux threadwatch review install [-at 07:00] (Linux, root) install the nightly review timer
+  agentmux paseo update [-check]                  update the Paseo daemon to the latest stable release, verify, roll back on failure
+  agentmux paseo update install [-at 04:00]       (Linux root / macOS user) schedule that daily
   agentmux help                show this message`)
 }
