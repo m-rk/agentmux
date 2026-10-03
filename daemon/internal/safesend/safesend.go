@@ -30,12 +30,15 @@ const (
 	ReasonDraft       Reason = "draft"       // someone has unsent text in the input box
 	ReasonUnsupported Reason = "unsupported" // agent has no safe send path
 	ReasonFailed      Reason = "failed"      // delivery itself failed
+	// Gateway only.
+	ReasonForbidden   Reason = "forbidden"    // caller lacks the capability for this op/session
+	ReasonRateLimited Reason = "rate_limited" // caller is over its send rate
 )
 
 // Retryable reports whether the same send may succeed later without anyone
 // intervening. A prompt or draft needs a person first.
 func (r Reason) Retryable() bool {
-	return r == ReasonBusy || r == ReasonFailed
+	return r == ReasonBusy || r == ReasonFailed || r == ReasonRateLimited
 }
 
 // State is what a session's pane says about taking input.

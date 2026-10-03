@@ -7,16 +7,13 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/user"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/m-rk/agentmux/daemon/internal/address"
 	"github.com/m-rk/agentmux/daemon/internal/daemoninstall"
 	"github.com/m-rk/agentmux/daemon/internal/hostsconfig"
-	"github.com/m-rk/agentmux/daemon/internal/runas"
-	"github.com/m-rk/agentmux/daemon/internal/session"
+	"github.com/m-rk/agentmux/daemon/internal/ops"
 	"github.com/m-rk/agentmux/daemon/internal/transcript"
 )
 
@@ -31,6 +28,7 @@ type resolvedSession struct {
 
 const sessionsUsage = `usage:
   agentmux sessions resolve [-json] <instance>@<host>[#<thread>]
+  agentmux sessions status [-json] <instance>@<host>[#<thread>]
   agentmux sessions threads [-json] <instance>@<host>
   agentmux sessions read [-json] [-limit N] [-cursor C] <instance>@<host>[#<thread>]
   agentmux sessions send -by PRINCIPAL [-via relayed|dispatched|sent] [-from REF] [-correlation ID]
@@ -53,6 +51,8 @@ func runSessionsCmd(args []string) {
 		runSessionsRead(args[1:])
 	case "send":
 		runSessionsSend(args[1:])
+	case "status":
+		runSessionsStatus(args[1:])
 	default:
 		fmt.Fprintln(os.Stderr, sessionsUsage)
 		os.Exit(2)
@@ -116,45 +116,6 @@ func runSessionsResolve(args []string) {
 	log.Fatalf("sessions resolve: no instance %q on host %q", addr.Instance, addr.Host)
 }
 
-// localTranscriptSource builds the transcript source for an address on this
-// machine from the instance's registry entry. Reading another host's records
-// needs the gateway (phase 4), so a remote address is refused here.
-func localTranscriptSource(addr address.Address) (transcript.Source, transcript.Reader, error) {
-	if addr.Host != address.LocalHostName() {
-		return transcript.Source{}, nil, fmt.Errorf("%s is not this host (%s); reaching another host's sessions needs the gateway", addr.Host, address.LocalHostName())
-	}
-	fields, err := session.ReadRegistry(addr.Instance)
-	if err != nil {
-		return transcript.Source{}, nil, fmt.Errorf("no instance %q on this host: %w", addr.Instance, err)
-	}
-	src := transcript.Source{
-		Instance:    addr.Instance,
-		Agent:       fields["AGENTMUX_AGENT"],
-		Workdir:     fields["AGENTMUX_WORKDIR"],
-		Home:        runas.CurrentUserHome(),
-		AmpRunnerID: fields["AGENTMUX_AMP_RUNNER_ID"],
-	}
-	if src.Agent == "" {
-		src.Agent = "claude-code" // claude-code registry entries predate AGENTMUX_AGENT
-	}
-	if runUser := fields["AGENTMUX_RUN_USER"]; runUser != "" {
-		if u, err := user.Lookup(runUser); err == nil {
-			src.Home = u.HomeDir
-		}
-	}
-	if src.Agent == "amp" {
-		envFile := filepath.Join(src.Home, ".agentmux", "env", addr.Instance+".env")
-		if info, err := os.Stat(envFile); err == nil && info.Mode().IsRegular() {
-			src.AmpEnvFile = envFile
-		}
-	}
-	r, err := transcript.For(src.Agent)
-	if err != nil {
-		return transcript.Source{}, nil, err
-	}
-	return src, r, nil
-}
-
 func runSessionsThreads(args []string) {
 	fs := flag.NewFlagSet("sessions threads", flag.ExitOnError)
 	jsonOut := fs.Bool("json", false, "print machine-readable JSON")
@@ -168,13 +129,9 @@ func runSessionsThreads(args []string) {
 	if err != nil {
 		log.Fatalf("sessions threads: %v", err)
 	}
-	src, r, err := localTranscriptSource(addr)
-	if err != nil {
-		log.Fatalf("sessions threads: %v", err)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	threads, err := r.Threads(ctx, src)
+	threads, err := ops.Threads(ctx, addr.String())
 	if err != nil {
 		log.Fatalf("sessions threads: %v", err)
 	}
@@ -206,13 +163,9 @@ func runSessionsRead(args []string) {
 	if err != nil {
 		log.Fatalf("sessions read: %v", err)
 	}
-	src, r, err := localTranscriptSource(addr)
-	if err != nil {
-		log.Fatalf("sessions read: %v", err)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	page, err := r.Read(ctx, src, addr.Thread, *cursor, *limit)
+	page, err := ops.Read(ctx, addr.String(), *cursor, *limit)
 	if err != nil {
 		log.Fatalf("sessions read: %v", err)
 	}
@@ -249,4 +202,27 @@ func writeJSON(v any) {
 	if err := enc.Encode(v); err != nil {
 		log.Fatalf("encoding JSON: %v", err)
 	}
+}
+
+func runSessionsStatus(args []string) {
+	fs := flag.NewFlagSet("sessions status", flag.ExitOnError)
+	jsonOut := fs.Bool("json", false, "print machine-readable JSON")
+	socketPath := fs.String("socket", daemoninstall.SocketPath(), "Unix socket of the local agentmuxd")
+	timeout := fs.Duration("timeout", 2*time.Minute, "overall timeout")
+	fs.Parse(args)
+	if fs.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, sessionsUsage)
+		os.Exit(2)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	st, err := ops.Env{SocketPath: *socketPath}.Status(ctx, fs.Arg(0))
+	if err != nil {
+		log.Fatalf("sessions status: %v", err)
+	}
+	if *jsonOut {
+		writeJSON(st)
+		return
+	}
+	fmt.Printf("address  %s\nagent    %s\nstatus   %s\nstate    %s\nworkdir  %s\n", st.Address, st.Agent, st.Status, st.State, st.Workdir)
 }
