@@ -141,7 +141,7 @@ func createAmp(opts Options) (string, error) {
 	if problem := ampInstallPackageProblem(); problem != "" {
 		return "", fmt.Errorf("%s", problem)
 	}
-	if problem := ampAuthProblem(); problem != "" {
+	if problem := ampAuthProblem(name); problem != "" {
 		return "", fmt.Errorf("%s; run 'amp login', then retry", problem)
 	}
 
@@ -202,8 +202,35 @@ func createAmp(opts Options) (string, error) {
 // ampAuthProblem checks login as the current user, since a macOS instance
 // always runs as whoever invoked `agentmux new`; see ampAuthProblemVia for
 // the shared parsing.
-func ampAuthProblem() string {
+func ampAuthProblem(name string) string {
+	probe, err := ampOpAuthProbe(name)
+	if err != nil {
+		return err.Error()
+	}
+	if probe != nil {
+		return ampAuthProblemVia(probe)
+	}
 	return ampAuthProblemVia(runas.CurrentUserCommand("amp", "usage"))
+}
+
+// ampOpAuthProbe is `amp usage` run the way the instance's runner will run
+// (see session.ExecAmp): through `op run` with ~/.agentmux/env/<name>.env, so
+// an instance authenticated by an injected AMP_API_KEY is checked against
+// that key and not the stored login. nil means the instance has no env-file.
+func ampOpAuthProbe(name string) (*exec.Cmd, error) {
+	home := runas.CurrentUserHome()
+	envFile := filepath.Join(home, ".agentmux", "env", name+".env")
+	if info, err := os.Stat(envFile); err != nil || !info.Mode().IsRegular() {
+		return nil, nil
+	}
+	tokPath := filepath.Join(home, ".config", "op", "service_account_token")
+	tok, err := os.ReadFile(tokPath)
+	if err != nil || strings.TrimSpace(string(tok)) == "" {
+		return nil, fmt.Errorf("1Password service account token %s is missing or empty; needed by %s", tokPath, envFile)
+	}
+	cmd := runas.CurrentUserCommand("op", "run", "--env-file="+envFile, "--", "/usr/bin/env", "-u", "OP_SERVICE_ACCOUNT_TOKEN", "amp", "usage")
+	cmd.Env = append(cmd.Environ(), "OP_SERVICE_ACCOUNT_TOKEN="+strings.TrimSpace(string(tok)))
+	return cmd, nil
 }
 
 // ampInstallPackageProblem checks the npm-global install as the current
