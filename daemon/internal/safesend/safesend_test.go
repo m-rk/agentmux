@@ -57,13 +57,13 @@ const claudeQuestionReply = `  PP-4 is ready to launch. Do you want to:
   ⏵⏵ auto mode on (shift+tab to cycle) · PR #1
 `
 
-const opencodeBusy = `  ┃  Build · glm ken
+const opencodeBusy = `  ┃  Build · glm custom
   ╹▀▀▀▀▀▀▀▀▀▀
    ⬝■■■■■■⬝  esc interrupt   tab agents  ctrl+p commands
 `
 
 const opencodeIdle = `  ┃  Ask anything… "Fix a TODO in the codebase"
-  ┃  Build · glm ken
+  ┃  Build · glm custom
   ╹▀▀▀▀▀▀▀▀▀▀
                        tab agents  ctrl+p commands
 `
