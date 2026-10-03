@@ -76,6 +76,8 @@ Usage:
                                look up the session an address names (see docs/design/gateway.md)
   agentmux sessions threads|read [-json] INSTANCE@HOST[#THREAD]
                                list a local session's threads, or page through its transcript
+  agentmux sessions send -by PRINCIPAL [-json] INSTANCE@HOST[#THREAD] TEXT
+                               deliver one message with readiness checks, provenance and audit
   agentmux control ...         start/stop/restart an instance without an attached terminal
   agentmux view -instance NAME        headless read-only snapshot of an instance's tmux pane
   agentmux send-keys -instance NAME KEY...   headless equivalent of typing into an instance's pane

@@ -32,7 +32,9 @@ type resolvedSession struct {
 const sessionsUsage = `usage:
   agentmux sessions resolve [-json] <instance>@<host>[#<thread>]
   agentmux sessions threads [-json] <instance>@<host>
-  agentmux sessions read [-json] [-limit N] [-cursor C] <instance>@<host>[#<thread>]`
+  agentmux sessions read [-json] [-limit N] [-cursor C] <instance>@<host>[#<thread>]
+  agentmux sessions send -by PRINCIPAL [-via relayed|dispatched|sent] [-from REF] [-correlation ID]
+                         [-wait DUR] [-json] <instance>@<host>[#<thread>] (TEXT | -file PATH|-)`
 
 // runSessionsCmd is `agentmux sessions`: addressing and transcript access for
 // orchestrators. See docs/design/gateway.md (phases 1 and 2). Listing with
@@ -49,6 +51,8 @@ func runSessionsCmd(args []string) {
 		runSessionsThreads(args[1:])
 	case "read":
 		runSessionsRead(args[1:])
+	case "send":
+		runSessionsSend(args[1:])
 	default:
 		fmt.Fprintln(os.Stderr, sessionsUsage)
 		os.Exit(2)
@@ -117,7 +121,7 @@ func runSessionsResolve(args []string) {
 // needs the gateway (phase 4), so a remote address is refused here.
 func localTranscriptSource(addr address.Address) (transcript.Source, transcript.Reader, error) {
 	if addr.Host != address.LocalHostName() {
-		return transcript.Source{}, nil, fmt.Errorf("%s is not this host (%s); reading another host's transcript needs the gateway", addr.Host, address.LocalHostName())
+		return transcript.Source{}, nil, fmt.Errorf("%s is not this host (%s); reaching another host's sessions needs the gateway", addr.Host, address.LocalHostName())
 	}
 	fields, err := session.ReadRegistry(addr.Instance)
 	if err != nil {

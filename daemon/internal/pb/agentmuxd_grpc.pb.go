@@ -29,6 +29,7 @@ const (
 	AgentmuxDaemon_RenameInstance_FullMethodName        = "/agentmuxd.v1.AgentmuxDaemon/RenameInstance"
 	AgentmuxDaemon_ViewPane_FullMethodName              = "/agentmuxd.v1.AgentmuxDaemon/ViewPane"
 	AgentmuxDaemon_SendKeys_FullMethodName              = "/agentmuxd.v1.AgentmuxDaemon/SendKeys"
+	AgentmuxDaemon_SendText_FullMethodName              = "/agentmuxd.v1.AgentmuxDaemon/SendText"
 )
 
 // AgentmuxDaemonClient is the client API for AgentmuxDaemon service.
@@ -73,6 +74,12 @@ type AgentmuxDaemonClient interface {
 	// it carries the same trust assumption: anyone who can call this can type
 	// into the target session.
 	SendKeys(ctx context.Context, in *SendKeysRequest, opts ...grpc.CallOption) (*SendKeysResponse, error)
+	// Pastes text into an instance's pane as one bracketed paste, so
+	// multi-line text arrives as a single message instead of submitting at the
+	// first newline, then optionally presses Enter. The same trust assumption
+	// as SendKeys applies; the readiness checks, provenance and audit for
+	// orchestrator sends live in the caller (`agentmux sessions send`).
+	SendText(ctx context.Context, in *SendTextRequest, opts ...grpc.CallOption) (*SendTextResponse, error)
 }
 
 type agentmuxDaemonClient struct {
@@ -195,6 +202,16 @@ func (c *agentmuxDaemonClient) SendKeys(ctx context.Context, in *SendKeysRequest
 	return out, nil
 }
 
+func (c *agentmuxDaemonClient) SendText(ctx context.Context, in *SendTextRequest, opts ...grpc.CallOption) (*SendTextResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SendTextResponse)
+	err := c.cc.Invoke(ctx, AgentmuxDaemon_SendText_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AgentmuxDaemonServer is the server API for AgentmuxDaemon service.
 // All implementations must embed UnimplementedAgentmuxDaemonServer
 // for forward compatibility.
@@ -237,6 +254,12 @@ type AgentmuxDaemonServer interface {
 	// it carries the same trust assumption: anyone who can call this can type
 	// into the target session.
 	SendKeys(context.Context, *SendKeysRequest) (*SendKeysResponse, error)
+	// Pastes text into an instance's pane as one bracketed paste, so
+	// multi-line text arrives as a single message instead of submitting at the
+	// first newline, then optionally presses Enter. The same trust assumption
+	// as SendKeys applies; the readiness checks, provenance and audit for
+	// orchestrator sends live in the caller (`agentmux sessions send`).
+	SendText(context.Context, *SendTextRequest) (*SendTextResponse, error)
 	mustEmbedUnimplementedAgentmuxDaemonServer()
 }
 
@@ -276,6 +299,9 @@ func (UnimplementedAgentmuxDaemonServer) ViewPane(context.Context, *ViewPaneRequ
 }
 func (UnimplementedAgentmuxDaemonServer) SendKeys(context.Context, *SendKeysRequest) (*SendKeysResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SendKeys not implemented")
+}
+func (UnimplementedAgentmuxDaemonServer) SendText(context.Context, *SendTextRequest) (*SendTextResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SendText not implemented")
 }
 func (UnimplementedAgentmuxDaemonServer) mustEmbedUnimplementedAgentmuxDaemonServer() {}
 func (UnimplementedAgentmuxDaemonServer) testEmbeddedByValue()                        {}
@@ -460,6 +486,24 @@ func _AgentmuxDaemon_SendKeys_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AgentmuxDaemon_SendText_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SendTextRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentmuxDaemonServer).SendText(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentmuxDaemon_SendText_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentmuxDaemonServer).SendText(ctx, req.(*SendTextRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AgentmuxDaemon_ServiceDesc is the grpc.ServiceDesc for AgentmuxDaemon service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -498,6 +542,10 @@ var AgentmuxDaemon_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SendKeys",
 			Handler:    _AgentmuxDaemon_SendKeys_Handler,
+		},
+		{
+			MethodName: "SendText",
+			Handler:    _AgentmuxDaemon_SendText_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

@@ -260,9 +260,55 @@ Each phase is shippable and useful alone. Mergentic phases refer to its
    cache (tens of seconds, capped at 20 exports per call); a per-thread state
    on the `Reader` interface so status (gap 3) needn't special-case amp's
    `AmpThreadState`.
-3. **Safe send.** `agentmux sessions send` with refusal rules, provenance
-   prefix, acknowledgement, audit log; tmux for Claude and opencode,
-   `amp threads continue -ox` for amp. (Mergentic phase 3 dispatch.)
+3. **Safe send.** Done, local host only until phase 4. Contract:
+
+   ```text
+   agentmux sessions send -by PRINCIPAL [-via relayed|dispatched|sent] [-from REF]
+                          [-correlation ID] [-wait DUR] [-confirm DUR] [-json]
+                          <instance>@<host>[#<thread>] (TEXT | -file PATH|-)
+   ```
+
+   Flags go before the address. The message is delivered as
+   `[<via> by <principal>[ from <ref>]]`, a newline, then the text. Tokens
+   are 1 to 64 of letters, digits and `._:@/-`; the verbs are fixed so a
+   message can't claim to be an approval. Text is at most 64 KiB of UTF-8
+   with no control characters other than newline and tab.
+
+   - TUI agents (claude-code, opencode, kilo): the pane must be ready. The
+     text goes in as one bracketed paste through the daemon's new `SendText`
+     RPC (so newlines don't submit early), then Enter. `confirmed` is true
+     when the session is seen starting a turn within `-confirm` (15 s).
+   - amp: with a thread, `amp threads continue <id> --orb-execute`, after
+     checking the thread is on the instance's runner and idle; without one,
+     a new thread on the runner (`--executor runner:<id>`), whose id comes
+     back in `thread`.
+   - `-wait` polls a busy session until it finishes; without it, busy is an
+     immediate refusal.
+   - Every attempt after validation appends to
+     `~/.local/state/agentmux/send-audit.jsonl` (0600): time, principal,
+     verb, source, address, thread, correlation, byte count, SHA-256 of the
+     delivered text, outcome. Never the text. Sending is refused if the log
+     can't be written.
+
+   `-json` prints the same object on success and refusal; exit 0 delivered,
+   1 refused or failed, 2 usage:
+
+   ```json
+   {"ok": true, "address": "a@h", "agent": "opencode", "thread": "",
+    "submitted_at": "2026-10-03T09:50:34Z", "confirmed": true,
+    "bytes": 114, "sha256": "…", "correlation": "PP-4"}
+   {"ok": false, "address": "a@h", "agent": "opencode", "reason": "busy",
+    "retryable": true, "detail": "a is mid-turn", "confirmed": false, …}
+   ```
+
+   Reasons, stable: `invalid`, `not_found`, `not_local`, `dead`, `busy`
+   (retryable), `prompt` (needs a person), `draft` (someone has unsent text
+   in the input box), `unsupported`, `failed` (retryable). Readiness comes
+   from the pane: each TUI's busy footer, Claude's numbered choice menu or
+   "Esc to cancel", opencode/kilo permission dialogs, and Claude's input
+   line. These are heuristics tied to each TUI's current look; tests pin
+   them. In phase 4 the gateway sets the principal from `whois` instead of
+   trusting `-by`. (Mergentic phase 3 dispatch.)
 4. **Gateway service.** Separate listener, tailnet bind, `whois` identity,
    app-capability authorization, rate limit. Exposes list, read, send,
    status.

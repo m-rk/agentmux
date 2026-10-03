@@ -522,3 +522,13 @@ func saveAmpCache(home string, entries map[string]ampCacheEntry) {
 		os.Remove(f.Name())
 	}
 }
+
+// AmpRun runs `amp <args>` the way the reader does: empty stdin, and
+// AMP_API_KEY through the instance's op env-file. `agentmux sessions send`
+// uses it to post to runner threads. It returns stdout.
+func AmpRun(ctx context.Context, src Source, args ...string) ([]byte, error) {
+	return ampExec(ctx, src, args...)
+}
+
+// ValidAmpThreadID reports whether id has the shape of an amp thread id.
+func ValidAmpThreadID(id string) bool { return ampThreadID.MatchString(id) }

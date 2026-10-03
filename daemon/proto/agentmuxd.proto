@@ -52,6 +52,13 @@ service AgentmuxDaemon {
   // it carries the same trust assumption: anyone who can call this can type
   // into the target session.
   rpc SendKeys(SendKeysRequest) returns (SendKeysResponse);
+
+  // Pastes text into an instance's pane as one bracketed paste, so
+  // multi-line text arrives as a single message instead of submitting at the
+  // first newline, then optionally presses Enter. The same trust assumption
+  // as SendKeys applies; the readiness checks, provenance and audit for
+  // orchestrator sends live in the caller (`agentmux sessions send`).
+  rpc SendText(SendTextRequest) returns (SendTextResponse);
 }
 
 enum Status {
@@ -244,6 +251,18 @@ message SendKeysRequest {
 }
 
 message SendKeysResponse {
+  bool ok = 1;
+  string message = 2;
+}
+
+message SendTextRequest {
+  string instance = 1;
+  string text = 2;
+  // Press Enter after pasting.
+  bool submit = 3;
+}
+
+message SendTextResponse {
   bool ok = 1;
   string message = 2;
 }
