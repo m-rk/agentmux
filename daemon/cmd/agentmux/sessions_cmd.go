@@ -12,6 +12,7 @@ import (
 
 	"github.com/m-rk/agentmux/daemon/internal/address"
 	"github.com/m-rk/agentmux/daemon/internal/daemoninstall"
+	"github.com/m-rk/agentmux/daemon/internal/gatewayapi"
 	"github.com/m-rk/agentmux/daemon/internal/hostsconfig"
 	"github.com/m-rk/agentmux/daemon/internal/ops"
 	"github.com/m-rk/agentmux/daemon/internal/transcript"
@@ -28,11 +29,11 @@ type resolvedSession struct {
 
 const sessionsUsage = `usage:
   agentmux sessions resolve [-json] <instance>@<host>[#<thread>]
-  agentmux sessions status [-json] <instance>@<host>[#<thread>]
-  agentmux sessions threads [-json] <instance>@<host>
-  agentmux sessions read [-json] [-limit N] [-cursor C] <instance>@<host>[#<thread>]
+  agentmux sessions status [-json] [-hosts PATH] <instance>@<host>[#<thread>]
+  agentmux sessions threads [-json] [-hosts PATH] <instance>@<host>
+  agentmux sessions read [-json] [-hosts PATH] [-limit N] [-cursor C] <instance>@<host>[#<thread>]
   agentmux sessions send -by PRINCIPAL [-via relayed|dispatched|sent] [-from REF] [-correlation ID]
-                         [-wait DUR] [-json] <instance>@<host>[#<thread>] (TEXT | -file PATH|-)`
+                         [-hosts PATH] [-wait DUR] [-json] <instance>@<host>[#<thread>] (TEXT | -file PATH|-)`
 
 // runSessionsCmd is `agentmux sessions`: addressing and transcript access for
 // orchestrators. See docs/design/gateway.md (phases 1 and 2). Listing with
@@ -119,6 +120,7 @@ func runSessionsResolve(args []string) {
 func runSessionsThreads(args []string) {
 	fs := flag.NewFlagSet("sessions threads", flag.ExitOnError)
 	jsonOut := fs.Bool("json", false, "print machine-readable JSON")
+	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml with the gateway URL of other hosts")
 	timeout := fs.Duration("timeout", 2*time.Minute, "overall timeout")
 	fs.Parse(args)
 	if fs.NArg() != 1 {
@@ -129,9 +131,20 @@ func runSessionsThreads(args []string) {
 	if err != nil {
 		log.Fatalf("sessions threads: %v", err)
 	}
+	route, err := resolveRoute(addr.String(), *hostsPath, address.LocalHostName())
+	if err != nil {
+		log.Fatalf("sessions threads: %v", err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	threads, err := ops.Threads(ctx, addr.String())
+	var threads []transcript.Thread
+	if route.Remote != nil {
+		var resp gatewayapi.ThreadsResponse
+		resp, err = route.Remote.Threads(ctx, gatewayapi.ThreadsRequest{Address: addr.String()})
+		threads = resp.Threads
+	} else {
+		threads, err = ops.Threads(ctx, addr.String())
+	}
 	if err != nil {
 		log.Fatalf("sessions threads: %v", err)
 	}
@@ -153,6 +166,7 @@ func runSessionsRead(args []string) {
 	jsonOut := fs.Bool("json", false, "print machine-readable JSON")
 	limit := fs.Int("limit", transcript.DefaultLimit, fmt.Sprintf("messages per page (max %d)", transcript.MaxLimit))
 	cursor := fs.String("cursor", "", "page cursor from a previous read's \"older\" field")
+	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml with the gateway URL of other hosts")
 	timeout := fs.Duration("timeout", 2*time.Minute, "overall timeout")
 	fs.Parse(args)
 	if fs.NArg() != 1 {
@@ -163,9 +177,18 @@ func runSessionsRead(args []string) {
 	if err != nil {
 		log.Fatalf("sessions read: %v", err)
 	}
+	route, err := resolveRoute(addr.String(), *hostsPath, address.LocalHostName())
+	if err != nil {
+		log.Fatalf("sessions read: %v", err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	page, err := ops.Read(ctx, addr.String(), *cursor, *limit)
+	var page transcript.Page
+	if route.Remote != nil {
+		page, err = route.Remote.Read(ctx, gatewayapi.ReadRequest{Address: addr.String(), Cursor: *cursor, Limit: *limit})
+	} else {
+		page, err = ops.Read(ctx, addr.String(), *cursor, *limit)
+	}
 	if err != nil {
 		log.Fatalf("sessions read: %v", err)
 	}
@@ -208,15 +231,25 @@ func runSessionsStatus(args []string) {
 	fs := flag.NewFlagSet("sessions status", flag.ExitOnError)
 	jsonOut := fs.Bool("json", false, "print machine-readable JSON")
 	socketPath := fs.String("socket", daemoninstall.SocketPath(), "Unix socket of the local agentmuxd")
+	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml with the gateway URL of other hosts")
 	timeout := fs.Duration("timeout", 2*time.Minute, "overall timeout")
 	fs.Parse(args)
 	if fs.NArg() != 1 {
 		fmt.Fprintln(os.Stderr, sessionsUsage)
 		os.Exit(2)
 	}
+	route, err := resolveRoute(fs.Arg(0), *hostsPath, address.LocalHostName())
+	if err != nil {
+		log.Fatalf("sessions status: %v", err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	st, err := ops.Env{SocketPath: *socketPath}.Status(ctx, fs.Arg(0))
+	var st ops.StatusResult
+	if route.Remote != nil {
+		st, err = route.Remote.Status(ctx, gatewayapi.StatusRequest{Address: fs.Arg(0)})
+	} else {
+		st, err = ops.Env{SocketPath: *socketPath}.Status(ctx, fs.Arg(0))
+	}
 	if err != nil {
 		log.Fatalf("sessions status: %v", err)
 	}

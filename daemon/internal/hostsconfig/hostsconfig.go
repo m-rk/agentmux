@@ -6,6 +6,7 @@ package hostsconfig
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -16,9 +17,15 @@ import (
 // Host is one entry in hosts.yaml. Address is a dial target:
 //   - "unix:///run/agentmux/agentmuxd.sock" for a local daemon
 //   - "tcp://100.x.y.z:4287" for a daemon reachable over Tailscale
+//
+// Gateway, if set, is the base URL of that host's gateway, e.g.
+// "http://100.x.y.z:4288". `agentmux sessions` uses it to reach the host's
+// sessions; plain HTTP is fine on a tailnet, which encrypts the link and
+// supplies the caller's identity.
 type Host struct {
 	Name    string `yaml:"name"`
 	Address string `yaml:"address"`
+	Gateway string `yaml:"gateway"`
 }
 
 type Config struct {
@@ -53,8 +60,29 @@ func Load(path string) (*Config, error) {
 		if h.Address == "" {
 			return nil, fmt.Errorf("%s: host %q is missing an address", path, h.Name)
 		}
+		if h.Gateway != "" {
+			if err := CheckGatewayURL(h.Gateway); err != nil {
+				return nil, fmt.Errorf("%s: host %q: %w", path, h.Name, err)
+			}
+		}
 	}
 	return &cfg, nil
+}
+
+// CheckGatewayURL requires an http or https URL with a host and nothing else
+// (no path, query, fragment or userinfo).
+func CheckGatewayURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("gateway %q: %v", raw, err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Hostname() == "" {
+		return fmt.Errorf("gateway %q: want http://host:port or https://host:port", raw)
+	}
+	if u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
+		return fmt.Errorf("gateway %q: must be a bare base URL with no path, query or credentials", raw)
+	}
+	return nil
 }
 
 // CheckUnique fails when two hosts share a name once canonicalized for
