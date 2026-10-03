@@ -49,6 +49,8 @@ func main() {
 		runThreadwatchCmd(args[1:])
 	case "paseo":
 		runPaseoCmd(args[1:])
+	case "gateway":
+		runGatewayCmd(args[1:])
 	case "-h", "--help", "help":
 		printUsage()
 	default:
@@ -105,5 +107,7 @@ Usage:
   agentmux threadwatch review install [-at 07:00] (Linux, root) install the nightly review timer
   agentmux paseo update [-check]                  update the Paseo daemon to the latest stable release, verify, roll back on failure
   agentmux paseo update install [-at 04:00]       (Linux root / macOS user) schedule that daily
+  agentmux gateway run -capability NAME [-listen ADDR]   serve this host's sessions to other tailnet hosts (see docs/gateway.md)
+  agentmux gateway install -capability NAME        (Linux root / macOS user) keep that running as a service
   agentmux help                show this message`)
 }
