@@ -309,9 +309,17 @@ Each phase is shippable and useful alone. Mergentic phases refer to its
    line. These are heuristics tied to each TUI's current look; tests pin
    them. In phase 4 the gateway sets the principal from `whois` instead of
    trusting `-by`. (Mergentic phase 3 dispatch.)
-4. **Gateway service.** Separate listener, tailnet bind, `whois` identity,
-   app-capability authorization, rate limit. Exposes list, read, send,
-   status. Operator guide: [../gateway.md](../gateway.md).
+4. **Gateway service.** Done. `agentmux gateway run|install` serves list,
+   status, threads, read and send as HTTP+JSON on the host's tailnet address
+   (`internal/gateway`, contract in `internal/gatewayapi`). The caller is
+   identified with `tailscale whois`; access comes only from the grant's app
+   capability (fail closed); send takes its principal from that identity;
+   sends and other ops are rate limited per principal. Clients reach it
+   through a `gateway:` URL per host in `hosts.yaml`, and
+   `agentmux sessions status|threads|read|send` route other hosts' addresses
+   there (`internal/gatewayclient`). Shared operations live in
+   `internal/ops`. Not yet exercised with a real tailnet grant, or as an
+   installed service. Operator guide: [../gateway.md](../gateway.md).
 5. **Events.** Filtered, resumable thread-watch event stream through the
    gateway. (Mergentic phase 4 queue service.)
 6. **MCP server.** `agentmux mcp` across `hosts.yaml`. (Mergentic phase 5.)
