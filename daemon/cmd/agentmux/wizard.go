@@ -49,7 +49,7 @@ func runWizard(args []string) {
 	ampDiscoverDirs := fs.Bool("amp-discover-dirs", false, "amp only; pass --discover-dirs to serve git checkouts under the workdir; -y only")
 	ampUpdate := fs.String("amp-update", "", "amp only: \"\" (default/on) or \"off\"; off skips the nightly update unit for self-updating runners; -y only")
 	var allowFiles stringList
-	fs.Var(&allowFiles, "allow-file", "absolute path of one file outside the workdir the agent may read and edit, exactly that file (repeatable; claude-code only so far); -y only")
+	fs.Var(&allowFiles, "allow-file", "absolute path of one file outside the workdir the agent may read and edit, exactly that file (repeatable; claude-code, opencode and kilo; see docs/allow-file.md); -y only")
 	force := fs.Bool("force", false, "allow re-provisioning the instance this process is currently running inside of; -y only")
 	fs.Parse(args)
 
