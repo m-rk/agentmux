@@ -311,7 +311,7 @@ Each phase is shippable and useful alone. Mergentic phases refer to its
    trusting `-by`. (Mergentic phase 3 dispatch.)
 4. **Gateway service.** Separate listener, tailnet bind, `whois` identity,
    app-capability authorization, rate limit. Exposes list, read, send,
-   status.
+   status. Operator guide: [../gateway.md](../gateway.md).
 5. **Events.** Filtered, resumable thread-watch event stream through the
    gateway. (Mergentic phase 4 queue service.)
 6. **MCP server.** `agentmux mcp` across `hosts.yaml`. (Mergentic phase 5.)
