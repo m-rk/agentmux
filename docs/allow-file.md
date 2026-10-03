@@ -80,10 +80,41 @@ Limits of that fallback:
 - A directory with more than 5000 entries can't be fenced, and its grant is
   dropped with a warning.
 
-### opencode, kilo, amp, zero
+### opencode and kilo
 
-Stored in the registry, not applied yet. `agentmux new -y` prints a warning in
-the result message for these agents instead of failing.
+Verified with opencode 1.18 and kilo 7.4 (`run`). Both check reads outside the
+workdir with an `external_directory` permission, which only ever matches a
+directory (`<dir>/*`), so a single file can't be allowed there. The generated
+config therefore:
+
+- allows `external_directory` for the note's directory;
+- sets the `read` and `edit` rules (matched against the path relative to the
+  workdir) to deny that directory and then allow the note itself; the last
+  matching rule wins, so the order matters.
+
+The note is readable and editable; siblings are denied to the file tools. It
+is passed as `OPENCODE_CONFIG_CONTENT` / `KILO_CONFIG_CONTENT`, which merges
+over the project config agentmux writes, so nothing lands in the worktree.
+It reaches the agent through the instance's tmux server environment, so a
+changed grant applies after the tmux server restarts.
+
+Limits:
+
+- Once the directory passes `external_directory`, the agent's shell commands
+  (`cat`, `ls`) can reach siblings. Nothing in their config prevents that.
+- `*` and `?` can't be escaped in their rules, so paths containing them (or
+  `{env:`/`{file:` substitutions) are refused rather than granted too widely.
+
+### amp
+
+amp doesn't restrict file access outside its working directory at all
+(verified with `amp -x`: a sibling outside the workdir was read and edited
+with no config), so it needs no grant and `-allow-file` cannot confine it.
+`agentmux new -y` says so in its result message.
+
+### zero
+
+Stored in the registry, not applied. `agentmux new -y` prints a warning.
 
 ## Code
 
@@ -92,3 +123,4 @@ the result message for these agents instead of failing.
   grant; new agents add a case there plus a renderer.
 - `daemon/internal/session/claudecode.go`: `prepareClaudeAllowSettings` and
   `claudeLaunchArgs`.
+- `daemon/internal/session/agentmux.go`: `allowFilesEnv` for opencode and kilo.

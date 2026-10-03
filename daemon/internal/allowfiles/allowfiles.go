@@ -26,7 +26,7 @@ const RegistryKey = "AGENTMUX_ALLOW_FILES"
 // provisioning warns for every agent that returns false.
 func Supported(agent string) bool {
 	switch agent {
-	case "claude-code":
+	case "claude-code", "opencode", "kilo":
 		return true
 	}
 	return false

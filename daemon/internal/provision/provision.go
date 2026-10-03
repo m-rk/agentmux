@@ -88,7 +88,11 @@ func Create(opts Options) (string, error) {
 		return "", err
 	}
 	if len(opts.AllowFiles) > 0 && !allowfiles.Supported(opts.Agent) {
-		msg += fmt.Sprintf("\nwarning: -allow-file is stored but not applied yet for the %q agent", opts.Agent)
+		if opts.Agent == "amp" {
+			msg += "\nnote: amp doesn't restrict file access outside its workdir, so -allow-file is not needed and cannot confine it"
+		} else {
+			msg += fmt.Sprintf("\nwarning: -allow-file is stored but not applied for the %q agent", opts.Agent)
+		}
 	}
 	return msg, nil
 }
