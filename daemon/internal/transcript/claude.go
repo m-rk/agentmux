@@ -48,10 +48,13 @@ type claudeLine struct {
 	UUID        string `json:"uuid"`
 	IsSidechain bool   `json:"isSidechain"`
 	IsMeta      bool   `json:"isMeta"`
-	Summary     string `json:"summary"`
-	CustomTitle string `json:"customTitle"`
-	AITitle     string `json:"aiTitle"`
-	Message     struct {
+	// IsCompactSummary marks the synthetic user message holding the summary
+	// Claude Code writes when it compacts a conversation.
+	IsCompactSummary bool   `json:"isCompactSummary"`
+	Summary          string `json:"summary"`
+	CustomTitle      string `json:"customTitle"`
+	AITitle          string `json:"aiTitle"`
+	Message          struct {
 		ID      string          `json:"id"`
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
@@ -178,8 +181,8 @@ func claudeTitle(path string) string {
 			ai = l.AITitle
 		case l.Type == "summary" && l.Summary != "":
 			summary = l.Summary
-		case l.Type == "user" && first == "" && !l.IsMeta && !l.IsSidechain:
-			if text, _, _ := claudeUserParts(l.Message.Content); text != "" {
+		case l.Type == "user" && first == "" && !l.IsMeta && !l.IsSidechain && !l.IsCompactSummary:
+			if text, _, _ := claudeUserParts(l.Message.Content); text != "" && !claudeCommandRecord(text) && !claudeHarnessNote(text) {
 				first = text
 			}
 		}
@@ -272,8 +275,12 @@ func (claudeReader) Read(ctx context.Context, src Source, thread, cursor string,
 				}
 				all = append(all, Message{ID: l.UUID, Thread: thread, Role: RoleTool, Time: ts, Tools: tools, Untrusted: true})
 			}
-			if text != "" {
-				all = append(all, Message{ID: l.UUID, Thread: thread, Role: RoleUser, Time: ts, Text: CleanText(text), Untrusted: true})
+			if text != "" && !claudeCommandRecord(text) {
+				role := RoleUser
+				if l.IsCompactSummary || claudeHarnessNote(text) {
+					role = RoleSystem
+				}
+				all = append(all, Message{ID: l.UUID, Thread: thread, Role: role, Time: ts, Text: CleanText(text), Untrusted: true})
 			}
 		case "system":
 			if text := claudeContentString(l.Message.Content); text != "" {
@@ -378,4 +385,22 @@ func toolInputSummary(raw json.RawMessage) string {
 		}
 	}
 	return ""
+}
+
+// claudeCommandRecord reports a user-role line that records a local slash
+// command (its name, its output, or the caveat Claude Code writes around
+// them) rather than anything a person or agent said.
+func claudeCommandRecord(text string) bool {
+	for _, p := range []string{"<command-name>", "<command-message>", "<local-command-"} {
+		if strings.HasPrefix(text, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// claudeHarnessNote reports a user-role line the harness injected, such as a
+// background task notification; it is kept, as a system message.
+func claudeHarnessNote(text string) bool {
+	return strings.HasPrefix(text, "<task-notification>")
 }
