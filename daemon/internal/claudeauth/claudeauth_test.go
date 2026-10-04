@@ -24,13 +24,16 @@ func installFakeClaude(t *testing.T, body string, exitCode int) {
 	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Isolate HOME so runas.CurrentUserCommand's fixed-up PATH (which
-	// prepends $HOME/.local/bin and friends) can't resolve a real `claude`
-	// ahead of the fake on PATH — confirmed live: without this the test
-	// executed the operator's real logged-in claude instead of the fake.
+	// claudeBin points at the fake by absolute path, so the fixed-up PATH
+	// (which puts $HOME/.local/bin, /opt/homebrew/bin and /usr/local/bin
+	// first) can't resolve a real `claude` instead. HOME is isolated too, so
+	// nothing else reads the operator's real claude state.
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv(fakeClaudeBodyEnv, body)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	prev := claudeBin
+	claudeBin = filepath.Join(dir, "claude")
+	t.Cleanup(func() { claudeBin = prev })
 }
 
 func TestLoginMethodArgs(t *testing.T) {
