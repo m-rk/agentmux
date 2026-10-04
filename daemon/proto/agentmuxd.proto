@@ -243,6 +243,9 @@ message ViewPaneRequest {
   // (the common case) returns just the currently visible pane, matching
   // what capture-pane -p returns with no -S.
   int32 scrollback_lines = 2;
+  // Include SGR escape sequences (capture-pane -e), so callers can tell
+  // dim text such as a prompt suggestion from typed text.
+  bool escapes = 3;
 }
 
 message ViewPaneResponse {

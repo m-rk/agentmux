@@ -250,6 +250,9 @@ func (s *Server) ViewPane(ctx context.Context, req *pb.ViewPaneRequest) (*pb.Vie
 		return nil, err
 	}
 	args := []string{"-S", socket, "capture-pane", "-p", "-t", session}
+	if req.Escapes {
+		args = append(args, "-e")
+	}
 	if req.ScrollbackLines > 0 {
 		args = append(args, "-S", fmt.Sprintf("-%d", req.ScrollbackLines))
 	}

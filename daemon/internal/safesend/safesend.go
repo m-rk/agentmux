@@ -12,8 +12,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Reason is a stable, machine-readable refusal code. Callers branch on it,
@@ -88,7 +90,13 @@ func Classify(agent, pane string) State {
 	if !ok {
 		return StateUnknown
 	}
-	lines := strings.Split(strings.TrimRight(pane, "\n"), "\n")
+	// A capture taken with escapes keeps styling only for the input line;
+	// everything else is matched on plain text.
+	styled := strings.Split(strings.TrimRight(pane, "\n"), "\n")
+	lines := make([]string, len(styled))
+	for i, l := range styled {
+		lines[i] = ansiSeq.ReplaceAllString(l, "")
+	}
 	footer := strings.ToLower(lastLines(lines, footerLines))
 	for _, m := range markers {
 		if strings.Contains(footer, m) {
@@ -113,12 +121,96 @@ func Classify(agent, pane string) State {
 	if agent == "claude-code" {
 		if m := claudeInput.FindAllStringSubmatch(bottom, -1); len(m) > 0 {
 			draft := strings.TrimSpace(m[len(m)-1][1])
-			if draft != "" && !strings.HasPrefix(draft, `Try "`) {
+			if draft != "" && !strings.HasPrefix(draft, `Try "`) && !suggestionOnly(styled, lines) {
 				return StateDraft
 			}
 		}
 	}
 	return StateReady
+}
+
+var ansiSeq = regexp.MustCompile(`\x1b\[[0-9;:?]*[ -/]*[@-~]`)
+
+// suggestionOnly reports whether the last input line holds nothing but
+// Claude Code's prompt suggestion: greyed ghost text, with the cursor
+// drawn in reverse video over its first character. Typed text is neither
+// dim nor reversed. Without styling (a plain capture) it is false.
+func suggestionOnly(styled, plain []string) bool {
+	idx := -1
+	for i := len(plain) - 1; i >= 0 && i >= len(plain)-promptLines; i-- {
+		if claudeInput.MatchString(plain[i]) {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 || !strings.Contains(styled[idx], "\x1b[") {
+		return false
+	}
+	line := styled[idx]
+	// Skip the prompt glyph itself, which is styled differently.
+	at := strings.Index(line, "❯")
+	if at < 0 {
+		return false
+	}
+	line = line[at+len("❯"):]
+	var dim, reverse bool
+	seen := false
+	for i := 0; i < len(line); {
+		if loc := ansiSeq.FindStringIndex(line[i:]); loc != nil && loc[0] == 0 {
+			seq := line[i : i+loc[1]]
+			i += loc[1]
+			if strings.HasSuffix(seq, "m") {
+				dim, reverse = applySGR(seq[2:len(seq)-1], dim, reverse)
+			}
+			continue
+		}
+		r, n := utf8.DecodeRuneInString(line[i:])
+		i += n
+		if r == ' ' || r == '\u00a0' || reverse {
+			continue
+		}
+		if !dim {
+			return false
+		}
+		seen = true
+	}
+	return seen
+}
+
+// applySGR folds one SGR parameter list into the dim and reverse state.
+// Grey foregrounds count as dim: 90, 38;5;8 and the 38;5;232-255 ramp.
+func applySGR(params string, dim, reverse bool) (bool, bool) {
+	if params == "" {
+		return false, false
+	}
+	p := strings.Split(params, ";")
+	for i := 0; i < len(p); i++ {
+		switch p[i] {
+		case "0":
+			dim, reverse = false, false
+		case "2", "90":
+			dim = true
+		case "22", "39":
+			dim = false
+		case "7":
+			reverse = true
+		case "27":
+			reverse = false
+		case "38":
+			if i+2 < len(p) && p[i+1] == "5" {
+				n, _ := strconv.Atoi(p[i+2])
+				dim = n == 8 || n >= 232
+				i += 2
+			} else if i+4 < len(p) && p[i+1] == "2" {
+				r, _ := strconv.Atoi(p[i+2])
+				g, _ := strconv.Atoi(p[i+3])
+				b, _ := strconv.Atoi(p[i+4])
+				dim = r == g && g == b && r < 200
+				i += 4
+			}
+		}
+	}
+	return dim, reverse
 }
 
 func lastLines(lines []string, n int) string {

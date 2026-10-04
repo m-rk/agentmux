@@ -175,7 +175,7 @@ func (e Env) sendTmux(ctx context.Context, instance, agent, message string, wait
 	deadline := time.Now().Add(wait)
 ready:
 	for {
-		pane, err := c.ViewPane(ctx, &pb.ViewPaneRequest{Instance: instance})
+		pane, err := c.ViewPane(ctx, &pb.ViewPaneRequest{Instance: instance, Escapes: true})
 		if err != nil {
 			return err
 		}
@@ -210,7 +210,7 @@ ready:
 	until := time.Now().Add(confirm)
 	for time.Now().Before(until) {
 		time.Sleep(500 * time.Millisecond)
-		pane, err := c.ViewPane(ctx, &pb.ViewPaneRequest{Instance: instance})
+		pane, err := c.ViewPane(ctx, &pb.ViewPaneRequest{Instance: instance, Escapes: true})
 		if err != nil {
 			break
 		}

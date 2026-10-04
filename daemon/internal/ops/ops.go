@@ -179,7 +179,7 @@ func (e Env) Status(ctx context.Context, addrText string) (StatusResult, error) 
 			}
 			return res, nil
 		}
-		pane, err := c.ViewPane(ctx, &pb.ViewPaneRequest{Instance: inst.Name})
+		pane, err := c.ViewPane(ctx, &pb.ViewPaneRequest{Instance: inst.Name, Escapes: true})
 		if err != nil {
 			return res, err
 		}

@@ -57,6 +57,22 @@ const claudeQuestionReply = `  TASK-4 is ready to launch. Do you want to:
   ⏵⏵ auto mode on (shift+tab to cycle) · PR #1
 `
 
+// capture-pane -e of a finished turn showing a greyed prompt suggestion,
+// cursor reversed over its first character.
+const claudeSuggestion = "⏺ Done. The tests pass.\n" +
+	"\x1b[2m────────────────────────────────────────\x1b[0m\n" +
+	"❯ \x1b[7mc\x1b[0m\x1b[2mheck the ask and run the smoke test\x1b[0m\n" +
+	"\x1b[2m────────────────────────────────────────\x1b[0m\n" +
+	"  ⏵⏵ auto mode on (shift+tab to cycle)\n"
+
+// The same pane with the suggestion in grey rather than dim.
+var claudeSuggestionGrey = strings.Replace(claudeSuggestion, "\x1b[2mheck", "\x1b[90mheck", 1)
+
+// A real draft with escapes: normal-weight text, cursor after it.
+const claudeDraftStyled = "────────────────────────────────────────\n" +
+	"❯ make a throwaway vault\x1b[7m \x1b[0m\n" +
+	"────────────────────────────────────────\n"
+
 const opencodeBusy = `  ┃  Build · glm custom
   ╹▀▀▀▀▀▀▀▀▀▀
    ⬝■■■■■■⬝  esc interrupt   tab agents  ctrl+p commands
@@ -80,6 +96,11 @@ func TestClassify(t *testing.T) {
 		{"claude placeholder", "claude-code", claudePlaceholder, StateReady},
 		{"claude prose question", "claude-code", claudeQuestionReply, StateDraft},
 		{"claude prose question, no draft", "claude-code", strings.Replace(claudeQuestionReply, "❯ make a throwaway vault and try it", "❯ ", 1), StateReady},
+		{"claude suggestion", "claude-code", claudeSuggestion, StateReady},
+		{"claude grey suggestion", "claude-code", claudeSuggestionGrey, StateReady},
+		{"claude suggestion without escapes", "claude-code", ansiSeq.ReplaceAllString(claudeSuggestion, ""), StateDraft},
+		{"claude styled draft", "claude-code", claudeDraftStyled, StateDraft},
+		{"claude draft after suggestion text", "claude-code", strings.Replace(claudeSuggestion, "\x1b[0m\x1b[2mheck", "\x1b[0mheck", 1), StateDraft},
 		{"opencode busy", "opencode", opencodeBusy, StateBusy},
 		{"opencode idle", "opencode", opencodeIdle, StateReady},
 		{"kilo busy", "kilo", opencodeBusy, StateBusy},

@@ -1435,8 +1435,11 @@ type ViewPaneRequest struct {
 	// (the common case) returns just the currently visible pane, matching
 	// what capture-pane -p returns with no -S.
 	ScrollbackLines int32 `protobuf:"varint,2,opt,name=scrollback_lines,json=scrollbackLines,proto3" json:"scrollback_lines,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Include SGR escape sequences (capture-pane -e), so callers can tell
+	// dim text such as a prompt suggestion from typed text.
+	Escapes       bool `protobuf:"varint,3,opt,name=escapes,proto3" json:"escapes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ViewPaneRequest) Reset() {
@@ -1481,6 +1484,13 @@ func (x *ViewPaneRequest) GetScrollbackLines() int32 {
 		return x.ScrollbackLines
 	}
 	return 0
+}
+
+func (x *ViewPaneRequest) GetEscapes() bool {
+	if x != nil {
+		return x.Escapes
+	}
+	return false
 }
 
 type ViewPaneResponse struct {
@@ -1831,10 +1841,11 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\fdisplay_name\x18\x03 \x01(\tR\vdisplayName\"B\n" +
 	"\x16RenameInstanceResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"X\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"r\n" +
 	"\x0fViewPaneRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12)\n" +
-	"\x10scrollback_lines\x18\x02 \x01(\x05R\x0fscrollbackLines\",\n" +
+	"\x10scrollback_lines\x18\x02 \x01(\x05R\x0fscrollbackLines\x12\x18\n" +
+	"\aescapes\x18\x03 \x01(\bR\aescapes\",\n" +
 	"\x10ViewPaneResponse\x12\x18\n" +
 	"\acontent\x18\x01 \x01(\tR\acontent\"A\n" +
 	"\x0fSendKeysRequest\x12\x1a\n" +
