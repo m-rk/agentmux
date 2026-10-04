@@ -45,6 +45,8 @@ func main() {
 		runNotifyCmd(args[1:])
 	case "collab":
 		runCollabCmd(args[1:])
+	case "asks":
+		runAsksCmd(args[1:])
 	case "threadwatch":
 		runThreadwatchCmd(args[1:])
 	case "paseo":
@@ -101,6 +103,10 @@ Usage:
   agentmux collab read -instance NAME [-thread ID]
   agentmux collab post -instance NAME -topic TOPIC -summary SENTENCE [-shared] [-details FILE.md]
   agentmux collab post -instance NAME -thread ID -summary TEXT [-details FILE.md]
+  agentmux asks post -title T -body-file F [-tag NAME ...] [-json]   post an ask that mentions the configured user
+  agentmux asks reply -thread ID -body-file F [-mention]
+  agentmux asks read -thread ID [-after MESSAGE_ID] [-json]
+  agentmux asks close -thread ID [-tag NAME]
   agentmux threadwatch serve [-dry-run] [-once]   follow agent sessions and alert on Discord (see -h)
   agentmux threadwatch status [-since 24h] [-json]   show open intervene signals
   agentmux threadwatch install -run-user USER     (Linux, root) install agentmux-threadwatch.service

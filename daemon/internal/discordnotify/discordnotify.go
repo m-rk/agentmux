@@ -32,6 +32,9 @@ type CollaborationConfig struct {
 	AgentAvatarURLs   map[string]string `yaml:"agent_avatar_urls,omitempty"`
 	ProjectKeys       map[string]string `yaml:"project_keys,omitempty"`
 	SessionAvatarURLs map[string]string `yaml:"session_avatar_urls,omitempty"`
+	// AskMentionUserID is the one Discord user that `agentmux asks` may
+	// @-mention, and whose replies are flagged when reading an ask.
+	AskMentionUserID string `yaml:"ask_mention_user_id,omitempty"`
 }
 
 func (c CollaborationConfig) Configured() bool {
