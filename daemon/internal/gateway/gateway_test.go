@@ -145,7 +145,7 @@ func TestParseWhois(t *testing.T) {
 	    {"ops":["send"],"sessions":[]},
 	    {"ops":["send"],"sessions":["[bad"]},
 	    "junk",
-	    {"ops":["send"],"sessions":["mergentic*@*"]}]}}`
+	    {"ops":["send"],"sessions":["web*@*"]}]}}`
 	id, err := ParseWhois([]byte(good), cap)
 	if err != nil {
 		t.Fatal(err)
@@ -154,7 +154,7 @@ func TestParseWhois(t *testing.T) {
 		t.Errorf("identity = %+v", id)
 	}
 	// Node.CapMap is the peer's own; only the top-level CapMap counts.
-	if len(id.Grants) != 2 || id.Grants[1].Sessions[0] != "mergentic*@*" {
+	if len(id.Grants) != 2 || id.Grants[1].Sessions[0] != "web*@*" {
 		t.Errorf("grants = %+v", id.Grants)
 	}
 
@@ -188,7 +188,7 @@ func TestSanitizePrincipal(t *testing.T) {
 func TestAuthzGlobs(t *testing.T) {
 	h := newHarness(t,
 		gatewayapi.Grant{Ops: []string{"read", "status", "threads", "list"}, Sessions: []string{"*@hosta"}},
-		gatewayapi.Grant{Ops: []string{"send"}, Sessions: []string{"mergentic*@*"}},
+		gatewayapi.Grant{Ops: []string{"send"}, Sessions: []string{"web*@*"}},
 	)
 	cases := []struct {
 		op, addr string
@@ -217,7 +217,7 @@ func TestAuthzGlobs(t *testing.T) {
 		json.Unmarshal(rec.Body.Bytes(), &res)
 		return res
 	}
-	if res := send("mergentic-opencode@hosta"); !res.OK {
+	if res := send("web-opencode@hosta"); !res.OK {
 		t.Errorf("granted send: %+v", res)
 	}
 	res := send("other@hosta")
@@ -228,7 +228,7 @@ func TestAuthzGlobs(t *testing.T) {
 		t.Errorf("backend saw %d sends, want 1", len(h.backend.sent))
 	}
 	// A grant for read doesn't allow send, and vice versa.
-	if rec := h.post("status", `{"address":"mergentic-opencode@hostb"}`); rec.Code != 403 {
+	if rec := h.post("status", `{"address":"web-opencode@hostb"}`); rec.Code != 403 {
 		t.Errorf("status via send grant: %d", rec.Code)
 	}
 }

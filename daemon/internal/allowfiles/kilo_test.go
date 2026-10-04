@@ -3,7 +3,7 @@ package allowfiles
 import "testing"
 
 func TestKiloAllowConfigMatchesOpencode(t *testing.T) {
-	paths := []string{"/vault/t/PP-4 [a] (b).md"}
+	paths := []string{"/vault/t/TASK-4 [a] (b).md"}
 	k, err := KiloAllowConfig("/wt/p", paths)
 	if err != nil {
 		t.Fatal(err)

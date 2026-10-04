@@ -36,7 +36,7 @@ func TestValidate(t *testing.T) {
 	if err := os.MkdirAll(workdir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	note := write(t, filepath.Join(root, "vault", "PP-4 Some title.md"))
+	note := write(t, filepath.Join(root, "vault", "TASK-4 Some title.md"))
 	inWork := write(t, filepath.Join(workdir, "a.md"))
 	link := filepath.Join(root, "link.md")
 	if err := os.Symlink(note, link); err != nil {
@@ -67,7 +67,7 @@ func TestValidate(t *testing.T) {
 		{"special chars ok (escaped later)", []string{special}, []string{special}, ""},
 		{"none", nil, nil, ""},
 		{"relative", []string{"vault/x.md"}, nil, "absolute"},
-		{"not clean", []string{root + "/vault/../vault/PP-4 Some title.md"}, nil, "clean"},
+		{"not clean", []string{root + "/vault/../vault/TASK-4 Some title.md"}, nil, "clean"},
 		{"trailing slash", []string{note + "/"}, nil, "clean"},
 		{"missing", []string{filepath.Join(root, "vault", "gone.md")}, nil, "no such file"},
 		{"directory", []string{filepath.Join(root, "vault")}, nil, "not a regular file"},

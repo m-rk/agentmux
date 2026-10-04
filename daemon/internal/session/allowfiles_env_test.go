@@ -13,7 +13,7 @@ import (
 func TestAllowFilesEnv(t *testing.T) {
 	root := t.TempDir()
 	workdir := filepath.Join(root, "work")
-	note := filepath.Join(root, "vault", "PP-1 note.md")
+	note := filepath.Join(root, "vault", "TASK-1 note.md")
 	for _, d := range []string{workdir, filepath.Dir(note)} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
@@ -27,7 +27,7 @@ func TestAllowFilesEnv(t *testing.T) {
 
 	for agent, key := range map[string]string{"opencode": allowfiles.OpencodeConfigEnv, "kilo": allowfiles.KiloConfigEnv} {
 		got := allowFilesEnv("t", agent, workdir, fields)
-		if !strings.HasPrefix(got, key+"=") || !strings.Contains(got, "PP-1 note.md") {
+		if !strings.HasPrefix(got, key+"=") || !strings.Contains(got, "TASK-1 note.md") {
 			t.Errorf("%s: got %q", agent, got)
 		}
 	}

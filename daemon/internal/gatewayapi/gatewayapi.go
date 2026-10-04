@@ -42,7 +42,7 @@ func Path(op string) string { return "/v1/" + op }
 //
 //	"<domain>/cap/agentmux-gateway": [
 //	  {"ops": ["list", "read", "status", "threads"], "sessions": ["*@*"]},
-//	  {"ops": ["send"], "sessions": ["mergentic*@*"]}
+//	  {"ops": ["send"], "sessions": ["web*@*"]}
 //	]
 //
 // A request is allowed when any Grant lists its op and has a session glob

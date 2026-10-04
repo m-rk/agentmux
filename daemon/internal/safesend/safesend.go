@@ -138,7 +138,7 @@ func lastLines(lines []string, n int) string {
 // tell it from the person typing. Rendered as "[<via> by <by> from <from>]".
 type Provenance struct {
 	Via  string // one of Vias
-	By   string // the sending principal, e.g. orchestrator or mergentic
+	By   string // the sending principal, e.g. orchestrator
 	From string // optional reference: a task id, a person, a thread
 }
 

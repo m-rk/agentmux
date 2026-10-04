@@ -1,14 +1,11 @@
 # Gateway for orchestrators
 
-Status: proposal. Nothing here is implemented.
+Status: phases 1 to 4 are implemented; 5 to 7 are proposals.
 
 An orchestrator agent (a person's delegate, running on one host) needs to see
 and talk to agent sessions on every host. This page works out what agentmux
-must provide. The consumer is the task-orchestration design in the mergentic
-repo (`docs/task-orchestration.md`, "Orchestrator" and phases 3 and 5). That
-design assigns the per-host gateway to agentmux and keeps mergentic
-independent, so agentmux defines the contract and mergentic integrates
-against it.
+must provide. The orchestrator itself lives outside agentmux: agentmux
+defines the contract and orchestrators integrate against it.
 
 ## What the orchestrator needs
 
@@ -137,7 +134,7 @@ The gateway needs, for sends:
     "app": {
       "<owned-domain>/cap/agentmux-gateway": [
         {"ops": ["list", "read", "status", "events"], "sessions": ["*@*"]},
-        {"ops": ["send"], "sessions": ["mergentic*@*"]}
+        {"ops": ["send"], "sessions": ["web*@*"]}
       ]
     }
   }]
@@ -174,8 +171,7 @@ unique once canonicalized; `agentmux` refuses a `hosts.yaml` where two
 entries collide. Needed: a resolver (`agentmux resolve <address>`, and the same in
 the gateway) returning host, instance, agent, workdir, and current thread; and
 a check that fails loudly when two hosts claim one name. Rename already exists
-(`RenameInstance`). The mergentic open question "where does the registry live"
-is answered here: each host is authoritative for its own instance names, and
+(`RenameInstance`). Where the registry lives: each host is authoritative for its own instance names, and
 the fleet view is `hosts.yaml` plus a fan-out query. No central store.
 
 paseo names its own agents separately. It already provides list, read, send
@@ -241,15 +237,13 @@ what to do with it.
 
 ## Proposed phases
 
-Each phase is shippable and useful alone. Mergentic phases refer to its
-`docs/roadmap.md`.
+Each phase is shippable and useful alone.
 
 1. **Addressing.** Done: `internal/address` parses and prints addresses;
    `agentmux list -json` includes each session's `address`;
    `agentmux sessions resolve [-json] <address>` returns the session it names;
    `hosts.yaml` entries that collide are rejected. Richer status lands in the
-   gateway phases. (Needed by mergentic phase 3 to launch or message a named
-   agent.)
+   gateway phases.
 2. **Transcript reader.** Done: `internal/transcript` reads Claude Code
    JSONL, opencode SQLite (through the `sqlite3` CLI) and amp threads
    (through `amp threads export`, with a thread-to-runner cache at
@@ -296,7 +290,7 @@ Each phase is shippable and useful alone. Mergentic phases refer to its
    ```json
    {"ok": true, "address": "a@h", "agent": "opencode", "thread": "",
     "submitted_at": "2026-10-03T09:50:34Z", "confirmed": true,
-    "bytes": 114, "sha256": "…", "correlation": "PP-4"}
+    "bytes": 114, "sha256": "…", "correlation": "TASK-4"}
    {"ok": false, "address": "a@h", "agent": "opencode", "reason": "busy",
     "retryable": true, "detail": "a is mid-turn", "confirmed": false, …}
    ```
@@ -308,7 +302,7 @@ Each phase is shippable and useful alone. Mergentic phases refer to its
    "Esc to cancel", opencode/kilo permission dialogs, and Claude's input
    line. These are heuristics tied to each TUI's current look; tests pin
    them. In phase 4 the gateway sets the principal from `whois` instead of
-   trusting `-by`. (Mergentic phase 3 dispatch.)
+   trusting `-by`.
 4. **Gateway service.** Done. `agentmux gateway run|install` serves list,
    status, threads, read and send as HTTP+JSON on the host's tailnet address
    (`internal/gateway`, contract in `internal/gatewayapi`). The caller is
@@ -321,13 +315,12 @@ Each phase is shippable and useful alone. Mergentic phases refer to its
    `internal/ops`. Not yet exercised with a real tailnet grant, or as an
    installed service. Operator guide: [../gateway.md](../gateway.md).
 5. **Events.** Filtered, resumable thread-watch event stream through the
-   gateway. (Mergentic phase 4 queue service.)
-6. **MCP server.** `agentmux mcp` across `hosts.yaml`. (Mergentic phase 5.)
+   gateway.
+6. **MCP server.** `agentmux mcp` across `hosts.yaml`.
 7. **SSH fallback.** Forced-command entry point sharing phase 2 to 4 code.
-   (Mergentic phase 5.)
 
-Phases 1 to 3 are usable without any network exposure, which lets mergentic's
-dispatcher work against a local host first.
+Phases 1 to 3 are usable without any network exposure, which lets an
+orchestrator work against a local host first.
 
 ## Resolved questions
 

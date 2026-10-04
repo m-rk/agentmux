@@ -25,14 +25,14 @@ func decodeOrdered(t *testing.T, raw json.RawMessage) ([]string, map[string]stri
 }
 
 func TestOpencodeAllowConfig(t *testing.T) {
-	note := "/vault/projects/org/proj/tasks/PP-4 Some [title] (x).md"
+	note := "/vault/projects/org/proj/tasks/TASK-4 Some [title] (x).md"
 	got, err := OpencodeAllowConfig("/work/org/proj-wt", []string{note})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := `{"permission":{"external_directory":{"/vault/projects/org/proj/tasks/*":"allow"},` +
-		`"read":{"../../../vault/projects/org/proj/tasks/*":"deny","../../../vault/projects/org/proj/tasks/PP-4 Some [title] (x).md":"allow"},` +
-		`"edit":{"../../../vault/projects/org/proj/tasks/*":"deny","../../../vault/projects/org/proj/tasks/PP-4 Some [title] (x).md":"allow"}}}`
+		`"read":{"../../../vault/projects/org/proj/tasks/*":"deny","../../../vault/projects/org/proj/tasks/TASK-4 Some [title] (x).md":"allow"},` +
+		`"edit":{"../../../vault/projects/org/proj/tasks/*":"deny","../../../vault/projects/org/proj/tasks/TASK-4 Some [title] (x).md":"allow"}}}`
 	if string(got) != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}

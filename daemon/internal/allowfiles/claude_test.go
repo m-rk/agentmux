@@ -10,10 +10,10 @@ import (
 
 func TestClaudeRulePath(t *testing.T) {
 	cases := map[string]string{
-		"/v/note.md":                   "//v/note.md",
-		"/v/PP-4 Some title.md":        "//v/PP-4 Some title.md",
-		"/v/a [x] (y) *z*.md":          `//v/a \[x\] \(y\) \*z\*.md`,
-		"/Users/me/My Vault/t/PP-1.md": "//Users/me/My Vault/t/PP-1.md",
+		"/v/note.md":                     "//v/note.md",
+		"/v/TASK-4 Some title.md":        "//v/TASK-4 Some title.md",
+		"/v/a [x] (y) *z*.md":            `//v/a \[x\] \(y\) \*z\*.md`,
+		"/Users/me/My Vault/t/TASK-1.md": "//Users/me/My Vault/t/TASK-1.md",
 	}
 	for in, want := range cases {
 		if got := claudeRulePath(in); got != want {
@@ -31,7 +31,7 @@ type settingsDoc struct {
 }
 
 func TestClaudeSettingsAllowOnly(t *testing.T) {
-	data, warns, err := ClaudeSettings([]string{"/v/PP-4 a [1].md"}, false)
+	data, warns, err := ClaudeSettings([]string{"/v/TASK-4 a [1].md"}, false)
 	if err != nil || len(warns) != 0 {
 		t.Fatal(err, warns)
 	}
@@ -39,7 +39,7 @@ func TestClaudeSettingsAllowOnly(t *testing.T) {
 	if err := json.Unmarshal(data, &doc); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{`Read(//v/PP-4 a \[1\].md)`, `Edit(//v/PP-4 a \[1\].md)`}
+	want := []string{`Read(//v/TASK-4 a \[1\].md)`, `Edit(//v/TASK-4 a \[1\].md)`}
 	if !reflect.DeepEqual(doc.Permissions.Allow, want) {
 		t.Errorf("allow = %q, want %q", doc.Permissions.Allow, want)
 	}

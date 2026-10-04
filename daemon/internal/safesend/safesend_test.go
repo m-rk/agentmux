@@ -47,7 +47,7 @@ const claudePlaceholder = `─────────────────�
 `
 
 // A reply that asks a question in prose, with a draft in the input box.
-const claudeQuestionReply = `  PP-4 is ready to launch. Do you want to:
+const claudeQuestionReply = `  TASK-4 is ready to launch. Do you want to:
   - launch it now;
   - or wait?
 ✻ Cogitated for 7m 50s · done 5:47 PM
@@ -94,11 +94,11 @@ func TestClassify(t *testing.T) {
 }
 
 func TestProvenance(t *testing.T) {
-	p := Provenance{Via: "dispatched", By: "mergentic", From: "PP-4"}
+	p := Provenance{Via: "dispatched", By: "orchestrator", From: "TASK-4"}
 	if err := p.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if got := p.Compose("do it\nnow"); got != "[dispatched by mergentic from PP-4]\ndo it\nnow" {
+	if got := p.Compose("do it\nnow"); got != "[dispatched by orchestrator from TASK-4]\ndo it\nnow" {
 		t.Fatalf("Compose: %q", got)
 	}
 	if got := (Provenance{Via: "relayed", By: "orchestrator"}).Prefix(); got != "[relayed by orchestrator]" {
@@ -128,7 +128,7 @@ func TestAuditNeverHoldsText(t *testing.T) {
 	const secretText = "please deploy with sk-ant-should-not-appear"
 	n, sum := Digest(secretText)
 	for i := 0; i < 2; i++ {
-		if err := Append(path, AuditEntry{Time: time.Unix(0, 0).UTC(), Principal: "mergentic", Via: "dispatched", Address: "a@h", Correlation: "PP-4", Bytes: n, SHA256: sum, Outcome: "delivered"}); err != nil {
+		if err := Append(path, AuditEntry{Time: time.Unix(0, 0).UTC(), Principal: "orchestrator", Via: "dispatched", Address: "a@h", Correlation: "TASK-4", Bytes: n, SHA256: sum, Outcome: "delivered"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -140,7 +140,7 @@ func TestAuditNeverHoldsText(t *testing.T) {
 	lines := 0
 	for sc.Scan() {
 		var e AuditEntry
-		if err := json.Unmarshal(sc.Bytes(), &e); err != nil || e.SHA256 != sum || e.Correlation != "PP-4" {
+		if err := json.Unmarshal(sc.Bytes(), &e); err != nil || e.SHA256 != sum || e.Correlation != "TASK-4" {
 			t.Fatalf("line %d: %+v %v", lines, e, err)
 		}
 		lines++

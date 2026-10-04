@@ -4,9 +4,9 @@ Lets an agent read and edit a few individual files outside its workdir, such as 
 task note in a notes vault, without opening the directories they live in.
 
 ```sh
-agentmux new -y -instance task-pp-4 -agent claude-code \
+agentmux new -y -instance task-4 -agent claude-code \
   -workdir /path/to/worktree \
-  -allow-file "/path/to/vault/tasks/PP-4 Some title.md"
+  -allow-file "/path/to/vault/tasks/TASK-4 Some title.md"
 ```
 
 `-allow-file` is repeatable (at most 20). Tools can detect support by looking for

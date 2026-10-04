@@ -223,7 +223,7 @@ func TestPrepareClaudeAllowSettings(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	work := filepath.Join(home, "work")
-	note := filepath.Join(home, "vault", "PP-1 t.md")
+	note := filepath.Join(home, "vault", "TASK-1 t.md")
 	if err := os.MkdirAll(filepath.Dir(note), 0o755); err != nil {
 		t.Fatal(err)
 	}
