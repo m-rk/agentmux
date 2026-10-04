@@ -8,12 +8,14 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/m-rk/agentmux/daemon/internal/address"
 	"github.com/m-rk/agentmux/daemon/internal/daemoninstall"
 	"github.com/m-rk/agentmux/daemon/internal/gatewayclient"
 	"github.com/m-rk/agentmux/daemon/internal/hostsconfig"
+	"github.com/m-rk/agentmux/daemon/internal/ops"
 	"github.com/m-rk/agentmux/daemon/internal/tuiclient"
 )
 
@@ -29,6 +31,7 @@ type listRow struct {
 	Model            string `json:"model"`
 	Status           string `json:"status"`
 	Workdir          string `json:"workdir"`
+	Project          string `json:"project"` // empty for tcp:// hosts, whose workdir isn't local
 	TmuxSession      string `json:"tmux_session"`
 	Pid              int64  `json:"pid"`
 	LastActivityUnix int64  `json:"last_activity_unix"`
@@ -118,7 +121,16 @@ func collectRows(hosts []hostsconfig.Host) (rows []listRow, errs []string) {
 			errs = append(errs, fmt.Sprintf("%s: %v", h.Name, err))
 			continue
 		}
+		var keys map[string]string
+		local := strings.HasPrefix(h.Address, "unix://")
+		if local {
+			keys = ops.ProjectKeys()
+		}
 		for _, inst := range instances {
+			project := ""
+			if local {
+				project = ops.ProjectOf(inst.Name, inst.Workdir, keys)
+			}
 			rows = append(rows, listRow{
 				Host:             h.Name,
 				Address:          address.Address{Instance: inst.Name, Host: address.Canonical(h.Name)}.String(),
@@ -128,6 +140,7 @@ func collectRows(hosts []hostsconfig.Host) (rows []listRow, errs []string) {
 				Model:            inst.Model,
 				Status:           statusLabel(inst.Status),
 				Workdir:          inst.Workdir,
+				Project:          project,
 				TmuxSession:      inst.TmuxSession,
 				Pid:              inst.Pid,
 				LastActivityUnix: inst.LastActivityUnix,
@@ -154,6 +167,7 @@ func gatewayRows(h hostsconfig.Host) ([]listRow, error) {
 		rows = append(rows, listRow{
 			Host: h.Name, Address: s.Address, Name: s.Name, Agent: s.Agent,
 			Provider: s.Provider, Model: s.Model, Status: s.Status, Workdir: s.Workdir,
+			Project:          s.Project,
 			LastActivityUnix: s.LastActivityUnix, StartedAtUnix: s.StartedAtUnix,
 		})
 	}

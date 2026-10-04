@@ -28,11 +28,12 @@ const (
 	OpThreads = "threads"
 	OpRead    = "read"
 	OpSend    = "send"
+	OpCreate  = "create"
 	OpEvents  = "events" // reserved for phase 5
 )
 
 // Ops lists every operation a capability may name.
-var Ops = []string{OpList, OpStatus, OpThreads, OpRead, OpSend, OpEvents}
+var Ops = []string{OpList, OpStatus, OpThreads, OpRead, OpSend, OpCreate, OpEvents}
 
 // Path is the URL path for op, e.g. /v1/send.
 func Path(op string) string { return "/v1/" + op }
@@ -96,6 +97,23 @@ type SendRequest struct {
 }
 
 type SendResponse = ops.SendResult
+
+// CreateRequest starts a task session on the host: a Git worktree on Branch
+// plus an instance in it, configured like Template. Instance is the new
+// session, and the grant is checked against <instance>@<host>. See
+// ops.CreateRequest.
+type CreateRequest struct {
+	Template   string   `json:"template"`
+	Instance   string   `json:"instance"`
+	Branch     string   `json:"branch"`
+	Base       string   `json:"base,omitempty"`
+	Worktree   string   `json:"worktree,omitempty"`
+	AllowFiles []string `json:"allow_files,omitempty"`
+}
+
+// CreateResponse is the session plus branch and created; a refusal is a
+// non-2xx ErrorResponse.
+type CreateResponse = ops.CreateResult
 
 // ErrorResponse is the body of every non-2xx reply.
 type ErrorResponse struct {

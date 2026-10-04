@@ -21,11 +21,13 @@ import (
 )
 
 type fakeBackend struct {
-	mu       sync.Mutex
-	sessions []ops.Session
-	err      error
-	sent     []ops.SendRequest
-	sendRes  *ops.SendResult
+	mu        sync.Mutex
+	sessions  []ops.Session
+	err       error
+	sent      []ops.SendRequest
+	sendRes   *ops.SendResult
+	created   []ops.CreateRequest
+	createErr error
 }
 
 func (f *fakeBackend) Host() string { return "hostA" }
@@ -49,6 +51,19 @@ func (f *fakeBackend) Send(_ context.Context, req ops.SendRequest) ops.SendResul
 		return *f.sendRes
 	}
 	return ops.SendResult{OK: true, Address: req.Address}
+}
+
+func (f *fakeBackend) Create(_ context.Context, req ops.CreateRequest) (ops.CreateResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.created = append(f.created, req)
+	if f.createErr != nil {
+		return ops.CreateResult{}, f.createErr
+	}
+	return ops.CreateResult{
+		Session: ops.Session{Address: req.Instance + "@hostA", Name: req.Instance, Workdir: "/w/" + req.Instance},
+		Branch:  req.Branch, Created: true,
+	}, nil
 }
 
 type harness struct {
@@ -461,5 +476,102 @@ func TestAccessLogHasNoMessageText(t *testing.T) {
 	}
 	if strings.Count(logs, "\n") != 2 {
 		t.Errorf("want one line per request:\n%s", logs)
+	}
+}
+
+const createBody = `{"template":"tmpl@hostA","instance":"task-1","branch":"feature/x","base":"main","worktree":"wt","allow_files":["/n/a.md"]}`
+
+func TestCreateGrantChecksNewInstanceAddress(t *testing.T) {
+	h := newHarness(t,
+		all("list", "read", "status", "threads", "send"),
+		gatewayapi.Grant{Ops: []string{"create"}, Sessions: []string{"task-*@*"}})
+	rec := h.post("create", createBody)
+	if rec.Code != 200 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	var res gatewayapi.CreateResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Address != "task-1@hostA" || res.Workdir != "/w/task-1" || res.Branch != "feature/x" || !res.Created {
+		t.Errorf("response = %+v", res)
+	}
+	got := h.backend.created[0]
+	if got.Template != "tmpl@hostA" || got.Instance != "task-1" || got.Branch != "feature/x" || got.Base != "main" || got.Worktree != "wt" || len(got.AllowFiles) != 1 {
+		t.Errorf("backend request = %+v", got)
+	}
+	if !strings.Contains(h.logs.String(), `op=create target="task-1@hostA"`) {
+		t.Errorf("log = %s", h.logs.String())
+	}
+
+	// The name decides, not the template: another name isn't granted.
+	rec = h.post("create", strings.Replace(createBody, `"task-1"`, `"other"`, 1))
+	if rec.Code != 403 || errReason(t, rec) != safesend.ReasonForbidden {
+		t.Errorf("ungranted name: %d %s", rec.Code, rec.Body)
+	}
+	// A bad name is invalid, not an authz question.
+	rec = h.post("create", strings.Replace(createBody, `"task-1"`, `"a b"`, 1))
+	if rec.Code != 400 || errReason(t, rec) != safesend.ReasonInvalid {
+		t.Errorf("bad name: %d %s", rec.Code, rec.Body)
+	}
+	if len(h.backend.created) != 1 {
+		t.Errorf("backend saw %d creates", len(h.backend.created))
+	}
+}
+
+func TestCreateNeedsExplicitGrant(t *testing.T) {
+	// Every other op, on every session, still doesn't allow create.
+	h := newHarness(t, all("list", "read", "status", "threads", "send"))
+	rec := h.post("create", createBody)
+	if rec.Code != 403 || errReason(t, rec) != safesend.ReasonForbidden || len(h.backend.created) != 0 {
+		t.Errorf("create without grant: %d %s", rec.Code, rec.Body)
+	}
+	// A create grant doesn't allow send.
+	h = newHarness(t, all("create"))
+	if rec := h.post("send", `{"address":"a@hostA","text":"t","via":"sent"}`); !strings.Contains(rec.Body.String(), "forbidden") {
+		t.Errorf("send with create grant: %s", rec.Body)
+	}
+}
+
+func TestCreateErrorMapping(t *testing.T) {
+	h := newHarness(t, all("create"))
+	for reason, want := range map[safesend.Reason]int{
+		safesend.ReasonInvalid: 400, safesend.ReasonNotFound: 404,
+		safesend.ReasonUnsupported: 501, safesend.ReasonFailed: 500,
+	} {
+		h.backend.createErr = ops.Refuse(reason, "nope")
+		rec := h.post("create", createBody)
+		if rec.Code != want || errReason(t, rec) != reason {
+			t.Errorf("%s: %d %s", reason, rec.Code, rec.Body)
+		}
+	}
+	if rec := h.post("create", `{"instance":"a","branch":"b","bogus":1}`); rec.Code != 400 {
+		t.Errorf("unknown field: %d", rec.Code)
+	}
+}
+
+func TestCreateSharesSendBucket(t *testing.T) {
+	h := newHarness(t, all("send", "create"))
+	send := Limit{PerMinute: 6, Burst: 2}
+	h.srv = New(Config{
+		Backend: h.backend, SendLimit: &send,
+		Whois: func(context.Context, string) (Identity, error) { return h.id, nil },
+		Now:   func() time.Time { return h.now },
+	})
+	sendBody := `{"address":"a@hostA","text":"t","via":"sent"}`
+	if rec := h.post("create", createBody); rec.Code != 200 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	if rec := h.post("send", sendBody); rec.Code != 200 {
+		t.Fatalf("send: %d", rec.Code)
+	}
+	rec := h.post("create", createBody)
+	if rec.Code != 429 || errReason(t, rec) != safesend.ReasonRateLimited || rec.Header().Get("Retry-After") == "" {
+		t.Errorf("create over the shared bucket: %d %s", rec.Code, rec.Body)
+	}
+	var res ops.SendResult
+	json.Unmarshal(h.post("send", sendBody).Body.Bytes(), &res)
+	if res.OK || res.Reason != safesend.ReasonRateLimited {
+		t.Errorf("send over the shared bucket: %+v", res)
 	}
 }

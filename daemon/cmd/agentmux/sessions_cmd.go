@@ -33,7 +33,9 @@ const sessionsUsage = `usage:
   agentmux sessions threads [-json] [-hosts PATH] <instance>@<host>
   agentmux sessions read [-json] [-hosts PATH] [-limit N] [-cursor C] <instance>@<host>[#<thread>]
   agentmux sessions send -by PRINCIPAL [-via relayed|dispatched|sent] [-from REF] [-correlation ID]
-                         [-hosts PATH] [-wait DUR] [-json] <instance>@<host>[#<thread>] (TEXT | -file PATH|-)`
+                         [-hosts PATH] [-wait DUR] [-json] <instance>@<host>[#<thread>] (TEXT | -file PATH|-)
+  agentmux sessions create [-json] [-socket PATH] [-hosts PATH] -template <instance>@<host> -instance NAME -branch B
+                           [-base REF] [-worktree NAME] [-allow-file PATH ...]`
 
 // runSessionsCmd is `agentmux sessions`: addressing and transcript access for
 // orchestrators. See docs/design/gateway.md (phases 1 and 2). Listing with
@@ -54,6 +56,8 @@ func runSessionsCmd(args []string) {
 		runSessionsSend(args[1:])
 	case "status":
 		runSessionsStatus(args[1:])
+	case "create":
+		runSessionsCreate(args[1:])
 	default:
 		fmt.Fprintln(os.Stderr, sessionsUsage)
 		os.Exit(2)

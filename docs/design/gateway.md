@@ -315,15 +315,16 @@ Each phase is shippable and useful alone.
    `internal/ops`. Not yet exercised with a real tailnet grant, or as an
    installed service. Operator guide: [../gateway.md](../gateway.md).
 4b. **Cross-host dispatch.** Lets an orchestrator on one host start a task
-   session on another.
+   session on another. `create` (op, gateway route, client and
+   `agentmux sessions create`) is done; see [../gateway.md](../gateway.md).
    - **Project per session.** `ops.Session` (and so `agentmux list -json`,
      gateway `list` and `status`) gains `project`: the instance's project as
      `collab.DetectProject` finds it (the collab `-project` override, else
-     the workdir's Git origin: `<owner>/<repo>` for GitHub,
-     `<host>/<owner>/<repo>` otherwise; empty when there is none). It is
+     the workdir's Git origin as `<host>/<owner>/<repo>`, lowercased, e.g.
+     `github.com/owner/repo`; empty when there is none). It is
      computed on the instance's host, so a caller never needs the remote
      workdir.
-   - **`create`**, a new op and grant op. Request: `template` (an existing
+   - **`create`**, a new op and grant op. Done. Request: `template` (an existing
      instance address on the target host), `instance` (new name), `branch`,
      optional `base` (default: the `origin/HEAD` target, else `HEAD`),
      optional `worktree` (directory name, default the instance name),

@@ -201,3 +201,21 @@ func TestBaseURLTrailingSlash(t *testing.T) {
 		t.Fatalf("%v %q", err, s.path)
 	}
 }
+
+func TestCreate(t *testing.T) {
+	ctx := context.Background()
+	s := &stub{status: 200, body: `{"address":"t@box","name":"t","agent":"opencode","status":"running","workdir":"/w/t","branch":"feature/x","created":true}`}
+	got, err := s.server(t).Create(ctx, gatewayapi.CreateRequest{Template: "tmpl@box", Instance: "t", Branch: "feature/x", AllowFiles: []string{"/n/a.md"}})
+	if err != nil || got.Address != "t@box" || got.Workdir != "/w/t" || got.Branch != "feature/x" || !got.Created || s.path != "/v1/create" {
+		t.Fatalf("create: %+v %v %s", got, err, s.path)
+	}
+	if string(s.req) != `{"template":"tmpl@box","instance":"t","branch":"feature/x","allow_files":["/n/a.md"]}` {
+		t.Errorf("request = %s", s.req)
+	}
+
+	s = &stub{status: 403, body: `{"error":{"reason":"forbidden","detail":"nope"}}`}
+	_, err = s.server(t).Create(ctx, gatewayapi.CreateRequest{Instance: "t"})
+	if e := ops.AsError(err); e.Reason != safesend.ReasonForbidden {
+		t.Fatalf("refusal: %v", err)
+	}
+}

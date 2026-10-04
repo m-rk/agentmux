@@ -24,6 +24,9 @@ const (
 	// QueryTimeout bounds list, status, threads and read; amp reads can be
 	// slow.
 	QueryTimeout = 60 * time.Second
+	// CreateTimeout bounds create: a fetch, a worktree checkout and the
+	// instance provisioning.
+	CreateTimeout = 3 * time.Minute
 	// SendMargin is added to a send's wait+confirm for the round trip and the
 	// server's own checks.
 	SendMargin = 30 * time.Second
@@ -75,6 +78,14 @@ func (c *Client) Threads(ctx context.Context, req gatewayapi.ThreadsRequest) (ga
 func (c *Client) Read(ctx context.Context, req gatewayapi.ReadRequest) (gatewayapi.ReadResponse, error) {
 	var out gatewayapi.ReadResponse
 	err := c.call(ctx, gatewayapi.OpRead, QueryTimeout, req, &out)
+	return out, err
+}
+
+// Create starts a task session on the host and returns without waiting for
+// it to be ready.
+func (c *Client) Create(ctx context.Context, req gatewayapi.CreateRequest) (gatewayapi.CreateResponse, error) {
+	var out gatewayapi.CreateResponse
+	err := c.call(ctx, gatewayapi.OpCreate, CreateTimeout, req, &out)
 	return out, err
 }
 

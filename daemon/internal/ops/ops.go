@@ -51,6 +51,11 @@ func AsError(err error) *Error {
 // Env is where the local daemon is.
 type Env struct {
 	SocketPath string
+
+	// Dial and Git replace the daemon client and the git runner that Create
+	// uses; nil means the real ones. Tests set them.
+	Dial func() (Daemon, error)
+	Git  GitFunc
 }
 
 func (e Env) dial() (*tuiclient.Client, error) {
@@ -67,6 +72,7 @@ type Session struct {
 	Model            string `json:"model,omitempty"`
 	Status           string `json:"status"` // running, idle, dead
 	Workdir          string `json:"workdir"`
+	Project          string `json:"project,omitempty"` // see ProjectOf
 	LastActivityUnix int64  `json:"last_activity_unix,omitempty"`
 	StartedAtUnix    int64  `json:"started_at_unix,omitempty"`
 }
@@ -112,9 +118,12 @@ func (e Env) List(ctx context.Context) ([]Session, error) {
 		return nil, err
 	}
 	host := address.LocalHostName()
+	keys := ProjectKeys()
 	out := make([]Session, 0, len(instances))
 	for _, inst := range instances {
-		out = append(out, SessionFrom(host, inst))
+		s := SessionFrom(host, inst)
+		s.Project = ProjectOf(inst.Name, inst.Workdir, keys)
+		out = append(out, s)
 	}
 	return out, nil
 }
@@ -148,6 +157,7 @@ func (e Env) Status(ctx context.Context, addrText string) (StatusResult, error) 
 			continue
 		}
 		res := StatusResult{Session: SessionFrom(addr.Host, inst), State: string(safesend.StateUnknown), Thread: addr.Thread}
+		res.Project = ProjectOf(inst.Name, inst.Workdir, ProjectKeys())
 		if inst.Status == pb.Status_STATUS_DEAD || inst.TmuxSession == "" {
 			res.State = "dead"
 			return res, nil

@@ -47,6 +47,11 @@ func validateIdentifier(label, value string) error {
 	return nil
 }
 
+// ValidateInstanceName applies the instance name rule `agentmux new` uses.
+func ValidateInstanceName(name string) error {
+	return validateIdentifier("instance name", name)
+}
+
 // defaultInstanceName computes the instance name used when -instance is
 // left blank: "<workdir-basename>-<agent>" when a workdir was given, so a
 // bare `agentmux new -y -agent=kilo -workdir=~/foo` produces "foo-kilo"

@@ -13,7 +13,7 @@
 // built) is a non-2xx gatewayapi.ErrorResponse. For send, a request that
 // parsed and was then refused (forbidden, rate_limited, or any reason from
 // ops) is HTTP 200 with the ops.SendResult, ok false and a reason, the same
-// shape a delivered send has. Every other operation refuses with a non-2xx
+// shape a delivered send has. Every other operation, create included, refuses with a non-2xx
 // ErrorResponse whose status is gatewayapi.HTTPStatus(reason).
 package gateway
 
@@ -198,6 +198,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, a *access) {
 		s.perSession(w, a, id, op, req.Address, func(ctx context.Context) (any, error) {
 			return s.backend.Read(ctx, req.Address, req.Cursor, req.Limit)
 		}, r)
+	case gatewayapi.OpCreate:
+		var req gatewayapi.CreateRequest
+		if !s.decode(w, a, body, &req, false) {
+			return
+		}
+		a.target = clip(req.Instance + "@" + s.backend.Host())
+		s.createOp(w, r, a, id, req)
 	case gatewayapi.OpSend:
 		var req gatewayapi.SendRequest
 		if !s.decode(w, a, body, &req, false) {
@@ -296,6 +303,36 @@ func (s *Server) sendOp(w http.ResponseWriter, r *http.Request, a *access, id Id
 	})
 	if !res.OK {
 		a.reason = string(res.Reason)
+	}
+	s.reply(w, a, http.StatusOK, res)
+}
+
+// createOp starts a task session. The grant is checked against the new
+// instance's address on this host. It shares the send rate bucket, since it
+// starts an agent that will act on text it is later sent. Refusals are
+// ErrorResponses like every op but send.
+func (s *Server) createOp(w http.ResponseWriter, r *http.Request, a *access, id Identity, req gatewayapi.CreateRequest) {
+	if !s.send.allow(a.principal) {
+		s.rateLimited(w, a, s.send.limit)
+		return
+	}
+	addr, err := address.Parse(req.Instance + "@" + s.backend.Host())
+	if err != nil {
+		s.refuse(w, a, http.StatusBadRequest, safesend.ReasonInvalid, err.Error())
+		return
+	}
+	if !sessionAllowed(id.Grants, gatewayapi.OpCreate, addr.Session().String()) {
+		s.refuse(w, a, http.StatusForbidden, safesend.ReasonForbidden, fmt.Sprintf("create of %s is not permitted", addr.Session()))
+		return
+	}
+	res, err := s.backend.Create(r.Context(), ops.CreateRequest{
+		Template: req.Template, Instance: req.Instance, Branch: req.Branch,
+		Base: req.Base, Worktree: req.Worktree, AllowFiles: req.AllowFiles,
+	})
+	if err != nil {
+		e := ops.AsError(err)
+		s.refuse(w, a, gatewayapi.HTTPStatus(e.Reason), e.Reason, e.Detail)
+		return
 	}
 	s.reply(w, a, http.StatusOK, res)
 }

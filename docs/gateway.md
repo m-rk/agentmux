@@ -23,9 +23,10 @@ The wire format is in `daemon/internal/gatewayapi`. The server is
 4. An operation on `name@host` is allowed when some grant lists the operation
    and has a session pattern matching `name@host` (a `#thread` suffix is
    ignored). `list` is allowed when any grant lists it, and returns only the
-   sessions those grants' patterns match.
-5. Rate limits apply per principal: sends 30 a minute (burst 10), everything
-   else 300 a minute (burst 60).
+   sessions those grants' patterns match. `create` is checked against the
+   address of the session it would create, `<new instance>@<this host>`.
+5. Rate limits apply per principal: sends and creates share one bucket, 30 a
+   minute (burst 10); everything else 300 a minute (burst 60).
 
 It fails closed. If whois fails, the node has no name, the capability is
 missing, or its value is not an array, every request gets `403 forbidden`.
@@ -37,7 +38,7 @@ wrong method, bad or oversized body) is a non-2xx `{"error": {"reason", "detail"
 For `send`, a request that parsed and was then refused (`forbidden`,
 `rate_limited`, or any reason `ops.Send` gives, such as `busy`) is HTTP 200
 with the same result object a delivered send has, `ok: false` and a `reason`.
-Every other operation refuses with a non-2xx status from
+Every other operation, `create` included, refuses with a non-2xx status from
 `gatewayapi.HTTPStatus` (400, 403, 404, 421, 429, 501, 500). `events` is
 reserved and answers 501.
 
@@ -57,7 +58,8 @@ placeholder.
     "app": {
       "example.com/cap/agentmux-gateway": [
         {"ops": ["list", "read", "status", "threads"], "sessions": ["*@*"]},
-        {"ops": ["send"], "sessions": ["web*@*"]}
+        {"ops": ["send"], "sessions": ["web*@*"]},
+        {"ops": ["create"], "sessions": ["task-*@build-box"]}
       ]
     }
   }
@@ -68,12 +70,61 @@ Each entry of the array is a grant object:
 
 | field      | meaning |
 |------------|---------|
-| `ops`      | any of `list`, `status`, `threads`, `read`, `send`, `events` |
+| `ops`      | any of `list`, `status`, `threads`, `read`, `send`, `create`, `events` |
 | `sessions` | `path.Match` patterns over `<instance>@<host>`; `*` does not match `/` |
 
 Entries add up: a call is allowed if any one entry allows it. There is no
-deny. `ip: tcp:4288` is the network path; the `app` capability is the
+deny. `create` starts an agent and a Git worktree on the host, so it is never
+implied by another op: grant it explicitly, with a session pattern that limits
+the names it may create (`task-*@build-box` above). `ip: tcp:4288` is the network path; the `app` capability is the
 authorization.
+
+## Starting a task session
+
+`create` makes a Git worktree and a new instance on the gateway's host, so an
+orchestrator can start a task there.
+
+```json
+POST /v1/create
+{"template": "web@build-box", "instance": "task-42", "branch": "feature/task-42",
+ "base": "origin/main", "worktree": "task-42", "allow_files": ["/home/me/notes/task-42.md"]}
+```
+
+| field         | meaning |
+|---------------|---------|
+| `template`    | an existing instance on this host; its agent, provider, model, provider base URL, API key env var name and run user are copied |
+| `instance`    | name of the new instance; the grant is checked against `<instance>@<this host>` |
+| `branch`      | branch the worktree is on |
+| `base`        | optional start point for a new branch; default the `origin/HEAD` target, else `HEAD` |
+| `worktree`    | optional directory name, default the instance name |
+| `allow_files` | optional absolute paths on this host the agent may read and edit, as for `agentmux new -allow-file` |
+
+The worktree goes in `<parent of the template's repo>/<repo>-worktrees/<worktree>`,
+made from the template's workdir with `git worktree add -b <branch> <path>
+<base>` (after a best-effort `git fetch origin`). If the branch already exists
+and is not checked out, the worktree uses it. A worktree already at that path
+on that branch is reused; any other existing path is refused (`invalid`). An
+instance with that name and workdir is reused; with another workdir it is
+refused. The call returns when the instance is created, not when it is ready;
+poll `status`.
+
+```json
+{"address": "task-42@build-box", "name": "task-42", "agent": "claude-code",
+ "status": "running", "workdir": "/home/me/src/app-worktrees/task-42",
+ "project": "owner/app", "branch": "feature/task-42", "created": true}
+```
+
+`created` is false when an existing instance was reused. A refusal is a non-2xx
+`{"error": {"reason", "detail"}}`: `invalid` (names, branch, base, worktree
+path, allow-file, or an instance name clash), `not_found` (template),
+`forbidden`, `rate_limited`, `unsupported` (the template's workdir is not in a
+Git checkout, or its run user is not the gateway's user), `failed`.
+
+From a shell, routed by the template's host:
+
+```sh
+agentmux sessions create -template web@build-box -instance task-42 -branch feature/task-42
+```
 
 ## Running it
 
@@ -147,7 +198,7 @@ hosts:
     gateway: http://100.64.0.2:4288
 ```
 
-`agentmux sessions status|threads|read|send` and `agentmux list` then reach
+`agentmux sessions status|threads|read|send|create` and `agentmux list` then reach
 `build-box` through its gateway. An `address:` (the daemon's own port) is
 optional; without one, the TUI and the commands that manage instances skip
 that host.
