@@ -314,6 +314,39 @@ Each phase is shippable and useful alone.
    there (`internal/gatewayclient`). Shared operations live in
    `internal/ops`. Not yet exercised with a real tailnet grant, or as an
    installed service. Operator guide: [../gateway.md](../gateway.md).
+4b. **Cross-host dispatch.** Lets an orchestrator on one host start a task
+   session on another.
+   - **Project per session.** `ops.Session` (and so `agentmux list -json`,
+     gateway `list` and `status`) gains `project`: the instance's project as
+     `collab.DetectProject` finds it (the collab `-project` override, else
+     the workdir's Git origin: `<owner>/<repo>` for GitHub,
+     `<host>/<owner>/<repo>` otherwise; empty when there is none). It is
+     computed on the instance's host, so a caller never needs the remote
+     workdir.
+   - **`create`**, a new op and grant op. Request: `template` (an existing
+     instance address on the target host), `instance` (new name), `branch`,
+     optional `base` (default: the `origin/HEAD` target, else `HEAD`),
+     optional `worktree` (directory name, default the instance name),
+     optional `allow_files` (absolute paths on that host). The host creates
+     `<parent of template repo>/<repo>-worktrees/<worktree>` with
+     `git worktree add -b <branch> <path> <base>` in the template's
+     workdir, then creates the instance through the daemon with the
+     template's agent, provider, model, provider base URL, API key env and
+     run user, workdir set to the worktree. An existing worktree on that
+     branch is reused; any other existing path is refused. An existing
+     instance with that name and workdir is reused (`created: false`); with
+     another workdir it is refused. The response is the session (with
+     `address` and `project`) plus `workdir`, `branch` and `created`; it does
+     not wait for the session to be ready (poll `status`). The grant is
+     checked against the new instance's address; `create` shares the send
+     rate bucket. Reasons: `invalid`, `not_found` (template), `forbidden`,
+     `unsupported` (template is not a Git checkout, or its run user isn't
+     the gateway's user), `failed`.
+   - **CLI.** `agentmux sessions create [-json] -template ADDR -instance NAME
+     -branch B [-base REF] [-worktree NAME] [-allow-file PATH ...]`, routed
+     by the template's host like the other `sessions` commands.
+   Removing a task session afterwards is the separate `agentmux delete`
+   todo.
 5. **Events.** Filtered, resumable thread-watch event stream through the
    gateway.
 6. **MCP server.** `agentmux mcp` across `hosts.yaml`.
