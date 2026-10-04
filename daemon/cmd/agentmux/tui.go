@@ -41,6 +41,9 @@ func runTUI(args []string) {
 
 	clients := map[string]*tuiclient.Client{}
 	for _, h := range hosts {
+		if h.Address == "" {
+			continue // gateway only
+		}
 		c, err := tuiclient.Dial(h.Name, h.Address)
 		if err != nil {
 			log.Fatalf("dialing %s (%s): %v", h.Name, h.Address, err)
@@ -100,6 +103,9 @@ func dialOneHost(hostsPath, socketPath, hostName string) (*tuiclient.Client, err
 	}
 	for _, h := range hosts {
 		if h.Name == hostName {
+			if h.Address == "" {
+				return nil, fmt.Errorf("host %q has only a gateway in %s; managing its instances needs its daemon address", hostName, hostsPath)
+			}
 			return tuiclient.Dial(h.Name, h.Address)
 		}
 	}

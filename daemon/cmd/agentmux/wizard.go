@@ -60,6 +60,9 @@ func runWizard(args []string) {
 		}
 		clients := map[string]*tuiclient.Client{}
 		for _, h := range hosts {
+			if h.Address == "" {
+				continue // gateway only
+			}
 			c, err := tuiclient.Dial(h.Name, h.Address)
 			if err != nil {
 				log.Fatalf("dialing %s (%s): %v", h.Name, h.Address, err)

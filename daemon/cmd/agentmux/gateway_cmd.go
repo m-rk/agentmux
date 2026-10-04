@@ -60,7 +60,7 @@ func runGatewayCmd(args []string) {
 func runGatewayRun(args []string) {
 	fs := flag.NewFlagSet("gateway run", flag.ExitOnError)
 	listen := fs.String("listen", "", "address to listen on (default: this host's tailnet IPv4 on port "+strconv.Itoa(gatewayapi.DefaultPort)+"); must be a tailnet address")
-	capability := fs.String("capability", "", "app capability name the tailnet policy grants, e.g. example.com/cap/agentmux-gateway (required)")
+	capability := fs.String("capability", "", "app capability name the tailnet policy grants, e.g. example.com/cap/agentmux-gateway (required unless -insecure-test-grants)")
 	socket := fs.String("socket", daemoninstall.SocketPath(), "Unix socket agentmuxd is listening on")
 	tailscale := fs.String("tailscale", "tailscale", "tailscale CLI binary")
 	sendRate := fs.String("send-rate", "30/min", "sustained send rate per caller, N/min (0 turns the limit off)")
@@ -70,7 +70,7 @@ func runGatewayRun(args []string) {
 	testGrants := fs.String("insecure-test-grants", "", "FILE of grants (JSON array); serve loopback only and treat every request as principal "+loopbackTestPrincipal+" with these grants, skipping tailscale whois. For trying the gateway without a tailnet policy; never use in service")
 	fs.Parse(args)
 
-	if *capability == "" {
+	if *capability == "" && *testGrants == "" {
 		log.Fatal("gateway run: -capability is required (the app capability name in your tailnet policy grant)")
 	}
 	sendLimit, err := parseRate(*sendRate, *sendBurst)
@@ -130,7 +130,11 @@ func runGatewayRun(args []string) {
 		defer cancel()
 		srv.Shutdown(shutdown)
 	}()
-	logger.Printf("gateway: listening on %s (capability %s)", ln.Addr(), *capability)
+	if *testGrants != "" {
+		logger.Printf("gateway: listening on %s (test grants)", ln.Addr())
+	} else {
+		logger.Printf("gateway: listening on %s (capability %s)", ln.Addr(), *capability)
+	}
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("gateway run: %v", err)
 	}

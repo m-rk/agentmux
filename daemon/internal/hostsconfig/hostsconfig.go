@@ -18,6 +18,10 @@ import (
 //   - "unix:///run/agentmux/agentmuxd.sock" for a local daemon
 //   - "tcp://100.x.y.z:4287" for a daemon reachable over Tailscale
 //
+// Address may be empty when Gateway is set: `agentmux list` and
+// `agentmux sessions` then go through the gateway, and the TUI and the
+// commands that manage instances skip the host.
+//
 // Gateway, if set, is the base URL of that host's gateway, e.g.
 // "http://100.x.y.z:4288". `agentmux sessions` uses it to reach the host's
 // sessions; plain HTTP is fine on a tailnet, which encrypts the link and
@@ -57,8 +61,8 @@ func Load(path string) (*Config, error) {
 		if h.Name == "" {
 			return nil, fmt.Errorf("%s: host %d is missing a name", path, i)
 		}
-		if h.Address == "" {
-			return nil, fmt.Errorf("%s: host %q is missing an address", path, h.Name)
+		if h.Address == "" && h.Gateway == "" {
+			return nil, fmt.Errorf("%s: host %q needs an address, a gateway, or both", path, h.Name)
 		}
 		if h.Gateway != "" {
 			if err := CheckGatewayURL(h.Gateway); err != nil {

@@ -57,7 +57,7 @@ placeholder.
     "app": {
       "example.com/cap/agentmux-gateway": [
         {"ops": ["list", "read", "status", "threads"], "sessions": ["*@*"]},
-        {"ops": ["send"], "sessions": ["mergentic*@*"]}
+        {"ops": ["send"], "sessions": ["web*@*"]}
       ]
     }
   }
@@ -85,7 +85,7 @@ Flags:
 
 | flag | default | |
 |------|---------|--|
-| `-capability NAME` | required | the app capability name from the policy |
+| `-capability NAME` | required, except with `-insecure-test-grants` | the app capability name from the policy |
 | `-listen ADDR` | `tailscale ip -4` on port 4288 | must be a tailnet address |
 | `-socket PATH` | the platform's `agentmuxd` socket | |
 | `-tailscale PATH` | `tailscale` | CLI used for whois and `ip -4` |
@@ -124,8 +124,7 @@ cat > /tmp/test-grants.json <<'JSON'
 [{"ops": ["list", "status", "read", "threads"], "sessions": ["*@*"]},
  {"ops": ["send"], "sessions": ["my-test-instance@*"]}]
 JSON
-agentmux gateway run -capability example.com/cap/agentmux-gateway \
-  -listen 127.0.0.1:4288 -insecure-test-grants /tmp/test-grants.json
+agentmux gateway run -listen 127.0.0.1:4288 -insecure-test-grants /tmp/test-grants.json
 curl -s -X POST 127.0.0.1:4288/v1/list -d '{}'
 ```
 
@@ -134,12 +133,31 @@ does no whois, treats every request as principal `loopback-test` with the
 grants in the file, and logs a warning at start. Anyone who can reach the
 loopback port as any local user gets those grants. Do not use it in a service.
 
+## Reaching another host
+
+On the calling host, give each other host a `gateway:` URL in
+`~/.config/agentmux/hosts.yaml`. Name the entry after that host's own
+agentmux host name (its short hostname), so addresses match:
+
+```yaml
+hosts:
+  - name: local
+    address: unix:///run/agentmux/agentmuxd.sock
+  - name: build-box
+    gateway: http://100.64.0.2:4288
+```
+
+`agentmux sessions status|threads|read|send` and `agentmux list` then reach
+`build-box` through its gateway. An `address:` (the daemon's own port) is
+optional; without one, the TUI and the commands that manage instances skip
+that host.
+
 ## Logs
 
 One line per request on stderr:
 
 ```text
-gateway: principal=orch-box op=send target="mergentic-opencode@hostA" status=200 result=ok remote=100.64.0.9:51234 took=1.5s
+gateway: principal=orch-box op=send target="web-opencode@hostA" status=200 result=ok remote=100.64.0.9:51234 took=1.5s
 ```
 
 `result` is `ok` or the refusal reason. Message text and transcript content

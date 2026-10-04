@@ -54,3 +54,23 @@ func TestLoadGateway(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadAddressOrGateway(t *testing.T) {
+	load := func(entry string) error {
+		p := filepath.Join(t.TempDir(), "hosts.yaml")
+		if err := os.WriteFile(p, []byte("hosts:\n  - name: box\n"+entry), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Load(p)
+		return err
+	}
+	if err := load("    gateway: http://100.64.0.1:4288\n"); err != nil {
+		t.Fatalf("gateway only: %v", err)
+	}
+	if err := load("    address: tcp://100.64.0.1:4287\n"); err != nil {
+		t.Fatalf("address only: %v", err)
+	}
+	if err := load(""); err == nil {
+		t.Fatal("neither address nor gateway accepted")
+	}
+}

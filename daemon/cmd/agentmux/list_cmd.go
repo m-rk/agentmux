@@ -6,11 +6,13 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
 	"github.com/m-rk/agentmux/daemon/internal/address"
 	"github.com/m-rk/agentmux/daemon/internal/daemoninstall"
+	"github.com/m-rk/agentmux/daemon/internal/gatewayclient"
 	"github.com/m-rk/agentmux/daemon/internal/hostsconfig"
 	"github.com/m-rk/agentmux/daemon/internal/tuiclient"
 )
@@ -95,6 +97,14 @@ func runListCmd(args []string) {
 // doesn't hide the rest.
 func collectRows(hosts []hostsconfig.Host) (rows []listRow, errs []string) {
 	for _, h := range hosts {
+		if h.Address == "" {
+			r, err := gatewayRows(h)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("%s: %v", h.Name, err))
+			}
+			rows = append(rows, r...)
+			continue
+		}
 		c, err := tuiclient.Dial(h.Name, h.Address)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", h.Name, err))
@@ -126,4 +136,26 @@ func collectRows(hosts []hostsconfig.Host) (rows []listRow, errs []string) {
 		}
 	}
 	return rows, errs
+}
+
+// gatewayRows lists a host that has only a gateway in hosts.yaml. The
+// gateway shows only the sessions the caller's grant allows, and no tmux or
+// process details.
+func gatewayRows(h hostsconfig.Host) ([]listRow, error) {
+	c := &gatewayclient.Client{BaseURL: h.Gateway, HTTP: &http.Client{}, Host: h.Name}
+	ctx, cancel := context.WithTimeout(context.Background(), gatewayclient.QueryTimeout)
+	defer cancel()
+	res, err := c.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]listRow, 0, len(res.Sessions))
+	for _, s := range res.Sessions {
+		rows = append(rows, listRow{
+			Host: h.Name, Address: s.Address, Name: s.Name, Agent: s.Agent,
+			Provider: s.Provider, Model: s.Model, Status: s.Status, Workdir: s.Workdir,
+			LastActivityUnix: s.LastActivityUnix, StartedAtUnix: s.StartedAtUnix,
+		})
+	}
+	return rows, nil
 }
