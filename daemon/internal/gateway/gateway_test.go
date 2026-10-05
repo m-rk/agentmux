@@ -31,6 +31,10 @@ type fakeBackend struct {
 	ran       []ops.RunRequest
 	runRes    *ops.RunResult
 	runErr    error
+	retired   []ops.RetireRequest
+	retireErr error
+	gced      []ops.GCRequest
+	gcErr     error
 }
 
 func (f *fakeBackend) Host() string { return "hostA" }
@@ -82,6 +86,26 @@ func (f *fakeBackend) Run(_ context.Context, req ops.RunRequest) (ops.RunResult,
 	return ops.RunResult{OK: true, Address: req.Address, Agent: "amp",
 		Thread: "T-11111111-1111-4111-8111-111111111111", ThreadID: "T-11111111-1111-4111-8111-111111111111",
 		ThreadURL: "https://ampcode.com/threads/T-11111111-1111-4111-8111-111111111111", State: "running"}, nil
+}
+
+func (f *fakeBackend) Retire(_ context.Context, req ops.RetireRequest) (ops.RetireResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.retired = append(f.retired, req)
+	if f.retireErr != nil {
+		return ops.RetireResult{}, f.retireErr
+	}
+	return ops.RetireResult{Address: req.Address}, nil
+}
+
+func (f *fakeBackend) GC(_ context.Context, req ops.GCRequest) (ops.GCResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.gced = append(f.gced, req)
+	if f.gcErr != nil {
+		return ops.GCResult{}, f.gcErr
+	}
+	return ops.GCResult{}, nil
 }
 
 type harness struct {
@@ -635,6 +659,100 @@ func TestRunRefusalPassthrough(t *testing.T) {
 	h.backend.runErr = ops.Refuse(safesend.ReasonInvalid, "bogus thread")
 	rec := h.post("run", `{"address":"probe@hostA#bogus","text":"x"}`)
 	if rec.Code != 400 || errReason(t, rec) != safesend.ReasonInvalid {
+		t.Errorf("refusal: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestRetireGrantChecksSessionAddress(t *testing.T) {
+	h := newHarness(t,
+		all("list"),
+		gatewayapi.Grant{Ops: []string{"retire"}, Sessions: []string{"task-*@*"}})
+	rec := h.post("retire", `{"address":"task-1@hostA"}`)
+	if rec.Code != 200 {
+		t.Fatalf("retire: %d %s", rec.Code, rec.Body)
+	}
+	var res gatewayapi.RetireResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Address != "task-1@hostA" {
+		t.Errorf("response = %+v", res)
+	}
+	if len(h.backend.retired) != 1 || h.backend.retired[0].Address != "task-1@hostA" {
+		t.Errorf("backend retired = %+v", h.backend.retired)
+	}
+	if !strings.Contains(h.logs.String(), `op=retire target="task-1@hostA"`) {
+		t.Errorf("log = %s", h.logs.String())
+	}
+
+	// A thread suffix never widens access: the grant is checked against
+	// the session, and the suffix is still refused by perSession's own
+	// address scoping through ops (a retire of a thread address fails).
+	rec = h.post("retire", `{"address":"other@hostA"}`)
+	if rec.Code != 403 || errReason(t, rec) != safesend.ReasonForbidden {
+		t.Errorf("ungranted instance: %d %s", rec.Code, rec.Body)
+	}
+	if len(h.backend.retired) != 1 {
+		t.Errorf("backend saw %d retires", len(h.backend.retired))
+	}
+}
+
+func TestRetireNeedsExplicitGrant(t *testing.T) {
+	// Every other op, on every session, still doesn't allow retire.
+	h := newHarness(t, all("list", "read", "status", "threads", "send", "create", "run"))
+	rec := h.post("retire", `{"address":"task-1@hostA"}`)
+	if rec.Code != 403 || errReason(t, rec) != safesend.ReasonForbidden || len(h.backend.retired) != 0 {
+		t.Errorf("retire without grant: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestRetireErrorMapping(t *testing.T) {
+	h := newHarness(t, all("retire"))
+	for reason, want := range map[safesend.Reason]int{
+		safesend.ReasonForbidden: 403, safesend.ReasonNotFound: 404,
+		safesend.ReasonInvalid: 400, safesend.ReasonFailed: 500,
+	} {
+		h.backend.retireErr = ops.Refuse(reason, "nope")
+		rec := h.post("retire", `{"address":"task-1@hostA"}`)
+		if rec.Code != want || errReason(t, rec) != reason {
+			t.Errorf("%s: %d %s", reason, rec.Code, rec.Body)
+		}
+	}
+	if rec := h.post("retire", `{"address":"task-1@hostA","bogus":1}`); rec.Code != 400 {
+		t.Errorf("unknown field: %d", rec.Code)
+	}
+}
+
+func TestGCNeedsExplicitGrant(t *testing.T) {
+	// gc has no session target: it needs its own op grant, and no other
+	// op implies it.
+	h := newHarness(t, all("list", "read", "status", "threads", "send", "create", "run", "retire"))
+	if rec := h.post("gc", `{}`); rec.Code != 403 || errReason(t, rec) != safesend.ReasonForbidden {
+		t.Errorf("gc without grant: %d %s", rec.Code, rec.Body)
+	}
+	if len(h.backend.gced) != 0 {
+		t.Error("gc reached the backend")
+	}
+	// Empty body stands for {} (emptyOK), so `{}` and `` both work once granted.
+	h = newHarness(t, all("gc"))
+	for _, body := range []string{`{}`, ``, `{"dry_run":true}`} {
+		rec := h.post("gc", body)
+		if rec.Code != 200 {
+			t.Errorf("gc %q: %d %s", body, rec.Code, rec.Body)
+		}
+	}
+	if len(h.backend.gced) != 3 || !h.backend.gced[2].DryRun {
+		t.Errorf("backend gced = %+v", h.backend.gced)
+	}
+	if !strings.Contains(h.logs.String(), `op=gc`) {
+		t.Errorf("log = %s", h.logs.String())
+	}
+}
+
+func TestGCErrorMapping(t *testing.T) {
+	h := newHarness(t, all("gc"))
+	h.backend.gcErr = ops.Refuse(safesend.ReasonFailed, "boom")
+	if rec := h.post("gc", `{}`); rec.Code != 500 || errReason(t, rec) != safesend.ReasonFailed {
 		t.Errorf("refusal: %d %s", rec.Code, rec.Body)
 	}
 }

@@ -219,6 +219,32 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, a *access) {
 		}
 		a.target = clip(req.Address)
 		s.runOp(w, r, a, id, req)
+	case gatewayapi.OpRetire:
+		var req gatewayapi.RetireRequest
+		if !s.decode(w, a, body, &req, false) {
+			return
+		}
+		a.target = clip(req.Address)
+		s.perSession(w, a, id, op, req.Address, func(ctx context.Context) (any, error) {
+			return s.backend.Retire(ctx, ops.RetireRequest{Address: req.Address, DryRun: req.DryRun})
+		}, r)
+	case gatewayapi.OpGC:
+		var req gatewayapi.GCRequest
+		if !s.decode(w, a, body, &req, true) {
+			return
+		}
+		a.target = "-"
+		if !opAllowed(id.Grants, op) {
+			s.refuse(w, a, http.StatusForbidden, safesend.ReasonForbidden, "gc is not permitted")
+			return
+		}
+		out, err := s.backend.GC(r.Context(), ops.GCRequest{DryRun: req.DryRun})
+		if err != nil {
+			e := ops.AsError(err)
+			s.refuse(w, a, gatewayapi.HTTPStatus(e.Reason), e.Reason, e.Detail)
+			return
+		}
+		s.reply(w, a, http.StatusOK, out)
 	}
 }
 

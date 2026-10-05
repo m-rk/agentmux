@@ -10,12 +10,16 @@ const (
 	unitPath        = "/etc/systemd/system/agentmuxd.service"
 	doctorUnitPath  = "/etc/systemd/system/agentmuxd-doctor.service"
 	doctorTimerPath = "/etc/systemd/system/agentmuxd-doctor.timer"
+	gcUnitPath      = "/etc/systemd/system/agentmuxd-gc.service"
+	gcTimerPath     = "/etc/systemd/system/agentmuxd-gc.timer"
 	daemonSocket    = "/run/agentmux/agentmuxd.sock"
 	unitName        = "agentmuxd.service"
 	// Use agentmuxd-* rather than agentmux-* so these host jobs cannot
 	// collide with the unit for an ordinary instance named "doctor".
 	doctorUnitName  = "agentmuxd-doctor.service"
 	doctorTimerName = "agentmuxd-doctor.timer"
+	gcUnitName      = "agentmuxd-gc.service"
+	gcTimerName     = "agentmuxd-gc.timer"
 	unitTemplate    = `[Unit]
 Description=agentmux daemon
 After=network-online.target
@@ -47,6 +51,29 @@ Description=Run agentmux doctor after the daily refresh window
 
 [Timer]
 OnCalendar=*-*-* %s:00 Australia/Perth
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+`
+
+	gcUnitTemplate = `[Unit]
+Description=agentmux retired-session garbage collection
+After=agentmuxd.service network-online.target
+Wants=network-online.target
+Requires=agentmuxd.service
+
+[Service]
+Type=oneshot
+ExecStart=%s gc
+TimeoutStartSec=15min
+`
+
+	gcTimerTemplate = `[Unit]
+Description=Run agentmux gc daily
+
+[Timer]
+OnCalendar=daily
 Persistent=true
 
 [Install]
@@ -89,6 +116,14 @@ func Install(doctorTime string) error {
 	if err := os.WriteFile(doctorTimerPath, []byte(doctorTimer), 0o644); err != nil {
 		return fmt.Errorf("writing %s: %w", doctorTimerPath, err)
 	}
+	gcUnit := fmt.Sprintf(gcUnitTemplate, binPath)
+	if err := os.WriteFile(gcUnitPath, []byte(gcUnit), 0o644); err != nil {
+		return fmt.Errorf("writing %s: %w", gcUnitPath, err)
+	}
+	gcTimer := gcTimerTemplate
+	if err := os.WriteFile(gcTimerPath, []byte(gcTimer), 0o644); err != nil {
+		return fmt.Errorf("writing %s: %w", gcTimerPath, err)
+	}
 
 	if err := runCmd("systemctl", "daemon-reload"); err != nil {
 		return err
@@ -99,8 +134,11 @@ func Install(doctorTime string) error {
 	if err := runCmd("systemctl", "enable", "--now", doctorTimerName); err != nil {
 		return err
 	}
+	if err := runCmd("systemctl", "enable", "--now", gcTimerName); err != nil {
+		return err
+	}
 
-	fmt.Printf("Installed and started %s plus %s at %s Australia/Perth (binary: %s, socket: %s)\n", unitName, doctorTimerName, doctorTime, binPath, daemonSocket)
+	fmt.Printf("Installed and started %s plus %s at %s Australia/Perth plus %s (binary: %s, socket: %s)\n", unitName, doctorTimerName, doctorTime, gcTimerName, binPath, daemonSocket)
 	return nil
 }
 
@@ -111,8 +149,9 @@ func Uninstall() error {
 		return fmt.Errorf("must be run as root; try: sudo agentmux daemon uninstall")
 	}
 	_ = runCmd("systemctl", "disable", "--now", doctorTimerName)
+	_ = runCmd("systemctl", "disable", "--now", gcTimerName)
 	_ = runCmd("systemctl", "disable", "--now", unitName)
-	for _, path := range []string{doctorTimerPath, doctorUnitPath, unitPath} {
+	for _, path := range []string{gcTimerPath, gcUnitPath, doctorTimerPath, doctorUnitPath, unitPath} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("removing %s: %w", path, err)
 		}
@@ -132,5 +171,7 @@ func Status() (string, error) {
 	enabled := captureCmd("systemctl", "is-enabled", unitName)
 	doctorActive := captureCmd("systemctl", "is-active", doctorTimerName)
 	doctorEnabled := captureCmd("systemctl", "is-enabled", doctorTimerName)
-	return fmt.Sprintf("unit: %s\nactive: %s\nenabled: %s\nsocket: %s\n\ndoctor timer: %s\nactive: %s\nenabled: %s", unitPath, active, enabled, daemonSocket, doctorTimerPath, doctorActive, doctorEnabled), nil
+	gcActive := captureCmd("systemctl", "is-active", gcTimerName)
+	gcEnabled := captureCmd("systemctl", "is-enabled", gcTimerName)
+	return fmt.Sprintf("unit: %s\nactive: %s\nenabled: %s\nsocket: %s\n\ndoctor timer: %s\nactive: %s\nenabled: %s\n\ngc timer: %s\nactive: %s\nenabled: %s", unitPath, active, enabled, daemonSocket, doctorTimerPath, doctorActive, doctorEnabled, gcTimerPath, gcActive, gcEnabled), nil
 }

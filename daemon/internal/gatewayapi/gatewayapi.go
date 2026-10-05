@@ -30,11 +30,13 @@ const (
 	OpSend    = "send"
 	OpCreate  = "create"
 	OpRun     = "run"
+	OpRetire  = "retire"
+	OpGC      = "gc"
 	OpEvents  = "events" // reserved for phase 5
 )
 
 // Ops lists every operation a capability may name.
-var Ops = []string{OpList, OpStatus, OpThreads, OpRead, OpSend, OpCreate, OpRun, OpEvents}
+var Ops = []string{OpList, OpStatus, OpThreads, OpRead, OpSend, OpCreate, OpRun, OpRetire, OpGC, OpEvents}
 
 // Path is the URL path for op, e.g. /v1/send.
 func Path(op string) string { return "/v1/" + op }
@@ -128,6 +130,26 @@ type RunRequest struct {
 // RunResponse is the thread plus its state; a refusal is a non-2xx
 // ErrorResponse.
 type RunResponse = ops.RunResult
+
+// RetireRequest ends one finished task session on the host. Only task-*
+// instances are touched; anything else is refused.
+type RetireRequest struct {
+	Address string `json:"address"`
+	DryRun  bool   `json:"dry_run,omitempty"`
+}
+
+// RetireResponse is the retire outcome; a refusal is a non-2xx
+// ErrorResponse.
+type RetireResponse = ops.RetireResult
+
+// GCRequest deletes the leftovers of retired sessions older than the
+// host retention.
+type GCRequest struct {
+	DryRun bool `json:"dry_run,omitempty"`
+}
+
+// GCResponse is the gc outcome; a refusal is a non-2xx ErrorResponse.
+type GCResponse = ops.GCResult
 
 // ErrorResponse is the body of every non-2xx reply.
 type ErrorResponse struct {

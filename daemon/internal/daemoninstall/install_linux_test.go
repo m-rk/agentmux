@@ -30,4 +30,27 @@ func TestDoctorSystemdNamesDoNotOverlapInstanceUnits(t *testing.T) {
 	if strings.HasPrefix(doctorUnitName, "agentmux-") || strings.HasPrefix(doctorTimerName, "agentmux-") {
 		t.Fatalf("doctor units overlap the agentmux-<instance> namespace: %s / %s", doctorUnitName, doctorTimerName)
 	}
+	if strings.HasPrefix(gcUnitName, "agentmux-") || strings.HasPrefix(gcTimerName, "agentmux-") {
+		t.Fatalf("gc units overlap the agentmux-<instance> namespace: %s / %s", gcUnitName, gcTimerName)
+	}
+}
+
+func TestGCSystemdSchedule(t *testing.T) {
+	service := fmt.Sprintf(gcUnitTemplate, binPath)
+	for _, want := range []string{
+		"After=agentmuxd.service network-online.target",
+		"Requires=agentmuxd.service",
+		"ExecStart=/usr/local/bin/agentmux gc",
+		"TimeoutStartSec=15min",
+	} {
+		if !strings.Contains(service, want) {
+			t.Errorf("gc service is missing %q", want)
+		}
+	}
+	if !strings.Contains(gcTimerTemplate, "OnCalendar=daily") {
+		t.Error("gc timer should run daily")
+	}
+	if !strings.Contains(gcTimerTemplate, "Persistent=true") {
+		t.Error("gc timer should catch up after host downtime")
+	}
 }

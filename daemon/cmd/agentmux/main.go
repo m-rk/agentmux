@@ -31,6 +31,8 @@ func main() {
 		runListCmd(args[1:])
 	case "sessions":
 		runSessionsCmd(args[1:])
+	case "gc":
+		runGCCmd(args[1:])
 	case "control":
 		runControlCmd(args[1:])
 	case "view":

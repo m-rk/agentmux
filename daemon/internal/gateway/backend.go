@@ -19,6 +19,8 @@ type Backend interface {
 	Send(ctx context.Context, req ops.SendRequest) ops.SendResult
 	Create(ctx context.Context, req ops.CreateRequest) (ops.CreateResult, error)
 	Run(ctx context.Context, req ops.RunRequest) (ops.RunResult, error)
+	Retire(ctx context.Context, req ops.RetireRequest) (ops.RetireResult, error)
+	GC(ctx context.Context, req ops.GCRequest) (ops.GCResult, error)
 }
 
 // LocalBackend serves this host's sessions through the local daemon.
@@ -50,4 +52,12 @@ func (b LocalBackend) Create(ctx context.Context, req ops.CreateRequest) (ops.Cr
 
 func (b LocalBackend) Run(ctx context.Context, req ops.RunRequest) (ops.RunResult, error) {
 	return b.Env.Run(ctx, req)
+}
+
+func (b LocalBackend) Retire(ctx context.Context, req ops.RetireRequest) (ops.RetireResult, error) {
+	return b.Env.Retire(ctx, req)
+}
+
+func (b LocalBackend) GC(ctx context.Context, req ops.GCRequest) (ops.GCResult, error) {
+	return b.Env.GC(ctx, req)
 }

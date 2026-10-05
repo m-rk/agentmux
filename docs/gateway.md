@@ -70,13 +70,15 @@ Each entry of the array is a grant object:
 
 | field      | meaning |
 |------------|---------|
-| `ops`      | any of `list`, `status`, `threads`, `read`, `send`, `create`, `run`, `events` |
+| `ops`      | any of `list`, `status`, `threads`, `read`, `send`, `create`, `run`, `retire`, `gc`, `events` |
 | `sessions` | `path.Match` patterns over `<instance>@<host>`; `*` does not match `/` |
 
 Entries add up: a call is allowed if any one entry allows it. There is no
 deny. `create` starts an agent and a Git worktree on the host, so it is never
 implied by another op: grant it explicitly, with a session pattern that limits
-the names it may create (`task-*@build-box` above). `ip: tcp:4288` is the network path; the `app` capability is the
+the names it may create (`task-*@build-box` above). The same holds for
+`retire` (ends a session and deletes its branch) and `gc` (deletes retired
+leftovers host-wide). `ip: tcp:4288` is the network path; the `app` capability is the
 authorization.
 
 ## Starting a task session
@@ -170,6 +172,66 @@ From a shell, routed by the instance's host:
 ```sh
 agentmux sessions run -file prompt.md site-amp@build-box
 agentmux sessions run -file followup.md -thread T-11111111-1111-4111-8111-111111111111 site-amp@build-box
+```
+
+## Retiring a task session
+
+Once a task is done and its work is on `main`, its runner session has
+served its purpose. `retire` ends it: for an amp instance it archives
+the thread with `amp threads archive` (the thread stays readable on
+ampcode.com); for every agent it stops the session, removes the
+instance's units and registry entry, and removes the worktree. The
+branch is deleted only when `main` contains its commits. Claude Code
+transcripts are kept; an opencode session's stored rows are recorded so
+`gc` can delete them later. Only `task-*` instances are ever touched —
+anything else is refused (`forbidden`) — and a dirty worktree or a
+branch with commits not on `main` is refused (`invalid`) so the caller
+can raise an ask instead.
+
+```json
+POST /v1/retire
+{"address": "task-42@build-box"}
+```
+
+| field     | meaning |
+|-----------|---------|
+| `address` | `<instance>@<host>` (no `#thread`); the grant is checked against it |
+| `dry_run` | optional; list what would go without changing anything |
+
+From a shell, routed by the instance's host:
+
+```sh
+agentmux sessions retire task-42@build-box
+agentmux sessions retire -dry-run task-42@build-box
+```
+
+## Garbage-collecting retired sessions
+
+`gc` deletes the leftovers of retired sessions older than the host
+retention (`~/.config/agentmux/retention.yaml`, default 14 days):
+archived amp threads (`amp threads delete`) and stored opencode
+sessions. Claude Code transcripts are never deleted. Unlike every other
+op, `gc` names no session, so the grant only needs the op itself:
+
+```json
+"example.com/cap/agentmux-gateway": [
+  {"ops": ["retire"], "sessions": ["task-*@build-box"]},
+  {"ops": ["gc"], "sessions": ["*@*"]}
+]
+```
+
+```json
+POST /v1/gc
+{"dry_run": true}
+```
+
+`dry_run` lists what would go. Show the operator a first `gc -dry-run`
+to approve before the first real collection. From a shell (every known
+host, or one with `-host`):
+
+```sh
+agentmux gc -dry-run
+agentmux gc -dry-run -host build-box
 ```
 
 ## Running it

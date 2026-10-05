@@ -72,6 +72,27 @@ func TestSuccess(t *testing.T) {
 	var _ transcript.Page = page
 }
 
+func TestRetireAndGCPaths(t *testing.T) {
+	ctx := context.Background()
+
+	s := &stub{status: 200, body: `{"address":"task-1@box","name":"task-1","agent":"amp","status":"idle","workdir":"/w","state":"ready"}`}
+	res, err := s.server(t).Retire(ctx, gatewayapi.RetireRequest{Address: "task-1@box"})
+	if err != nil || res.Address != "task-1@box" || s.path != "/v1/retire" || s.method != "POST" {
+		t.Fatalf("retire: %+v %v (%s %s)", res, err, s.method, s.path)
+	}
+	var rq map[string]any
+	json.Unmarshal(s.req, &rq)
+	if rq["address"] != "task-1@box" {
+		t.Fatalf("retire request: %s", s.req)
+	}
+
+	s = &stub{status: 200, body: `{"retention_days":14,"deleted":[{"instance":"task-1","agent":"amp"}],"kept":[]}`}
+	gc, err := s.server(t).GC(ctx, gatewayapi.GCRequest{DryRun: true})
+	if err != nil || gc.RetentionDays != 14 || len(gc.Deleted) != 1 || s.path != "/v1/gc" {
+		t.Fatalf("gc: %+v %v %s", gc, err, s.path)
+	}
+}
+
 func TestErrorResponse(t *testing.T) {
 	s := &stub{status: 404, body: `{"error":{"reason":"not_found","detail":"no instance \"a\" on this host"}}`}
 	_, err := s.server(t).Status(context.Background(), gatewayapi.StatusRequest{Address: "a@box"})

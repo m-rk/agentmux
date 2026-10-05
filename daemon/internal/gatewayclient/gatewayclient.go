@@ -99,6 +99,20 @@ func (c *Client) Run(ctx context.Context, req gatewayapi.RunRequest) (gatewayapi
 	return out, err
 }
 
+// Retire ends one finished task session on the host.
+func (c *Client) Retire(ctx context.Context, req gatewayapi.RetireRequest) (gatewayapi.RetireResponse, error) {
+	var out gatewayapi.RetireResponse
+	err := c.call(ctx, gatewayapi.OpRetire, QueryTimeout, req, &out)
+	return out, err
+}
+
+// GC deletes the leftovers of retired sessions older than the host retention.
+func (c *Client) GC(ctx context.Context, req gatewayapi.GCRequest) (gatewayapi.GCResponse, error) {
+	var out gatewayapi.GCResponse
+	err := c.call(ctx, gatewayapi.OpGC, QueryTimeout, req, &out)
+	return out, err
+}
+
 // Send delivers a message. Like ops.Env.Send it never returns an error: a
 // refusal, a transport failure or a bad reply all come back as a SendResult
 // with OK false.

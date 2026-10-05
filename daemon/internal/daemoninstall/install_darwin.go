@@ -12,6 +12,9 @@ const (
 	// Instance labels occupy com.agentmux.<name>; keep the host doctor out of
 	// that namespace so an instance named "doctor" cannot collide with it.
 	doctorLabel = "com.m-rk.agentmux.doctor"
+	// gcLabel is the daily retired-session collection; same namespace
+	// reasoning as the doctor (an instance named "gc" must not collide).
+	gcLabel = "com.m-rk.agentmux.gc"
 )
 
 const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
@@ -68,6 +71,34 @@ const doctorPlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 </plist>
 `
 
+const gcPlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>%s</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>%s</string>
+        <string>gc</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>%s/gc.log</string>
+    <key>StandardErrorPath</key>
+    <string>%s/gc.err.log</string>
+</dict>
+</plist>
+`
+
 // agentmuxDir returns ~/.agentmux, the root for everything daemoninstall
 // manages on macOS: bin/ (the pinned binary), run/ (the daemon's Unix
 // socket), log/ (launchd's stdout/stderr redirection).
@@ -98,6 +129,10 @@ func plistPath() (string, error) {
 
 func doctorPlistPath() (string, error) {
 	return launchAgentPath(doctorLabel)
+}
+
+func gcPlistPath() (string, error) {
+	return launchAgentPath(gcLabel)
 }
 
 func launchAgentPath(agentLabel string) (string, error) {
@@ -156,6 +191,14 @@ func Install(doctorTime string) error {
 	if err := os.WriteFile(doctorPlist, []byte(doctorContent), 0o644); err != nil {
 		return fmt.Errorf("writing %s: %w", doctorPlist, err)
 	}
+	gcPlist, err := gcPlistPath()
+	if err != nil {
+		return err
+	}
+	gcContent := fmt.Sprintf(gcPlistTemplate, gcLabel, bin, logDir, logDir)
+	if err := os.WriteFile(gcPlist, []byte(gcContent), 0o644); err != nil {
+		return fmt.Errorf("writing %s: %w", gcPlist, err)
+	}
 
 	domain := "gui/" + strconv.Itoa(os.Getuid())
 	_ = runCmd("launchctl", "bootout", domain, plist) // ignore error: may not be loaded yet
@@ -169,8 +212,12 @@ func Install(doctorTime string) error {
 	if err := runCmd("launchctl", "bootstrap", domain, doctorPlist); err != nil {
 		return err
 	}
+	_ = runCmd("launchctl", "bootout", domain, gcPlist)
+	if err := runCmd("launchctl", "bootstrap", domain, gcPlist); err != nil {
+		return err
+	}
 
-	fmt.Printf("Installed and started %s plus %s at %s local time (binary: %s, socket: %s)\n", label, doctorLabel, doctorTime, bin, sock)
+	fmt.Printf("Installed and started %s plus %s at %s local time plus %s (binary: %s, socket: %s)\n", label, doctorLabel, doctorTime, gcLabel, bin, sock)
 	return nil
 }
 
@@ -184,9 +231,14 @@ func Uninstall() error {
 	if doctorErr != nil {
 		return doctorErr
 	}
+	gcPlist, gcErr := gcPlistPath()
+	if gcErr != nil {
+		return gcErr
+	}
+	_ = runCmd("launchctl", "bootout", domain, gcPlist)
 	_ = runCmd("launchctl", "bootout", domain, doctorPlist)
 	_ = runCmd("launchctl", "bootout", domain, plist)
-	for _, path := range []string{doctorPlist, plist} {
+	for _, path := range []string{gcPlist, doctorPlist, plist} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("removing %s: %w", path, err)
 		}
@@ -209,5 +261,7 @@ func Status() (string, error) {
 	out := captureCmd("launchctl", "print", domain+"/"+label)
 	doctorPlist, _ := doctorPlistPath()
 	doctorOut := captureCmd("launchctl", "print", domain+"/"+doctorLabel)
-	return fmt.Sprintf("plist: %s\nsocket: %s\n\n%s\n\ndoctor plist: %s\n%s", plist, sock, out, doctorPlist, doctorOut), nil
+	gcPlist, _ := gcPlistPath()
+	gcOut := captureCmd("launchctl", "print", domain+"/"+gcLabel)
+	return fmt.Sprintf("plist: %s\nsocket: %s\n\n%s\n\ndoctor plist: %s\n%s\n\ngc plist: %s\n%s", plist, sock, out, doctorPlist, doctorOut, gcPlist, gcOut), nil
 }
