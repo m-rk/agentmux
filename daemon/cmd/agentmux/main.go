@@ -113,6 +113,8 @@ Usage:
   agentmux asks post -title T -body-file F [-tag NAME ...] [-json]   post an ask that mentions the configured user
   agentmux asks reply -thread ID -body-file F [-mention]
   agentmux asks read -thread ID [-after MESSAGE_ID] [-json]
+  agentmux asks react -thread ID -message ID -emoji EMOJI
+  agentmux asks edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL]
   agentmux asks close -thread ID [-tag NAME]
   agentmux asks serve                                          record Discord button clicks for asks
   agentmux threadwatch serve [-dry-run] [-once]   follow agent sessions and alert on Discord (see -h)

@@ -44,7 +44,9 @@ or credential.
    refuses to touch anything that is not an `ask`-tagged post in the
    configured forum. Post, reply and read need no extra permission. Posting
    and replying use the webhook and reading uses the bot's existing View
-   Channels and Read Message History.
+   Channels and Read Message History. `asks react` needs **Add Reactions**,
+   and `asks edit` needs **Send Messages in Threads** (message edits go
+   through the bot), both as channel overrides on the forum.
 
 ## Commands
 
@@ -59,6 +61,12 @@ agentmux asks reply -thread ID -body-file F [-mention]
 
 agentmux asks read -thread ID [-after MESSAGE_ID] -json
 # [{"id","author_id","author_name","author_is_configured_user","text","timestamp","answers":[…]}, …] oldest first
+
+agentmux asks react -thread ID -message ID -emoji 🤖   # bot adds a reaction to a posted message
+
+agentmux asks edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL]
+# replace the body and/or settle the buttons: -disable-buttons greys them all
+# out, -chosen LABEL keeps that one highlighted (success style) like a click
 
 agentmux asks serve   # long-running: records button clicks (buttons only)
 
@@ -86,8 +94,21 @@ agentmux asks close -thread ID [-tag NAME] [-lock]   # default tag: answered
   `failed`, `answered`) for the one given, keeps other tags, then archives
   the thread. It does not lock it, so the next `post -thread` can reopen it;
   add `-lock` for a task that's finished.
-- `post -thread`, `reply`, `read` and `close` refuse threads that aren't `ask`-tagged posts
-  in the configured forum.
+- `post -thread`, `reply`, `read`, `react`, `edit` and `close` refuse threads
+  that aren't `ask`-tagged posts in the configured forum.
+- `react` has the bot add one emoji to a posted message (e.g. 🤖 once an
+  autopilot or orchestrator has answered the ask outside Discord), so the
+  post shows the choice with no person clicking. Needs Add Reactions, like
+  seeding.
+- `edit` changes a posted message in place: `-body-file F` (`-` for stdin)
+  replaces the text, `-disable-buttons` greys every button out, and
+  `-chosen LABEL` keeps that one highlighted (success style, ✓ prefix) with
+  the rest grey — the same settled look a click gets. `-chosen` must match a
+  button on the message or the edit fails, so a typo can't silently grey
+  everything. Only the body is rewritten, never re-mentioned, so an edit
+  pings nobody. Typical autopilot settle: `asks react -emoji 🤖` then
+  `asks edit -disable-buttons -chosen "<label>"`. Message edits need the bot
+  (Send Messages in Threads on the forum).
 
 ## One-tap answers: reactions and buttons
 

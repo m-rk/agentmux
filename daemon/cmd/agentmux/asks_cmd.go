@@ -30,6 +30,10 @@ func runAsksCmd(args []string) {
 		err = runAsksReply(args[1:])
 	case "read":
 		err = runAsksRead(args[1:])
+	case "react":
+		err = runAsksReact(args[1:])
+	case "edit":
+		err = runAsksEdit(args[1:])
 	case "close":
 		err = runAsksClose(args[1:])
 	case "serve":
@@ -49,6 +53,8 @@ func asksUsage() {
   agentmux asks post (-title T | -thread ID [-title T]) -body-file F [-tag NAME ...] [-react EMOJI,EMOJI,...] [-button LABEL ...] [-json]
   agentmux asks reply -thread ID -body-file F [-mention]
   agentmux asks read -thread ID [-after MESSAGE_ID] [-json]
+  agentmux asks react -thread ID -message ID -emoji EMOJI
+  agentmux asks edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL]
   agentmux asks close -thread ID [-tag NAME] [-lock]
   agentmux asks serve                      hold the Discord gateway open to record button clicks`)
 }
@@ -220,6 +226,62 @@ func runAsksClose(args []string) error {
 		return err
 	}
 	fmt.Printf("Closed ask thread %s as %q.\n", *thread, *tag)
+	return nil
+}
+
+func runAsksReact(args []string) error {
+	fs := flag.NewFlagSet("asks react", flag.ContinueOnError)
+	thread := fs.String("thread", "", "ask thread ID")
+	message := fs.String("message", "", "message ID to react to")
+	emoji := fs.String("emoji", "", "emoji for the bot to add (e.g. 🤖)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	client, err := asksClient()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := client.ReactAsk(ctx, *thread, *message, *emoji); err != nil {
+		return err
+	}
+	fmt.Printf("Reacted %s to message %s in ask thread %s.\n", *emoji, *message, *thread)
+	return nil
+}
+
+func runAsksEdit(args []string) error {
+	fs := flag.NewFlagSet("asks edit", flag.ContinueOnError)
+	thread := fs.String("thread", "", "ask thread ID")
+	message := fs.String("message", "", "message ID to edit")
+	bodyFile := fs.String("body-file", "", "file with the replacement body ('-' for stdin); empty keeps the message")
+	disable := fs.Bool("disable-buttons", false, "grey every button out")
+	chosen := fs.String("chosen", "", "button label to keep highlighted (success style); the rest go grey")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	var body string
+	if *bodyFile != "" {
+		data, err := readBodyFile(*bodyFile)
+		if err != nil {
+			return err
+		}
+		body = data
+	}
+	client, err := asksClient()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := client.EditAsk(ctx, *thread, *message, collab.EditAskOptions{
+		Body:           body,
+		DisableButtons: *disable,
+		Chosen:         *chosen,
+	}); err != nil {
+		return err
+	}
+	fmt.Printf("Edited message %s in ask thread %s.\n", *message, *thread)
 	return nil
 }
 
