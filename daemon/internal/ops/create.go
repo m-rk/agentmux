@@ -24,7 +24,7 @@ type CreateRequest struct {
 	Template   string   // address of an existing instance on this host
 	Instance   string   // name of the new instance
 	Branch     string   // branch the worktree is on
-	Base       string   // start point for a new branch; default origin/HEAD's target, else HEAD
+	Base       string   // branch on origin a new branch starts from, fetched first; default origin/HEAD's target, else HEAD
 	Worktree   string   // directory name under <repo>-worktrees; default Instance
 	AllowFiles []string // absolute paths outside the worktree the agent may read and edit
 }
@@ -36,6 +36,11 @@ type CreateResult struct {
 	// Created is false when an instance with that name and workdir already
 	// existed and was reused.
 	Created bool `json:"created"`
+	// Base and BaseCommit are the origin branch and the commit the new
+	// worktree started from. Set only when the request had a Base and this
+	// call made the branch from it.
+	Base       string `json:"base,omitempty"`
+	BaseCommit string `json:"base_commit,omitempty"`
 }
 
 // Daemon is the part of the daemon client that Create uses.
@@ -101,8 +106,9 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 	if req.Branch == "" || strings.HasPrefix(req.Branch, "-") || strings.ContainsAny(req.Branch, "\x00\r\n") {
 		return CreateResult{}, Refuse(safesend.ReasonInvalid, "branch %q is not a valid branch name", req.Branch)
 	}
-	if strings.HasPrefix(req.Base, "-") || strings.ContainsAny(req.Base, "\x00\r\n") {
-		return CreateResult{}, Refuse(safesend.ReasonInvalid, "base %q is not a valid revision", req.Base)
+	req.Base = strings.TrimPrefix(req.Base, "origin/")
+	if req.Base != "" && (strings.HasPrefix(req.Base, "-") || strings.ContainsAny(req.Base, "\x00\r\n")) {
+		return CreateResult{}, Refuse(safesend.ReasonInvalid, "base %q is not a valid branch name", req.Base)
 	}
 
 	fields, err := session.ReadRegistry(tmpl.Instance)
@@ -159,7 +165,13 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 		return CreateResult{}, Refuse(safesend.ReasonInvalid, "instance %q already exists with workdir %s, not %s", req.Instance, existing.Workdir, wtPath)
 	}
 
-	if err := e.ensureWorktree(ctx, toplevel, wtPath, req.Branch, req.Base); err != nil {
+	if req.Base != "" {
+		if b, err := e.git(ctx, toplevel, "check-ref-format", "--branch", req.Base); err != nil || b != req.Base {
+			return CreateResult{}, Refuse(safesend.ReasonInvalid, "base %q is not a valid branch name", req.Base)
+		}
+	}
+	baseCommit, err := e.ensureWorktree(ctx, toplevel, wtPath, req.Branch, req.Base)
+	if err != nil {
 		return CreateResult{}, err
 	}
 
@@ -198,58 +210,81 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 	}
 	sess := SessionFrom(tmpl.Host, inst)
 	sess.Project = ProjectOf(inst.Name, inst.Workdir, ProjectKeys())
-	return CreateResult{Session: sess, Branch: req.Branch, Created: created}, nil
+	res := CreateResult{Session: sess, Branch: req.Branch, Created: created}
+	if baseCommit != "" {
+		res.Base, res.BaseCommit = req.Base, baseCommit
+	}
+	return res, nil
 }
 
 // ensureWorktree makes wtPath a worktree on branch, or accepts one that
-// already is.
-func (e Env) ensureWorktree(ctx context.Context, repo, wtPath, branch, base string) error {
-	// A fetch that fails (offline, no origin) just leaves the base stale.
-	fctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	_, _ = e.git(fctx, repo, "fetch", "origin")
-	cancel()
+// already is. It returns the commit a new branch was started from when base
+// was given, else "".
+func (e Env) ensureWorktree(ctx context.Context, repo, wtPath, branch, base string) (string, error) {
+	if base == "" {
+		// A fetch that fails (offline, no origin) just leaves the start stale.
+		fctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		_, _ = e.git(fctx, repo, "fetch", "origin")
+		cancel()
+	}
 
 	wts, err := e.worktrees(ctx, repo)
 	if err != nil {
-		return Refuse(safesend.ReasonFailed, "%v", err)
+		return "", Refuse(safesend.ReasonFailed, "%v", err)
 	}
 	if _, err := os.Lstat(wtPath); err == nil {
 		for _, wt := range wts {
 			if samePath(wt.path, wtPath) {
 				if wt.branch == "refs/heads/"+branch {
-					return nil
+					return "", nil
 				}
-				return Refuse(safesend.ReasonInvalid, "worktree %s exists on %s, not branch %s", wtPath, strings.TrimPrefix(wt.branch, "refs/heads/"), branch)
+				return "", Refuse(safesend.ReasonInvalid, "worktree %s exists on %s, not branch %s", wtPath, strings.TrimPrefix(wt.branch, "refs/heads/"), branch)
 			}
 		}
-		return Refuse(safesend.ReasonInvalid, "%s already exists and is not a worktree of this repository", wtPath)
+		return "", Refuse(safesend.ReasonInvalid, "%s already exists and is not a worktree of this repository", wtPath)
 	}
 
 	if _, err := e.git(ctx, repo, "show-ref", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
 		for _, wt := range wts {
 			if wt.branch == "refs/heads/"+branch {
-				return Refuse(safesend.ReasonInvalid, "branch %s is already checked out at %s", branch, wt.path)
+				return "", Refuse(safesend.ReasonInvalid, "branch %s is already checked out at %s", branch, wt.path)
 			}
 		}
 		if _, err := e.git(ctx, repo, "worktree", "add", wtPath, branch); err != nil {
-			return Refuse(safesend.ReasonFailed, "%v", err)
+			return "", Refuse(safesend.ReasonFailed, "%v", err)
 		}
-		return nil
+		return "", nil
 	}
 
-	if base == "" {
-		base = "HEAD"
+	start := ""
+	if base != "" {
+		// Start from the freshly fetched origin branch, never a local ref.
+		tracking := "refs/remotes/origin/" + base
+		fctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		_, err := e.git(fctx, repo, "fetch", "origin", "+refs/heads/"+base+":"+tracking)
+		cancel()
+		if err != nil {
+			return "", Refuse(safesend.ReasonFailed, "fetching base branch %s from origin: %v", base, err)
+		}
+		if start, err = e.git(ctx, repo, "rev-parse", "--verify", "--quiet", tracking+"^{commit}"); err != nil || start == "" {
+			return "", Refuse(safesend.ReasonFailed, "origin/%s is not a commit in the template's repository", base)
+		}
+	} else {
+		start = "HEAD"
 		if ref, err := e.git(ctx, repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"); err == nil && ref != "" {
-			base = ref
+			start = ref
+		}
+		if _, err := e.git(ctx, repo, "rev-parse", "--verify", "--quiet", start+"^{commit}"); err != nil {
+			return "", Refuse(safesend.ReasonInvalid, "start point %q is not a commit in the template's repository", start)
 		}
 	}
-	if _, err := e.git(ctx, repo, "rev-parse", "--verify", "--quiet", base+"^{commit}"); err != nil {
-		return Refuse(safesend.ReasonInvalid, "base %q is not a commit in the template's repository", base)
+	if _, err := e.git(ctx, repo, "worktree", "add", "-b", branch, wtPath, start); err != nil {
+		return "", Refuse(safesend.ReasonFailed, "%v", err)
 	}
-	if _, err := e.git(ctx, repo, "worktree", "add", "-b", branch, wtPath, base); err != nil {
-		return Refuse(safesend.ReasonFailed, "%v", err)
+	if base == "" {
+		return "", nil
 	}
-	return nil
+	return start, nil
 }
 
 type worktree struct{ path, branch string }

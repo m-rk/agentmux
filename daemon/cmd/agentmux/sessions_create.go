@@ -32,7 +32,7 @@ func runSessionsCreate(args []string) {
 	template := fs.String("template", "", "address of an existing instance on the target host to copy agent, model and provider from (required)")
 	instance := fs.String("instance", "", "name of the new instance (required)")
 	branch := fs.String("branch", "", "branch the worktree is on; created if it doesn't exist (required)")
-	base := fs.String("base", "", "start point for a new branch (default: origin/HEAD's target, else HEAD)")
+	base := fs.String("base", "", "origin branch a new worktree branch starts from: fetched first, refused if the fetch fails or origin/BASE is missing (default: origin/HEAD's target, else HEAD)")
 	worktree := fs.String("worktree", "", "worktree directory name (default: the instance name)")
 	var allowFiles stringList
 	fs.Var(&allowFiles, "allow-file", "absolute path, on the target host, of one file outside the worktree the agent may read and edit (repeatable)")
@@ -40,7 +40,7 @@ func runSessionsCreate(args []string) {
 	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml with the gateway URL of other hosts")
 	fs.Parse(args)
 	if fs.NArg() != 0 || *template == "" || *instance == "" || *branch == "" {
-		fmt.Fprintln(os.Stderr, "usage: agentmux sessions create [-json] [-socket PATH] [-hosts PATH] -template <instance>@<host> -instance NAME -branch B [-base REF] [-worktree NAME] [-allow-file PATH ...]")
+		fmt.Fprintln(os.Stderr, "usage: agentmux sessions create [-json] [-socket PATH] [-hosts PATH] -template <instance>@<host> -instance NAME -branch B [-base BRANCH] [-worktree NAME] [-allow-file PATH ...]")
 		os.Exit(2)
 	}
 
@@ -81,4 +81,7 @@ func runSessionsCreate(args []string) {
 		verb = "reused existing"
 	}
 	fmt.Printf("%s %s\nworkdir  %s\nbranch   %s\n", verb, res.Address, res.Workdir, res.Branch)
+	if res.BaseCommit != "" {
+		fmt.Printf("base     origin/%s @ %s\n", res.Base, res.BaseCommit)
+	}
 }

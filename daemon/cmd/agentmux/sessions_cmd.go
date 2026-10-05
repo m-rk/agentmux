@@ -35,7 +35,7 @@ const sessionsUsage = `usage:
   agentmux sessions send -by PRINCIPAL [-via relayed|dispatched|sent] [-from REF] [-correlation ID]
                          [-hosts PATH] [-wait DUR] [-json] <instance>@<host>[#<thread>] (TEXT | -file PATH|-)
   agentmux sessions create [-json] [-socket PATH] [-hosts PATH] -template <instance>@<host> -instance NAME -branch B
-                           [-base REF] [-worktree NAME] [-allow-file PATH ...]`
+                           [-base BRANCH] [-worktree NAME] [-allow-file PATH ...]`
 
 // runSessionsCmd is `agentmux sessions`: addressing and transcript access for
 // orchestrators. See docs/design/gateway.md (phases 1 and 2). Listing with

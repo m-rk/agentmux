@@ -87,7 +87,7 @@ orchestrator can start a task there.
 ```json
 POST /v1/create
 {"template": "web@build-box", "instance": "task-42", "branch": "feature/task-42",
- "base": "origin/main", "worktree": "task-42", "allow_files": ["/home/me/notes/task-42.md"]}
+ "base": "main", "worktree": "task-42", "allow_files": ["/home/me/notes/task-42.md"]}
 ```
 
 | field         | meaning |
@@ -95,13 +95,14 @@ POST /v1/create
 | `template`    | an existing instance on this host; its agent, provider, model, provider base URL, API key env var name and run user are copied |
 | `instance`    | name of the new instance; the grant is checked against `<instance>@<this host>` |
 | `branch`      | branch the worktree is on |
-| `base`        | optional start point for a new branch; default the `origin/HEAD` target, else `HEAD` |
+| `base`        | optional branch on `origin` a new branch starts from (`main`; a leading `origin/` is accepted). It is fetched first, and the call is refused (`failed`) if the fetch fails or `origin/<base>` is missing; a local ref is never used instead. Default (no `base`): the `origin/HEAD` target, else `HEAD`, after a best-effort `git fetch origin` |
 | `worktree`    | optional directory name, default the instance name |
 | `allow_files` | optional absolute paths on this host the agent may read and edit, as for `agentmux new -allow-file` |
 
 The worktree goes in `<parent of the template's repo>/<repo>-worktrees/<worktree>`,
 made from the template's workdir with `git worktree add -b <branch> <path>
-<base>` (after a best-effort `git fetch origin`). If the branch already exists
+<start>`. With `base`, that is `git fetch origin <base>` followed by
+`origin/<base>`. If the branch already exists
 and is not checked out, the worktree uses it. A worktree already at that path
 on that branch is reused; any other existing path is refused (`invalid`). An
 instance with that name and workdir is reused; with another workdir it is
@@ -111,20 +112,29 @@ poll `status`.
 ```json
 {"address": "task-42@build-box", "name": "task-42", "agent": "claude-code",
  "status": "running", "workdir": "/home/me/src/app-worktrees/task-42",
- "project": "owner/app", "branch": "feature/task-42", "created": true}
+ "project": "owner/app", "branch": "feature/task-42", "created": true,
+ "base": "main", "base_commit": "9fceb02d0ae598e95dc970b74767f19372d61af8"}
 ```
 
+`base` and `base_commit` (the commit the worktree started from) are present
+only when the request had a `base` and this call made the branch from it; a
+reused instance, worktree or existing branch reports neither.
+
 `created` is false when an existing instance was reused. A refusal is a non-2xx
-`{"error": {"reason", "detail"}}`: `invalid` (names, branch, base, worktree
+`{"error": {"reason", "detail"}}`: `invalid` (names, branch, base name, worktree
 path, allow-file, or an instance name clash), `not_found` (template),
 `forbidden`, `rate_limited`, `unsupported` (the template's workdir is not in a
-Git checkout, or its run user is not the gateway's user), `failed`.
+Git checkout, or its run user is not the gateway's user), `failed` (including a `base` that could not be fetched or is missing on origin).
 
 From a shell, routed by the template's host:
 
 ```sh
 agentmux sessions create -template web@build-box -instance task-42 -branch feature/task-42
+agentmux sessions create -template web@build-box -instance task-42 -branch feature/task-42 -base main
 ```
+
+`-base` is listed in `agentmux sessions create -h`; a caller can detect support
+from that line. `-json` adds `base` and `base_commit` to the result.
 
 ## Running it
 
