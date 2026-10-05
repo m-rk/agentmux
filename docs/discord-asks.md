@@ -91,8 +91,9 @@ agentmux asks close -thread ID [-tag NAME] [-lock]   # default tag: answered
 
 ## One-tap answers: reactions and buttons
 
-Two ways to answer without typing. They are built side by side so one can be
-picked; a typed reply still counts as "Other" either way. Both show up in
+Two ways to answer without typing. Both are implemented; **buttons were
+picked** (2026-10-05) as the one MERG-9 consumes, and reactions remain
+available. A typed reply still counts as "Other" either way. Both show up in
 `asks read -json` as an `answers` array on the message that was reacted to or
 clicked:
 
