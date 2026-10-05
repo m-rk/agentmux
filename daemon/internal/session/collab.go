@@ -11,6 +11,7 @@ import (
 	"github.com/m-rk/agentmux/daemon/internal/collab"
 	"github.com/m-rk/agentmux/daemon/internal/discordnotify"
 	"github.com/m-rk/agentmux/daemon/internal/provision"
+	"github.com/m-rk/agentmux/daemon/internal/safesend"
 )
 
 const (
@@ -121,13 +122,13 @@ func syncCollaboration(name string) error {
 		if err != nil || strings.TrimSpace(string(currentKey)) != strings.TrimSpace(string(sessionKeyBytes)) {
 			return nil
 		}
-		out, err := tmux(
-			"-L", socket,
-			"send-keys", "-t", session, "-l", delivery.Prompt,
-			";", "send-keys", "-t", session, "Enter",
-		).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("delivering Discord collaboration to %s: %w: %s", session, err, strings.TrimSpace(string(out)))
+		if safesend.Classify(agent, string(pane)) == safesend.StateDraft {
+			// Someone's real draft (or a stuck earlier paste): typing on top of it
+			// would merge the two. Skip; the next tick retries.
+			return nil
+		}
+		if err := deliverCollabPrompt(tmux, socket, session, agent, delivery.Prompt); err != nil {
+			return fmt.Errorf("delivering Discord collaboration to %s: %w", session, err)
 		}
 		delivered = true
 		return nil
@@ -200,4 +201,68 @@ func collaborationPaneSafe(agent, pane string) bool {
 		}
 	}
 	return true
+}
+
+// collabSubmitSettle is how long the TUI gets to finish handling a paste
+// before Enter, and between submit checks.
+var collabSubmitSettle = 300 * time.Millisecond
+
+// collabSubmitAttempts bounds the Enter retries before the paste is cleared.
+const collabSubmitAttempts = 3
+
+// deliverCollabPrompt pastes prompt as one bracketed paste (Claude Code folds
+// a multi-line paste into "[Pasted text #1 +N lines]" and absorbs an Enter
+// sent in the same tmux call), presses Enter after a settle delay, and then
+// checks the input line is empty, retrying Enter a few times. It returns an
+// error if the prompt is still sitting unsent, so callers don't record it as
+// delivered.
+func deliverCollabPrompt(tmux func(args ...string) *exec.Cmd, socket, session, agent, prompt string) error {
+	buffer := fmt.Sprintf("agentmux-collab-%d", time.Now().UnixNano())
+	load := tmux("-L", socket, "load-buffer", "-b", buffer, "-")
+	load.Stdin = strings.NewReader(prompt)
+	if out, err := load.CombinedOutput(); err != nil {
+		return fmt.Errorf("loading digest: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	if out, err := tmux("-L", socket, "paste-buffer", "-p", "-d", "-b", buffer, "-t", session).CombinedOutput(); err != nil {
+		_ = tmux("-L", socket, "delete-buffer", "-b", buffer).Run()
+		return fmt.Errorf("pasting digest: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	for attempt := 0; attempt < collabSubmitAttempts; attempt++ {
+		time.Sleep(collabSubmitSettle)
+		if out, err := tmux("-L", socket, "send-keys", "-t", session, "Enter").CombinedOutput(); err != nil {
+			return fmt.Errorf("submitting digest: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		time.Sleep(collabSubmitSettle)
+		pane, err := tmux("-L", socket, "capture-pane", "-p", "-t", session).Output()
+		if err != nil {
+			return fmt.Errorf("checking digest was submitted: %w", err)
+		}
+		if safesend.Classify(agent, string(pane)) != safesend.StateDraft {
+			return nil
+		}
+	}
+	// Never leave our own paste behind: it would block the next send (or a
+	// human) with what looks like a real draft. Pane was draft-free before the
+	// paste (checked by the caller under the input lock), so whatever is in the
+	// input line now is ours. One C-c clears Claude Code's input without
+	// exiting (it only exits on an empty line); C-u covers other TUIs.
+	cleared := clearCollabDraft(tmux, socket, session, agent)
+	if cleared {
+		return fmt.Errorf("digest was not submitted; cleared it from the input line, will retry next tick")
+	}
+	return fmt.Errorf("digest still unsent in the input line after submitting, and clearing it failed")
+}
+
+// clearCollabDraft empties the input line and reports whether the pane no
+// longer shows a draft.
+func clearCollabDraft(tmux func(args ...string) *exec.Cmd, socket, session, agent string) bool {
+	for _, key := range []string{"C-c", "C-u"} {
+		_ = tmux("-L", socket, "send-keys", "-t", session, key).Run()
+		time.Sleep(collabSubmitSettle)
+		pane, err := tmux("-L", socket, "capture-pane", "-p", "-t", session).Output()
+		if err == nil && safesend.Classify(agent, string(pane)) != safesend.StateDraft {
+			return true
+		}
+	}
+	return false
 }
