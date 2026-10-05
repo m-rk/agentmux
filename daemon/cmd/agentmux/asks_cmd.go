@@ -40,10 +40,10 @@ func runAsksCmd(args []string) {
 
 func asksUsage() {
 	fmt.Fprintln(os.Stderr, `usage:
-  agentmux asks post -title T -body-file F [-tag NAME ...] [-json]
+  agentmux asks post (-title T | -thread ID [-title T]) -body-file F [-tag NAME ...] [-json]
   agentmux asks reply -thread ID -body-file F [-mention]
   agentmux asks read -thread ID [-after MESSAGE_ID] [-json]
-  agentmux asks close -thread ID [-tag NAME]`)
+  agentmux asks close -thread ID [-tag NAME] [-lock]`)
 }
 
 type tagFlags []string
@@ -78,7 +78,8 @@ func readBodyFile(path string) (string, error) {
 
 func runAsksPost(args []string) error {
 	fs := flag.NewFlagSet("asks post", flag.ContinueOnError)
-	title := fs.String("title", "", "forum post title")
+	title := fs.String("title", "", "forum post title (with -thread: rename the thread)")
+	thread := fs.String("thread", "", "add the ask to this existing ask thread instead of creating a post")
 	bodyFile := fs.String("body-file", "", "file with the post body ('-' for stdin)")
 	asJSON := fs.Bool("json", false, "print JSON")
 	var tags tagFlags
@@ -96,14 +97,20 @@ func runAsksPost(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	threadID, messageID, err := client.PostAsk(ctx, *title, body, tags)
+	var threadID, messageID string
+	if *thread != "" {
+		threadID = *thread
+		messageID, err = client.PostAskInThread(ctx, threadID, *title, body, tags)
+	} else {
+		threadID, messageID, err = client.PostAsk(ctx, *title, body, tags)
+	}
 	if err != nil {
 		return err
 	}
 	if *asJSON {
 		return json.NewEncoder(os.Stdout).Encode(map[string]string{"thread_id": threadID, "message_id": messageID})
 	}
-	fmt.Printf("Created ask thread %s (message %s).\n", threadID, messageID)
+	fmt.Printf("Ask posted in thread %s (message %s).\n", threadID, messageID)
 	return nil
 }
 
@@ -171,6 +178,7 @@ func runAsksClose(args []string) error {
 	fs := flag.NewFlagSet("asks close", flag.ContinueOnError)
 	thread := fs.String("thread", "", "ask thread ID")
 	tag := fs.String("tag", collab.DefaultCloseTag, "outcome tag")
+	lock := fs.Bool("lock", false, "also lock the thread (default: archive only, so a later ask can reopen it)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -180,7 +188,7 @@ func runAsksClose(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := client.CloseAsk(ctx, *thread, *tag); err != nil {
+	if err := client.CloseAsk(ctx, *thread, *tag, *lock); err != nil {
 		return err
 	}
 	fmt.Printf("Closed ask thread %s as %q.\n", *thread, *tag)

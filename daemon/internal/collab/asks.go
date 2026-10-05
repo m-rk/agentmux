@@ -156,6 +156,82 @@ func (c *Client) PostAsk(ctx context.Context, title, body string, extraTags []st
 	return message.ChannelID, message.ID, nil
 }
 
+// PostAskInThread adds an ask message to an existing ask thread instead of
+// creating a post. It unarchives and unlocks the thread, swaps any outcome
+// tag for `pending` (adding extraTags), optionally renames it, then posts the
+// message with a mention of the configured user. Like close, the thread edit
+// needs the bot (Manage Threads on the forum).
+func (c *Client) PostAskInThread(ctx context.Context, threadID, title, body string, extraTags []string) (string, error) {
+	user, err := c.mentionUser()
+	if err != nil {
+		return "", err
+	}
+	content, err := askContent(user, true, body)
+	if err != nil {
+		return "", err
+	}
+	title = cleanOneLine(title)
+	if utf8.RuneCountInString(title) > 100 {
+		return "", fmt.Errorf("title is longer than Discord's 100-character limit")
+	}
+	thread, forum, err := c.askThread(ctx, threadID)
+	if err != nil {
+		return "", err
+	}
+	tags, err := replaceOutcomeTag(forum, thread.AppliedTags, "pending", extraTags)
+	if err != nil {
+		return "", err
+	}
+	patch := map[string]any{"applied_tags": tags, "archived": false, "locked": false}
+	if title != "" {
+		patch["name"] = title
+	}
+	if err := c.botJSONBody(ctx, http.MethodPatch, "/channels/"+url.PathEscape(threadID), patch, nil); err != nil {
+		return "", fmt.Errorf("reopening Discord ask thread (the bot needs Manage Threads on the forum): %w", err)
+	}
+	payload := map[string]any{
+		"content":          content,
+		"username":         asksUsername,
+		"allowed_mentions": c.mentionPayload(user, true),
+	}
+	var message Message
+	query := url.Values{"wait": {"true"}, "thread_id": {threadID}}
+	if err := c.webhookJSON(ctx, http.MethodPost, query, payload, &message); err != nil {
+		return "", fmt.Errorf("posting ask into Discord thread: %w", err)
+	}
+	return message.ID, nil
+}
+
+// replaceOutcomeTag returns the applied tag IDs with every outcome tag
+// removed, then outcome and extra appended (without duplicates).
+func replaceOutcomeTag(forum Channel, applied []string, outcome string, extra []string) ([]string, error) {
+	add, err := resolveTags(forum, append([]string{outcome}, extra...))
+	if err != nil {
+		return nil, err
+	}
+	drop := map[string]bool{}
+	for _, name := range OutcomeTags {
+		if id := tagID(forum.AvailableTags, name); id != "" {
+			drop[id] = true
+		}
+	}
+	tags := []string{}
+	for _, id := range applied {
+		if !drop[id] {
+			tags = append(tags, id)
+		}
+	}
+	for _, id := range add {
+		if !hasTag(tags, id) {
+			tags = append(tags, id)
+		}
+	}
+	if len(tags) > maxAppliedTags {
+		return nil, fmt.Errorf("a forum post takes at most %d tags", maxAppliedTags)
+	}
+	return tags, nil
+}
+
 // askThread fetches a thread and refuses anything that isn't an ask post in
 // the configured forum, so asks commands can't touch collaboration threads.
 func (c *Client) askThread(ctx context.Context, threadID string) (Channel, Channel, error) {
@@ -239,10 +315,11 @@ func (c *Client) ReadAsk(ctx context.Context, threadID, after string) ([]AskMess
 	}
 }
 
-// CloseAsk replaces the thread's outcome tag with outcome, then archives and
-// locks it. This is the one write that needs the bot (Manage Threads on the
-// forum): webhooks can't edit threads.
-func (c *Client) CloseAsk(ctx context.Context, threadID, outcome string) error {
+// CloseAsk replaces the thread's outcome tag with outcome, then archives it,
+// and locks it only when lock is true so a later ask can reopen the thread.
+// This is the one write that needs the bot (Manage Threads on the forum):
+// webhooks can't edit threads.
+func (c *Client) CloseAsk(ctx context.Context, threadID, outcome string, lock bool) error {
 	thread, forum, err := c.askThread(ctx, threadID)
 	if err != nil {
 		return err
@@ -257,24 +334,11 @@ func (c *Client) CloseAsk(ctx context.Context, threadID, outcome string) error {
 	if !known {
 		return fmt.Errorf("outcome tag must be one of: %s", strings.Join(OutcomeTags, ", "))
 	}
-	newID, err := resolveTags(forum, []string{outcome})
+	tags, err := replaceOutcomeTag(forum, thread.AppliedTags, outcome, nil)
 	if err != nil {
 		return err
 	}
-	drop := map[string]bool{}
-	for _, name := range OutcomeTags {
-		if id := tagID(forum.AvailableTags, name); id != "" {
-			drop[id] = true
-		}
-	}
-	tags := []string{}
-	for _, id := range thread.AppliedTags {
-		if !drop[id] {
-			tags = append(tags, id)
-		}
-	}
-	tags = append(tags, newID...)
-	body := map[string]any{"applied_tags": tags, "archived": true, "locked": true}
+	body := map[string]any{"applied_tags": tags, "archived": true, "locked": lock}
 	if err := c.botJSONBody(ctx, http.MethodPatch, "/channels/"+url.PathEscape(threadID), body, nil); err != nil {
 		return fmt.Errorf("closing Discord ask (the bot needs Manage Threads on the forum): %w", err)
 	}

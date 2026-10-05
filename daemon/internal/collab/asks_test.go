@@ -120,7 +120,7 @@ func TestAsksRefuseNonAskThread(t *testing.T) {
 	if _, err := c.ReplyAsk(context.Background(), "901", "x", false); err == nil {
 		t.Fatal("reply to non-ask thread allowed")
 	}
-	if err := c.CloseAsk(context.Background(), "901", ""); err == nil || f.patched != nil {
+	if err := c.CloseAsk(context.Background(), "901", "", false); err == nil || f.patched != nil {
 		t.Fatal("close of non-ask thread allowed")
 	}
 }
@@ -147,7 +147,7 @@ func TestCloseAskSwapsOutcomeTagAndArchives(t *testing.T) {
 	f := &fakeAsks{}
 	s := f.server(t, map[string]Channel{"900": {ID: "900", ParentID: "forum", AppliedTags: []string{"t-ask", "t-pending", "t-proj"}}}, nil)
 	defer s.Close()
-	if err := asksClientFor(s.URL).CloseAsk(context.Background(), "900", "failed"); err != nil {
+	if err := asksClientFor(s.URL).CloseAsk(context.Background(), "900", "failed", true); err != nil {
 		t.Fatal(err)
 	}
 	tags := f.patched["applied_tags"].([]any)
@@ -157,8 +157,89 @@ func TestCloseAskSwapsOutcomeTagAndArchives(t *testing.T) {
 	if f.patched["archived"] != true || f.patched["locked"] != true {
 		t.Fatalf("patched = %#v", f.patched)
 	}
-	if err := asksClientFor(s.URL).CloseAsk(context.Background(), "900", "bogus"); err == nil {
+	if err := asksClientFor(s.URL).CloseAsk(context.Background(), "900", "bogus", false); err == nil {
 		t.Fatal("unknown outcome accepted")
+	}
+}
+
+func TestCloseAskWithoutLockLeavesThreadReopenable(t *testing.T) {
+	f := &fakeAsks{}
+	s := f.server(t, map[string]Channel{"900": {ID: "900", ParentID: "forum", AppliedTags: []string{"t-ask", "t-pending"}}}, nil)
+	defer s.Close()
+	if err := asksClientFor(s.URL).CloseAsk(context.Background(), "900", "answered", false); err != nil {
+		t.Fatal(err)
+	}
+	if f.patched["archived"] != true || f.patched["locked"] != false {
+		t.Fatalf("patched = %#v", f.patched)
+	}
+}
+
+func TestPostAskInThreadReopensAndMentions(t *testing.T) {
+	f := &fakeAsks{}
+	s := f.server(t, map[string]Channel{"900": {ID: "900", ParentID: "forum", AppliedTags: []string{"t-ask", "t-answered", "t-proj"}}}, nil)
+	defer s.Close()
+	id, err := asksClientFor(s.URL).PostAskInThread(context.Background(), "900", "MERG-4 combine tasks", "next question @everyone", nil)
+	if err != nil || id != "500" {
+		t.Fatalf("got %q %v", id, err)
+	}
+	tags := f.patched["applied_tags"].([]any)
+	if len(tags) != 3 || tags[0] != "t-ask" || tags[1] != "t-proj" || tags[2] != "t-pending" {
+		t.Fatalf("tags = %#v", tags)
+	}
+	if f.patched["archived"] != false || f.patched["locked"] != false || f.patched["name"] != "MERG-4 combine tasks" {
+		t.Fatalf("patched = %#v", f.patched)
+	}
+	if len(f.hook) != 1 || !strings.Contains(f.hookQ[0], "thread_id=900") || !strings.HasPrefix(f.hook[0]["content"].(string), "<@777>\n") {
+		t.Fatalf("hook = %#v %v", f.hook, f.hookQ)
+	}
+	am := f.hook[0]["allowed_mentions"].(map[string]any)
+	if len(am["users"].([]any)) != 1 || am["users"].([]any)[0] != "777" {
+		t.Fatalf("allowed_mentions = %#v", am)
+	}
+	if _, ok := f.hook[0]["thread_name"]; ok {
+		t.Fatal("thread_name would create a new post")
+	}
+}
+
+func TestPostAskInThreadNoTitleKeepsName(t *testing.T) {
+	f := &fakeAsks{}
+	s := f.server(t, map[string]Channel{"900": {ID: "900", ParentID: "forum", AppliedTags: []string{"t-ask"}}}, nil)
+	defer s.Close()
+	if _, err := asksClientFor(s.URL).PostAskInThread(context.Background(), "900", "", "q", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f.patched["name"]; ok {
+		t.Fatalf("patched = %#v", f.patched)
+	}
+}
+
+func TestPostAskInThreadRefusesNonAskThread(t *testing.T) {
+	f := &fakeAsks{}
+	s := f.server(t, map[string]Channel{"901": {ID: "901", ParentID: "forum"}}, nil)
+	defer s.Close()
+	if _, err := asksClientFor(s.URL).PostAskInThread(context.Background(), "901", "", "q", nil); err == nil || f.patched != nil || len(f.hook) != 0 {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestReadAskAfterPassesCursor(t *testing.T) {
+	var after string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/channels/forum":
+			writeJSON(t, w, Channel{ID: "forum", AvailableTags: []ForumTag{{"t-ask", "ask"}}})
+		case strings.HasSuffix(r.URL.Path, "/messages"):
+			after = r.URL.Query().Get("after")
+			writeJSON(t, w, []Message{})
+		case r.URL.Path == "/api/channels/900":
+			writeJSON(t, w, Channel{ID: "900", ParentID: "forum", AppliedTags: []string{"t-ask"}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer s.Close()
+	if _, err := asksClientFor(s.URL).ReadAsk(context.Background(), "900", "123"); err != nil || after != "123" {
+		t.Fatalf("after = %q err = %v", after, err)
 	}
 }
 
