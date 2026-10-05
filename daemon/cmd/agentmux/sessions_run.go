@@ -33,11 +33,12 @@ func runSessionsRun(args []string) {
 	jsonOut := fs.Bool("json", false, "print machine-readable JSON (also on refusal)")
 	file := fs.String("file", "", "read the prompt from this file (\"-\" for stdin) instead of the argument (required)")
 	thread := fs.String("thread", "", "continue this amp thread id instead of starting a new thread")
+	title := fs.String("title", "", "title a new thread (\"<task id> <task name>\" from the dispatcher); ignored when continuing")
 	socketPath := fs.String("socket", daemoninstall.SocketPath(), "Unix socket of the local agentmuxd")
 	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml with the gateway URL of other hosts")
 	fs.Parse(args)
 	if fs.NArg() != 1 || *file == "" {
-		fmt.Fprintln(os.Stderr, "usage: agentmux sessions run [-json] [-socket PATH] [-hosts PATH] [-thread THREAD_ID] -file PATH|- <instance>@<host>[#<thread>]")
+		fmt.Fprintln(os.Stderr, "usage: agentmux sessions run [-json] [-socket PATH] [-hosts PATH] [-thread THREAD_ID] [-title TEXT] -file PATH|- <instance>@<host>[#<thread>]")
 		os.Exit(2)
 	}
 	addrText := fs.Arg(0)
@@ -59,7 +60,7 @@ func runSessionsRun(args []string) {
 		failRun(*jsonOut, addrText, safesend.ReasonInvalid, err.Error())
 	}
 
-	req := ops.RunRequest{Address: addrText, Text: text}
+	req := ops.RunRequest{Address: addrText, Text: text, Title: *title}
 	var res ops.RunResult
 	route, rerr := resolveRoute(req.Address, *hostsPath, address.LocalHostName())
 	switch {
@@ -70,7 +71,7 @@ func runSessionsRun(args []string) {
 		ctx, cancel := context.WithTimeout(context.Background(), gatewayclient.RunTimeout+time.Minute)
 		defer cancel()
 		var rerr error
-		res, rerr = route.Remote.Run(ctx, gatewayapi.RunRequest{Address: req.Address, Text: req.Text})
+		res, rerr = route.Remote.Run(ctx, gatewayapi.RunRequest{Address: req.Address, Text: req.Text, Title: req.Title})
 		if rerr != nil {
 			e := ops.AsError(rerr)
 			failRun(*jsonOut, req.Address, e.Reason, e.Detail)

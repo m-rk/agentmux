@@ -146,13 +146,14 @@ threads](amp-run.md).
 
 ```json
 POST /v1/run
-{"address": "site-amp@build-box", "text": "do the thing"}
+{"address": "site-amp@build-box", "text": "do the thing", "title": "AMUX-17 do the thing"}
 ```
 
 | field     | meaning |
 |-----------|---------|
 | `address` | `<instance>@<host>` to start a thread, or with `#<thread>` to continue one; the grant is checked against the session without the thread suffix |
 | `text`    | the prompt |
+| `title`   | names a new thread (`<task id> <task name>`); ignored when continuing |
 
 The reply is the thread plus its state (`running` when just launched):
 

@@ -19,19 +19,54 @@ func writeLog(t *testing.T, lines ...string) string {
 }
 
 func TestAmpRunArgs(t *testing.T) {
-	got := AmpRunArgs("do it", "high", "")
-	want := []string{"-x", "--stream-json", "-m", "high", "do it"}
+	// Flags before -x, prompt last: -x eats the next argument as its
+	// message even when it names a flag (confirmed live against the amp
+	// CLI 2026-10-05).
+	got := AmpRunArgs("do it", "high", "", "")
+	want := []string{"--stream-json", "-m", "high", "-x", "do it"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("start: %q want %q", got, want)
 	}
-	got = AmpRunArgs("again", "", "T-1")
-	want = []string{"threads", "continue", "T-1", "-x", "--stream-json", "again"}
+	got = AmpRunArgs("again", "", "T-1", "")
+	want = []string{"threads", "continue", "T-1", "--stream-json", "-x", "again"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("continue: %q want %q", got, want)
 	}
-	got = AmpRunArgs("do it", "", "")
-	if len(got) != 3 || got[0] != "-x" {
+	got = AmpRunArgs("do it", "", "", "")
+	if len(got) != 3 || got[0] != "--stream-json" {
 		t.Fatalf("no mode: %q", got)
+	}
+	// A title names a new thread and leaves it unarchived so it stays
+	// findable and renamable; a continue ignores it.
+	got = AmpRunArgs("do it", "", "", "AMUX-17 do the thing")
+	want = []string{"--stream-json", "--title", "AMUX-17 do the thing", "--no-archive-after-execute", "-x", "do it"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("title: %q want %q", got, want)
+	}
+	if got := AmpRunArgs("again", "", "T-1", "AMUX-17 do the thing"); strings.Contains(strings.Join(got, " "), "--title") {
+		t.Fatalf("continue takes no title: %q", got)
+	}
+}
+
+// TestCleanAmpTitle trims, caps length, and rejects control bytes: the
+// title rides argv through a sh double-fork, so a newline could smuggle
+// a second command.
+func TestCleanAmpTitle(t *testing.T) {
+	if got, err := CleanAmpTitle("  AMUX-17 do the thing  "); err != nil || got != "AMUX-17 do the thing" {
+		t.Fatalf("trim: %q %v", got, err)
+	}
+	for _, raw := range []string{"", "   "} {
+		if got, err := CleanAmpTitle(raw); err != nil || got != "" {
+			t.Fatalf("empty %q: %q %v", raw, got, err)
+		}
+	}
+	if _, err := CleanAmpTitle(strings.Repeat("x", 300)); err == nil {
+		t.Fatal("overlong title accepted")
+	}
+	for _, raw := range []string{"a\nb", "a\rb", "a\x00b"} {
+		if _, err := CleanAmpTitle(raw); err == nil {
+			t.Fatalf("control title %q accepted", raw)
+		}
 	}
 }
 
@@ -65,9 +100,9 @@ func TestScanAmpInit(t *testing.T) {
 // record to the log, and startAmpRun returns its thread id.
 func TestStartAmpRunReturnsOnInit(t *testing.T) {
 	old := ampStartNew
-	ampStartNew = func(_ context.Context, argv []string, workdir, logPath string) (*os.Process, error) {
-		if argv[0] != "amp" || workdir != "/work/proj" {
-			t.Fatalf("spawn: %q in %q", argv, workdir)
+	ampStartNew = func(_ context.Context, envFile string, argv []string, workdir, logPath string) (*os.Process, error) {
+		if envFile != "" || argv[0] != "-x" || workdir != "/work/proj" {
+			t.Fatalf("spawn: env %q argv %q in %q", envFile, argv, workdir)
 		}
 		if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 			t.Fatal(err)
@@ -79,7 +114,7 @@ func TestStartAmpRunReturnsOnInit(t *testing.T) {
 		return fakeRunProcess()
 	}
 	t.Cleanup(func() { ampStartNew = old })
-	id, err := StartAmpRun(context.Background(), []string{"amp", "-x", "hi"}, "/work/proj", filepath.Join(t.TempDir(), "run.jsonl"))
+	id, err := StartAmpRun(context.Background(), "", []string{"-x", "hi"}, "/work/proj", filepath.Join(t.TempDir(), "run.jsonl"))
 	if err != nil || id != "T-run" {
 		t.Fatalf("run: %q %v", id, err)
 	}
@@ -89,7 +124,7 @@ func TestStartAmpRunReturnsOnInit(t *testing.T) {
 // exits before printing init (e.g. amp rejecting the mode).
 func TestStartAmpRunFailedLaunch(t *testing.T) {
 	old := ampStartNew
-	ampStartNew = func(_ context.Context, _ []string, _, logPath string) (*os.Process, error) {
+	ampStartNew = func(_ context.Context, _ string, _ []string, _, logPath string) (*os.Process, error) {
 		if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -102,7 +137,7 @@ func TestStartAmpRunFailedLaunch(t *testing.T) {
 		return fakeRunProcess()
 	}
 	t.Cleanup(func() { ampStartNew = old })
-	_, err := StartAmpRun(context.Background(), []string{"amp"}, "/w", filepath.Join(t.TempDir(), "run.jsonl"))
+	_, err := StartAmpRun(context.Background(), "", []string{"-x"}, "/w", filepath.Join(t.TempDir(), "run.jsonl"))
 	if err == nil || !strings.Contains(err.Error(), "Unexpected error") {
 		t.Fatalf("failed launch: %v", err)
 	}

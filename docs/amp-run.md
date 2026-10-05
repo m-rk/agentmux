@@ -7,6 +7,7 @@ relaunches it the same way:
 
 ```sh
 agentmux sessions run -file prompt.md site-amp@build-box
+agentmux sessions run -file prompt.md -title "AMUX-17 do the thing" site-amp@build-box
 agentmux sessions run -file followup.md -thread T-11111111-1111-4111-8111-111111111111 site-amp@build-box
 echo "do the thing" | agentmux sessions run -file - site-amp@build-box
 ```
@@ -28,9 +29,24 @@ transcript. Both read the thread's own stream log under the state dir
 the amp CLI or its auth is gone.
 
 A refusal exits 1 (`-json` reports `{"ok": false, ...}` instead): `invalid`
-(bad thread id, empty prompt, or a mode amp rejects — quoted from amp's
-own error), `not_found`, `unsupported` (not an amp instance), `failed`
-(the CLI died before printing its init record). Exit 2 is usage.
+(bad thread id, empty prompt, a bad title, or a mode amp rejects — quoted
+from amp's own error), `not_found`, `unsupported` (not an amp instance),
+`failed` (the CLI died before printing its init record). Exit 2 is usage.
+
+## Thread titles
+
+`-title "<task id> <task name>"` names a new thread in the amp sidebar
+(the dispatcher passes the task's id and name, e.g. `-title "AMUX-17 do the
+thing"`), where amp's own summary would otherwise say nothing about which
+task the thread belongs to. It is ignored when continuing a thread. The
+title rides `amp -x --title` with `--no-archive-after-execute`, so a
+finished thread stays unarchived — findable and renamable — instead of
+vanishing into the archive. Once the thread exists the title is re-applied
+with `amp threads rename`, since amp may retitle the thread itself while
+the agent works; the rename is best-effort and never fails the run. amp
+refuses to rename archived threads, so an archived task thread keeps
+whatever title it had. Archive task threads when the task note is
+archived, not before.
 
 Through the gateway it is the `run` op, granted like `send` (it starts an
 agent that will act on text it is given, and shares `send`'s rate bucket).

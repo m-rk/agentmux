@@ -75,8 +75,14 @@ func TestRunStartsThread(t *testing.T) {
 		t.Fatalf("address = %q", res.Address)
 	}
 	flat := strings.Join(fake.Argv, " ")
-	if !strings.HasPrefix(flat, "-x --stream-json") || !strings.HasSuffix(flat, "do the thing") {
+	if !strings.HasPrefix(flat, "--stream-json") || !strings.HasSuffix(flat, "-x do the thing") {
 		t.Fatalf("argv = %q", flat)
+	}
+	if strings.Contains(flat, "--title") {
+		t.Fatalf("untitled run names a thread: %q", flat)
+	}
+	if fake.RenameSeen {
+		t.Fatalf("untitled run renamed: %q", fake.Renamed)
 	}
 	// The log moved under the thread's own name.
 	if _, err := os.Stat(session.AmpRunLogPath(c.home, "probe", id)); err != nil {
@@ -115,8 +121,60 @@ func TestRunContinuesThread(t *testing.T) {
 		t.Fatalf("run: %v", rerr)
 	}
 	_ = res
-	if flat := strings.Join(fake.Argv, " "); !strings.HasPrefix(flat, "threads continue "+id+" -x --stream-json") {
+	if flat := strings.Join(fake.Argv, " "); !strings.HasPrefix(flat, "threads continue "+id+" --stream-json") || !strings.HasSuffix(flat, "-x again") {
 		t.Fatalf("argv = %q", flat)
+	}
+}
+
+// TestRunTitlesNewThread passes --title plus --no-archive-after-execute
+// for a new thread and re-applies the title once it exists; a continue
+// ignores the title entirely.
+func TestRunTitlesNewThread(t *testing.T) {
+	newRunEnv(t)
+	id := "T-77777777-7777-4777-8777-777777777777"
+	restore, fake := session.AmpSwapForTest(id, nil)
+	defer restore()
+	_, rerr := Env{}.Run(context.Background(), RunRequest{Address: localAddr(""), Text: "hi", Title: "AMUX-17 do the thing"})
+	if rerr != nil {
+		t.Fatalf("run: %v", rerr)
+	}
+	flat := strings.Join(fake.Argv, " ")
+	if !strings.Contains(flat, "--title AMUX-17 do the thing --no-archive-after-execute") || !strings.HasSuffix(flat, "-x hi") {
+		t.Fatalf("argv = %q", flat)
+	}
+	if !fake.RenameSeen || fake.Renamed != "AMUX-17 do the thing" {
+		t.Fatalf("rename = %v %q", fake.RenameSeen, fake.Renamed)
+	}
+}
+
+// TestRunContinueIgnoresTitle continues without --title and without a
+// rename: the thread already has its name.
+func TestRunContinueIgnoresTitle(t *testing.T) {
+	newRunEnv(t)
+	id := "T-88888888-8888-4888-8888-888888888888"
+	restore, fake := session.AmpSwapForTest(id, nil)
+	defer restore()
+	_, rerr := Env{}.Run(context.Background(), RunRequest{Address: localAddr(id), Text: "again", Title: "AMUX-17 do the thing"})
+	if rerr != nil {
+		t.Fatalf("run: %v", rerr)
+	}
+	if flat := strings.Join(fake.Argv, " "); strings.Contains(flat, "--title") {
+		t.Fatalf("continue names a thread: %q", flat)
+	}
+	if fake.RenameSeen {
+		t.Fatalf("continue renamed: %q", fake.Renamed)
+	}
+}
+
+// TestRunRejectsBadTitle refuses an overlong title before spawning.
+func TestRunRejectsBadTitle(t *testing.T) {
+	newRunEnv(t)
+	restore, fake := session.AmpSwapForTest("T-99999999-9999-4999-8999-999999999999", nil)
+	defer restore()
+	_, rerr := Env{}.Run(context.Background(), RunRequest{Address: localAddr(""), Text: "hi", Title: strings.Repeat("x", 300)})
+	wantReason(t, rerr, safesend.ReasonInvalid)
+	if fake.Argv != nil {
+		t.Fatalf("refused run spawned: %q", fake.Argv)
 	}
 }
 

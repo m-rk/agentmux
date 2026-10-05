@@ -15,11 +15,14 @@ import (
 
 // RunRequest starts an amp thread on an instance (Thread "") or continues
 // one (Thread set) by running the prompt through the amp CLI in the
-// instance's workdir. The CLI runs detached: Run returns as soon as the
-// stream init record arrives, while the agent keeps working.
+// instance's workdir. Title names a new thread ("<task id> <task name>"
+// from the dispatcher); a continue ignores it. The CLI runs detached: Run
+// returns as soon as the stream init record arrives, while the agent keeps
+// working.
 type RunRequest struct {
 	Address string // <instance>@<host>[#<thread>]
 	Text    string // the prompt; read from -file by the CLI
+	Title   string // thread title for a new thread; "" leaves amp's own
 }
 
 // RunResult is the thread, plus its state when already known.
@@ -123,10 +126,21 @@ func (e Env) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		return RunResult{}, Refuse(safesend.ReasonInvalid, "%v", err)
 	}
 	thread := strings.TrimSpace(addr.Thread)
+	title, err := session.CleanAmpTitle(req.Title)
+	if err != nil {
+		return RunResult{}, Refuse(safesend.ReasonInvalid, "%v", err)
+	}
 	logPath := session.AmpRunLogPath(src.Home, addr.Instance, thread)
-	id, err := session.StartAmpRun(ctx, session.AmpRunArgs(text, mode, thread), workdir, logPath)
+	id, err := session.StartAmpRun(ctx, src.AmpEnvFile, session.AmpRunArgs(text, mode, thread, title), workdir, logPath)
 	if err != nil {
 		return RunResult{}, Refuse(safesend.ReasonFailed, "amp: %v", err)
+	}
+	// A new thread keeps the task's title even if amp retitles it while
+	// working: best-effort, never a refusal. A continue ignores the
+	// title; the finished thread stays unarchived (see AmpRunArgs), so it
+	// can still be found and renamed.
+	if thread == "" {
+		session.RenameAmpThread(ctx, src.AmpEnvFile, id, title)
 	}
 	full := address.Address{Instance: addr.Instance, Host: addr.Host, Thread: id}
 	res := RunResult{

@@ -55,28 +55,37 @@ func ampRunStateDir(home, instance string) string {
 	return filepath.Join(home, ".local", "state", "agentmux", "sessions", instance)
 }
 
-// ampRunArgs builds the `amp -x` argv for starting (threadID "") or
-// continuing a thread. Exported as AmpRunArgs so ops.Run builds the same
-// argv the session layer spawns. The prompt goes last as -x's message
-// is the actual prompt, while piped stdin would arrive as extra "Input
-// received on stdin" context text alongside it (confirmed live). When mode
-// is set it is passed as -m, since `-m "<label>"` runs the mode's own
-// model and provider (confirmed live 2026-10-05). With no mode there is no
-// -m at all and amp uses whatever it would by default.
+// ampRunArgs builds the `amp` argv (without the binary itself) for
+// starting (threadID "") or continuing a thread. Exported as AmpRunArgs so
+// ops.Run builds the same argv the session layer spawns. Flags come before
+// `-x` and the prompt goes last as -x's message: `-x` consumes the next
+// argument as its message even when it names a flag, so `-x --stream-json
+// "prompt"` fails (confirmed live 2026-10-05) while `--stream-json -x
+// "prompt"` works. Piped stdin would arrive as extra "Input received on
+// stdin" context text alongside the message (confirmed live), so the
+// prompt rides argv instead. When mode is set it is passed as -m, since
+// `-m "<label>"` runs the mode's own model and provider (confirmed live
+// 2026-10-05). With no mode there is no -m at all and amp uses whatever
+// it would by default. A title names a new thread only (`--title` plus
+// `--no-archive-after-execute`, so the finished thread stays findable and
+// renamable); continuing a thread ignores it.
 //
-// Returned as an argv slice, not a shell string, so a mode label with
-// spaces needs no quoting.
-func AmpRunArgs(message, mode, threadID string) []string {
+// Returned as an argv slice, not a shell string, so a mode label or title
+// with spaces needs no quoting.
+func AmpRunArgs(message, mode, threadID, title string) []string {
 	var args []string
 	if threadID == "" {
-		args = []string{"-x", "--stream-json"}
+		args = []string{"--stream-json"}
 	} else {
-		args = []string{"threads", "continue", threadID, "-x", "--stream-json"}
+		args = []string{"threads", "continue", threadID, "--stream-json"}
 	}
 	if mode != "" {
 		args = append(args, "-m", mode)
 	}
-	return append(args, message)
+	if threadID == "" && title != "" {
+		args = append(args, "--title", title, "--no-archive-after-execute")
+	}
+	return append(args, "-x", message)
 }
 
 // ampRunCommand builds the detached child: plain `amp` normally, or `op
@@ -104,10 +113,10 @@ func ampRunCommand(ctx context.Context, envFile string, argv []string) (*exec.Cm
 	return cmd, nil
 }
 
-// ampStartNew spawns the run child detached: argv[0] resolved on the run
-// user's PATH (the same lookup runas.CurrentUserCommand uses), workdir as
-// its directory, stdout/stderr appended to logPath, stdin empty (with
-// stdin open amp waits on it and fails — see transcript.ampCommand).
+// ampStartNew spawns the run child detached: argv resolved through
+// ampRunCommand (plain `amp`, or `op run` with the instance's env-file),
+// workdir as its directory, stdout/stderr appended to logPath, stdin empty
+// (with stdin open amp waits on it and fails — see transcript.ampCommand).
 // Detached means a double fork: the middle child exits immediately so the
 // grandchild is reparented to init and survives this process; the caller
 // releases the middle child, never the agent itself. A ".done" sentinel
@@ -119,10 +128,13 @@ func ampRunCommand(ctx context.Context, envFile string, argv []string) (*exec.Cm
 var ampStartNew = startAmpProcessDetached
 
 // StartAmpRun launches argv detached in workdir with output to logPath
-// and returns once the init record arrives. The child outlives this
-// process: callers report the thread while the agent keeps working.
-func StartAmpRun(ctx context.Context, argv []string, workdir, logPath string) (string, error) {
-	proc, err := ampStartNew(ctx, argv, workdir, logPath)
+// and returns once the init record arrives. argv holds the amp arguments
+// (AmpRunArgs shape, without the binary); the binary resolves through
+// ampRunCommand, so an instance env-file runs amp under `op run` exactly
+// like the mode probe. The child outlives this process: callers report
+// the thread while the agent keeps working.
+func StartAmpRun(ctx context.Context, envFile string, argv []string, workdir, logPath string) (string, error) {
+	proc, err := ampStartNew(ctx, envFile, argv, workdir, logPath)
 	if err != nil {
 		return "", err
 	}
@@ -133,13 +145,27 @@ func StartAmpRun(ctx context.Context, argv []string, workdir, logPath string) (s
 	return waitAmpInit(ctx, logPath)
 }
 
-func startAmpProcessDetached(ctx context.Context, argv []string, workdir, logPath string) (*os.Process, error) {
+func startAmpProcessDetached(ctx context.Context, envFile string, argv []string, workdir, logPath string) (*os.Process, error) {
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("amp run needs a command")
 	}
-	bin, err := runas.CurrentUserLookPath(argv[0])
+	// Resolve through ampRunCommand, not a bare PATH lookup: with an
+	// instance env-file the child is `op run --env-file=... --
+	// /usr/bin/env -u ... amp <args>`, and cmd.Path/Args carry the full
+	// spawn shape (resolved binary plus env) the double-fork replays.
+	cmd, err := ampRunCommand(ctx, envFile, argv)
 	if err != nil {
 		return nil, err
+	}
+	if len(cmd.Args) == 0 {
+		return nil, fmt.Errorf("amp run needs a command")
+	}
+	bin, rest := cmd.Args[0], cmd.Args[1:]
+	if !filepath.IsAbs(bin) {
+		bin, err = runas.CurrentUserLookPath(bin)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 		return nil, fmt.Errorf("creating amp run state dir: %w", err)
@@ -148,14 +174,20 @@ func startAmpProcessDetached(ctx context.Context, argv []string, workdir, logPat
 	// background with the log as its stdout/stderr and exits at once, so
 	// the agent is reparented to init and survives this process. argv
 	// after the command are passed positionally — never interpolated — so
-	// a prompt or mode label with spaces or quotes can't break the shell.
-	// f is the log path resolved against the caller's own directory at
-	// spawn time (not the agent's workdir): the middle child cds to
-	// workdir only for the agent itself. Positional order after -c's
+	// a prompt, title, or mode label with spaces or quotes can't break
+	// the shell. Log path and workdir are absolute (AmpRunLogPath joins
+	// the run user's home), so the script uses them as given: no
+	// `$(pwd)` prefix, which would double the path and write the log
+	// somewhere waitAmpInit never looks. Positional order after -c's
 	// script is: $0=bin, $1=log, $2=workdir, $3...=agent args.
-	launch := "f=$(pwd)/$1; shift; cd \"$1\" || exit 1; shift; \"$0\" \"$@\" >>\"$f\" 2>&1 & pid=$!; wait $pid; code=$?; [ $code -ne 0 ] && touch \"$f.done\"; exit 0"
-	midArgs := append([]string{"-c", launch, bin, logPath, workdir}, argv[1:]...)
+	launch := "f=\"$1\"; d=\"$2\"; shift 2; cd \"$d\" || exit 1; \"$0\" \"$@\" >>\"$f\" 2>&1 & pid=$!; wait $pid; code=$?; [ $code -ne 0 ] && touch \"$f.done\"; exit 0"
+	midArgs := append([]string{"-c", launch, bin, logPath, workdir}, rest...)
 	mid := runas.CurrentUserCommandContext(ctx, "sh", midArgs...)
+	// Inherit the resolved spawn environment (notably OP_SERVICE_ACCOUNT_TOKEN
+	// under `op run`, stripped again by `env -u` before amp starts): the
+	// middle child is plain sh, so without this the grandchild would lose
+	// the `op` token and the instance's secret references.
+	mid.Env = cmd.Env
 	// Empty stdin, like every other amp spawn here: with stdin open amp
 	// waits on it and fails.
 	mid.Stdin = strings.NewReader("")
@@ -340,17 +372,22 @@ type AmpFakeSpawn struct {
 	Argv []string
 	// Mode is the mode the probe was asked about.
 	Mode string
+	// Renamed is the title the fake rename was asked to apply; RenameSeen
+	// reports whether a rename ran at all.
+	Renamed    string
+	RenameSeen bool
 }
 
-// AmpSwapForTest substitutes the detached spawn and the mode probe so
-// ops tests never touch a real amp CLI. The fake spawn records argv,
-// writes an init record for threadID to the log, and returns a stand-in
-// process; probeErr is the probe's verdict (nil succeeds). It returns a
-// restore func the test defers, and the record the fakes fill in.
+// AmpSwapForTest substitutes the detached spawn, the mode probe, and the
+// rename so ops tests never touch a real amp CLI. The fake spawn records
+// argv, writes an init record for threadID to the log, and returns a
+// stand-in process; probeErr is the probe's verdict (nil succeeds). The
+// fake rename records its title and succeeds. It returns a restore func
+// the test defers, and the record the fakes fill in.
 func AmpSwapForTest(threadID string, probeErr error) (restore func(), fake *AmpFakeSpawn) {
 	fake = &AmpFakeSpawn{}
-	oldStart, oldCheck := ampStartNew, checkAmpMode
-	ampStartNew = func(_ context.Context, argv []string, _ string, logPath string) (*os.Process, error) {
+	oldStart, oldCheck, oldRename := ampStartNew, checkAmpMode, renameAmpThread
+	ampStartNew = func(_ context.Context, _ string, argv []string, _ string, logPath string) (*os.Process, error) {
 		fake.Argv = append([]string(nil), argv...)
 		if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 			return nil, err
@@ -364,7 +401,11 @@ func AmpSwapForTest(threadID string, probeErr error) (restore func(), fake *AmpF
 		fake.Mode = mode
 		return probeErr
 	}
-	return func() { ampStartNew, checkAmpMode = oldStart, oldCheck }, fake
+	renameAmpThread = func(_ context.Context, _, _, title string) {
+		fake.RenameSeen = true
+		fake.Renamed = title
+	}
+	return func() { ampStartNew, checkAmpMode, renameAmpThread = oldStart, oldCheck, oldRename }, fake
 }
 
 // checkAmpMode is the mode probe var: production calls it through
@@ -372,8 +413,66 @@ func AmpSwapForTest(threadID string, probeErr error) (restore func(), fake *AmpF
 // AmpSwapForTest).
 var checkAmpMode = checkAmpModeImpl
 
+// maxAmpTitleBytes bounds a run title. amp titles are short sidebar
+// labels; 256 leaves headroom without letting a garbage caller value ride
+// along in argv unbounded.
+const maxAmpTitleBytes = 256
+
+// CleanAmpTitle trims a run title and rejects what amp can't use: empty,
+// overlong, or carrying line breaks or NUL bytes (argv rides through a sh
+// double-fork, so a newline could smuggle a second command). Empty means
+// "no title" — not an error — so callers keep one code path for titled
+// and untitled runs.
+func CleanAmpTitle(raw string) (string, error) {
+	title := strings.TrimSpace(raw)
+	if title == "" {
+		return "", nil
+	}
+	if len(title) > maxAmpTitleBytes {
+		return "", fmt.Errorf("amp title is %d bytes (limit %d)", len(title), maxAmpTitleBytes)
+	}
+	if strings.ContainsAny(title, "\x00\r\n") {
+		return "", fmt.Errorf("amp title %q contains a line break or NUL byte", title)
+	}
+	return title, nil
+}
+
+// ampRenameCommand builds the bounded rename call that re-applies a run
+// title once the thread exists: amp may retitle the thread itself while
+// the agent works, so `--title` alone doesn't guarantee the sidebar keeps
+// the task's name. Best-effort by design — callers ignore a rename error
+// once the run itself succeeded.
+func ampRenameCommand(ctx context.Context, envFile, threadID, title string) (*exec.Cmd, error) {
+	return ampRunCommand(ctx, envFile, []string{"threads", "rename", threadID, title})
+}
+
+// renameAmpThread is the rename var: production calls it through
+// RenameAmpThread, tests swap it through AmpSwapForTest.
+var renameAmpThread = renameAmpThreadImpl
+
+// RenameAmpThread re-applies title to threadID and ignores every failure:
+// the run already succeeded, and a rename must never turn that into a
+// refusal. That includes archived threads, which amp refuses to rename —
+// they keep whatever title they had.
+func RenameAmpThread(ctx context.Context, envFile, threadID, title string) {
+	if title == "" {
+		return
+	}
+	renameAmpThread(ctx, envFile, threadID, title)
+}
+
+func renameAmpThreadImpl(ctx context.Context, envFile, threadID, title string) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	cmd, err := ampRenameCommand(ctx, envFile, threadID, title)
+	if err != nil {
+		return
+	}
+	_ = cmd.Run()
+}
+
 // CheckAmpMode fails fast when the CLI rejects mode, quoting amp's own
-// error: it runs the real run argv with a harmless prompt (`-x "ok"`)
+// error: it runs the real run argv with a harmless prompt (`-x "ok"` last)
 // before anything is spawned detached. --help and --version don't parse
 // -m (both exit 0 for a bogus mode, confirmed live), while -x validates
 // it before doing anything else — a bogus mode exits 1 in seconds
@@ -392,7 +491,7 @@ func checkAmpModeImpl(ctx context.Context, envFile, mode string) error {
 	if strings.ContainsAny(mode, "\x00\r\n") {
 		return fmt.Errorf("amp mode %q contains a line break or NUL byte", mode)
 	}
-	cmd, err := ampRunCommand(ctx, envFile, AmpRunArgs("ok", mode, ""))
+	cmd, err := ampRunCommand(ctx, envFile, AmpRunArgs("ok", mode, "", ""))
 	if err != nil {
 		return err
 	}

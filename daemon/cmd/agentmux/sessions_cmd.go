@@ -36,7 +36,7 @@ const sessionsUsage = `usage:
                          [-hosts PATH] [-wait DUR] [-json] <instance>@<host>[#<thread>] (TEXT | -file PATH|-)
   agentmux sessions create [-json] [-socket PATH] [-hosts PATH] -template <instance>@<host> -instance NAME -branch B
                            [-base BRANCH] [-worktree NAME] [-allow-file PATH ...]
-  agentmux sessions run [-json] [-hosts PATH] [-thread THREAD_ID] -file PATH|- <instance>@<host>[#<thread>]`
+  agentmux sessions run [-json] [-hosts PATH] [-thread THREAD_ID] [-title TEXT] -file PATH|- <instance>@<host>[#<thread>]`
 
 // runSessionsCmd is `agentmux sessions`: addressing and transcript access for
 // orchestrators. See docs/design/gateway.md (phases 1 and 2). Listing with

@@ -117,10 +117,12 @@ type CreateRequest struct {
 type CreateResponse = ops.CreateResult
 
 // RunRequest starts an amp thread on the host (Thread "" in Address) or
-// continues one. Text is the prompt.
+// continues one. Text is the prompt; Title names a new thread and is
+// ignored for a continue.
 type RunRequest struct {
 	Address string `json:"address"`
 	Text    string `json:"text"`
+	Title   string `json:"title,omitempty"`
 }
 
 // RunResponse is the thread plus its state; a refusal is a non-2xx
