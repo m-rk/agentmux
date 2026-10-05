@@ -212,6 +212,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, a *access) {
 		}
 		a.target = clip(req.Address)
 		s.sendOp(w, r, a, id, req)
+	case gatewayapi.OpRun:
+		var req gatewayapi.RunRequest
+		if !s.decode(w, a, body, &req, false) {
+			return
+		}
+		a.target = clip(req.Address)
+		s.runOp(w, r, a, id, req)
 	}
 }
 
@@ -329,6 +336,34 @@ func (s *Server) createOp(w http.ResponseWriter, r *http.Request, a *access, id 
 		Template: req.Template, Instance: req.Instance, Branch: req.Branch,
 		Base: req.Base, Worktree: req.Worktree, AllowFiles: req.AllowFiles,
 	})
+	if err != nil {
+		e := ops.AsError(err)
+		s.refuse(w, a, gatewayapi.HTTPStatus(e.Reason), e.Reason, e.Detail)
+		return
+	}
+	s.reply(w, a, http.StatusOK, res)
+}
+
+// runOp starts (or continues) an amp thread. The grant is checked against
+// the session without its #thread: starting needs "run" on the instance,
+// continuing a thread needs it too — a thread suffix never widens access.
+// It shares the send rate bucket, since it starts an agent that will act
+// on text it is given. Refusals are ErrorResponses like every op but send.
+func (s *Server) runOp(w http.ResponseWriter, r *http.Request, a *access, id Identity, req gatewayapi.RunRequest) {
+	if !s.send.allow(a.principal) {
+		s.rateLimited(w, a, s.send.limit)
+		return
+	}
+	addr, err := address.Parse(req.Address)
+	if err != nil {
+		s.refuse(w, a, http.StatusBadRequest, safesend.ReasonInvalid, err.Error())
+		return
+	}
+	if !sessionAllowed(id.Grants, gatewayapi.OpRun, addr.Session().String()) {
+		s.refuse(w, a, http.StatusForbidden, safesend.ReasonForbidden, fmt.Sprintf("run on %s is not permitted", addr.Session()))
+		return
+	}
+	res, err := s.backend.Run(r.Context(), ops.RunRequest{Address: req.Address, Text: req.Text})
 	if err != nil {
 		e := ops.AsError(err)
 		s.refuse(w, a, gatewayapi.HTTPStatus(e.Reason), e.Reason, e.Detail)

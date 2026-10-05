@@ -18,6 +18,7 @@ type Backend interface {
 	Read(ctx context.Context, addr, cursor string, limit int) (transcript.Page, error)
 	Send(ctx context.Context, req ops.SendRequest) ops.SendResult
 	Create(ctx context.Context, req ops.CreateRequest) (ops.CreateResult, error)
+	Run(ctx context.Context, req ops.RunRequest) (ops.RunResult, error)
 }
 
 // LocalBackend serves this host's sessions through the local daemon.
@@ -45,4 +46,8 @@ func (b LocalBackend) Send(ctx context.Context, req ops.SendRequest) ops.SendRes
 
 func (b LocalBackend) Create(ctx context.Context, req ops.CreateRequest) (ops.CreateResult, error) {
 	return b.Env.Create(ctx, req)
+}
+
+func (b LocalBackend) Run(ctx context.Context, req ops.RunRequest) (ops.RunResult, error) {
+	return b.Env.Run(ctx, req)
 }

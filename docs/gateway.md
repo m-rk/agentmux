@@ -70,7 +70,7 @@ Each entry of the array is a grant object:
 
 | field      | meaning |
 |------------|---------|
-| `ops`      | any of `list`, `status`, `threads`, `read`, `send`, `create`, `events` |
+| `ops`      | any of `list`, `status`, `threads`, `read`, `send`, `create`, `run`, `events` |
 | `sessions` | `path.Match` patterns over `<instance>@<host>`; `*` does not match `/` |
 
 Entries add up: a call is allowed if any one entry allows it. There is no
@@ -135,6 +135,41 @@ agentmux sessions create -template web@build-box -instance task-42 -branch featu
 
 `-base` is listed in `agentmux sessions create -h`; a caller can detect support
 from that line. `-json` adds `base` and `base_commit` to the result.
+
+## Running an amp thread
+
+`run` starts an amp thread on an amp instance (or continues one with a
+thread id), for prompts that should become their own thread rather than a
+paste into the runner's TUI. It shares `send`'s rate bucket, and refuses
+with a non-2xx status like `create`. See [Starting amp
+threads](amp-run.md).
+
+```json
+POST /v1/run
+{"address": "site-amp@build-box", "text": "do the thing"}
+```
+
+| field     | meaning |
+|-----------|---------|
+| `address` | `<instance>@<host>` to start a thread, or with `#<thread>` to continue one; the grant is checked against the session without the thread suffix |
+| `text`    | the prompt |
+
+The reply is the thread plus its state (`running` when just launched):
+
+```json
+{"ok": true, "address": "site-amp@build-box#T-11111111-1111-4111-8111-111111111111",
+ "agent": "amp", "thread": "T-11111111-1111-4111-8111-111111111111",
+ "thread_id": "T-11111111-1111-4111-8111-111111111111",
+ "thread_url": "https://ampcode.com/threads/T-11111111-1111-4111-8111-111111111111",
+ "state": "running"}
+```
+
+From a shell, routed by the instance's host:
+
+```sh
+agentmux sessions run -file prompt.md site-amp@build-box
+agentmux sessions run -file followup.md -thread T-11111111-1111-4111-8111-111111111111 site-amp@build-box
+```
 
 ## Running it
 
@@ -208,7 +243,7 @@ hosts:
     gateway: http://100.64.0.2:4288
 ```
 
-`agentmux sessions status|threads|read|send|create` and `agentmux list` then reach
+`agentmux sessions status|threads|read|send|create|run` and `agentmux list` then reach
 `build-box` through its gateway. An `address:` (the daemon's own port) is
 optional; without one, the TUI and the commands that manage instances skip
 that host.

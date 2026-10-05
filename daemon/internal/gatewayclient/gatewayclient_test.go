@@ -219,3 +219,21 @@ func TestCreate(t *testing.T) {
 		t.Fatalf("refusal: %v", err)
 	}
 }
+
+func TestRun(t *testing.T) {
+	ctx := context.Background()
+	s := &stub{status: 200, body: `{"ok":true,"address":"probe@box#T-11111111-1111-4111-8111-111111111111","agent":"amp","thread":"T-11111111-1111-4111-8111-111111111111","thread_id":"T-11111111-1111-4111-8111-111111111111","thread_url":"https://ampcode.com/threads/T-11111111-1111-4111-8111-111111111111","state":"running"}`}
+	got, err := s.server(t).Run(ctx, gatewayapi.RunRequest{Address: "probe@box", Text: "do the thing"})
+	if err != nil || got.ThreadID != "T-11111111-1111-4111-8111-111111111111" || got.State != "running" || s.path != "/v1/run" {
+		t.Fatalf("run: %+v %v %s", got, err, s.path)
+	}
+	if string(s.req) != `{"address":"probe@box","text":"do the thing"}` {
+		t.Errorf("request = %s", s.req)
+	}
+
+	s = &stub{status: 403, body: `{"error":{"reason":"forbidden","detail":"nope"}}`}
+	_, err = s.server(t).Run(ctx, gatewayapi.RunRequest{Address: "probe@box"})
+	if e := ops.AsError(err); e.Reason != safesend.ReasonForbidden {
+		t.Fatalf("refusal: %v", err)
+	}
+}

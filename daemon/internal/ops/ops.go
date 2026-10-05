@@ -135,6 +135,27 @@ type StatusResult struct {
 	// pane), or amp's own thread state (idle, ...) for an amp thread address.
 	State  string `json:"state"`
 	Thread string `json:"thread,omitempty"`
+	// AmpMode is the effective amp mode for amp instances, and where it
+	// came from ("instance" or "host"); absent for other agents and when
+	// no mode is configured anywhere. See AMUX-15.
+	AmpMode AmpModeInfo `json:"amp_mode,omitempty"`
+	// Run is the run-thread state (running, done, or failed with Reason)
+	// when the address names a thread started by `sessions run`.
+	Run *RunStateInfo `json:"run,omitempty"`
+}
+
+// RunStateInfo is the stream-log state of a `sessions run` thread.
+type RunStateInfo struct {
+	// State is "running", "done", or "failed".
+	State string `json:"state"`
+	// Reason is set when State is "failed".
+	Reason string `json:"reason,omitempty"`
+}
+
+// fileExists reports whether path is a regular file.
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 // Status looks up one session and reads its readiness.
@@ -163,10 +184,26 @@ func (e Env) Status(ctx context.Context, addrText string) (StatusResult, error) 
 			return res, nil
 		}
 		if inst.Agent == "amp" {
+			res.AmpMode = AmpModeOf(inst.Name)
 			if addr.Thread != "" {
 				src, _, err := Source(addr)
 				if err != nil {
 					return res, err
+				}
+				// A run thread's own stream log knows running/done/failed;
+				// otherwise fall back to amp's last-known agent state.
+				logPath := session.AmpRunLogPath(src.Home, addr.Instance, addr.Thread)
+				if runState := session.AmpRunStateOf(logPath); runState.ThreadID == addr.Thread || fileExists(logPath) {
+					res.Run = &RunStateInfo{State: runState.State, Reason: runState.Reason}
+					switch runState.State {
+					case "done":
+						res.State = "done"
+					case "failed":
+						res.State = "failed"
+					default:
+						res.State = "running"
+					}
+					return res, nil
 				}
 				state, err := transcript.AmpThreadState(ctx, src, addr.Thread)
 				if errors.Is(err, transcript.ErrNoThread) {

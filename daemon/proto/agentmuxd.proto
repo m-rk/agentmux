@@ -192,6 +192,12 @@ message CreateInstanceRequest {
   // amp.runner.autoUpdate.enabled, where an agentmux-driven `amp update`
   // would fight the runner's own updater.
   string amp_update = 14;
+  // amp only. Per-instance amp mode override, stored as AGENTMUX_AMP_MODE
+  // in the registry: wins over the host's ~/.config/agentmux/amp.yaml for
+  // `sessions run`. Empty (the default) means no override. A plugin mode
+  // key or label, or a built-in (low, medium, high, ultra); validated the
+  // same way the host file is — at run time, by amp itself.
+  string amp_mode = 16;
   // Absolute paths of individual files outside the workdir that the agent
   // may read and edit (exactly those files, not their directories), e.g. a
   // task note kept in a notes vault. Validated and symlink-resolved by

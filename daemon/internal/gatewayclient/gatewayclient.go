@@ -89,6 +89,16 @@ func (c *Client) Create(ctx context.Context, req gatewayapi.CreateRequest) (gate
 	return out, err
 }
 
+// RunTimeout bounds a run: the server's own runTimeout plus the round trip.
+const RunTimeout = 4 * time.Minute
+
+// Run starts (or continues) an amp thread on the host.
+func (c *Client) Run(ctx context.Context, req gatewayapi.RunRequest) (gatewayapi.RunResponse, error) {
+	var out gatewayapi.RunResponse
+	err := c.call(ctx, gatewayapi.OpRun, RunTimeout, req, &out)
+	return out, err
+}
+
 // Send delivers a message. Like ops.Env.Send it never returns an error: a
 // refusal, a transport failure or a bad reply all come back as a SendResult
 // with OK false.

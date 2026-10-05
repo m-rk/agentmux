@@ -29,11 +29,12 @@ const (
 	OpRead    = "read"
 	OpSend    = "send"
 	OpCreate  = "create"
+	OpRun     = "run"
 	OpEvents  = "events" // reserved for phase 5
 )
 
 // Ops lists every operation a capability may name.
-var Ops = []string{OpList, OpStatus, OpThreads, OpRead, OpSend, OpCreate, OpEvents}
+var Ops = []string{OpList, OpStatus, OpThreads, OpRead, OpSend, OpCreate, OpRun, OpEvents}
 
 // Path is the URL path for op, e.g. /v1/send.
 func Path(op string) string { return "/v1/" + op }
@@ -114,6 +115,17 @@ type CreateRequest struct {
 // CreateResponse is the session plus branch and created; a refusal is a
 // non-2xx ErrorResponse.
 type CreateResponse = ops.CreateResult
+
+// RunRequest starts an amp thread on the host (Thread "" in Address) or
+// continues one. Text is the prompt.
+type RunRequest struct {
+	Address string `json:"address"`
+	Text    string `json:"text"`
+}
+
+// RunResponse is the thread plus its state; a refusal is a non-2xx
+// ErrorResponse.
+type RunResponse = ops.RunResult
 
 // ErrorResponse is the body of every non-2xx reply.
 type ErrorResponse struct {

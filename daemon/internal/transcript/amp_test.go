@@ -352,3 +352,72 @@ func TestAmpExecStdinEmpty(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+// TestAmpReadFallsBackToRunLog covers `sessions read` on a run thread
+// when the export fails (no auth) but the stream log exists: the turn's
+// messages come from the log, mapped to user/assistant/result.
+func TestAmpReadFallsBackToRunLog(t *testing.T) {
+	home := t.TempDir()
+	src := Source{Agent: "amp", Instance: "probe", Workdir: "/work/proj", Home: home, AmpRunnerID: "runner-a"}
+	dir := filepath.Join(home, ".local", "state", "agentmux", "sessions", "probe")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	log := strings.Join([]string{
+		`{"type":"system","subtype":"init","session_id":"` + ampT1 + `"}`,
+		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"do the thing"}]}}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"on it"}]}}`,
+		`{"type":"result","subtype":"success","is_error":false,"result":"did the thing"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "amp-run-"+ampT1+".jsonl"), []byte(log), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := ampExec
+	ampExec = func(_ context.Context, _ Source, _ ...string) ([]byte, error) {
+		return nil, errors.New("fake amp: no auth")
+	}
+	defer func() { ampExec = old }()
+
+	page, err := ampReader{}.Read(context.Background(), src, ampT1, "", 20)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if page.Thread != ampT1 || len(page.Messages) != 3 {
+		t.Fatalf("page: %+v", page)
+	}
+	if page.Messages[0].Role != RoleUser || page.Messages[0].Text != "do the thing" {
+		t.Fatalf("user: %+v", page.Messages[0])
+	}
+	if page.Messages[2].Role != RoleAssistant || page.Messages[2].Text != "did the thing" {
+		t.Fatalf("result: %+v", page.Messages[2])
+	}
+}
+
+// TestAmpReadDefaultThreadFromRunLog covers `sessions read` with no thread:
+// the newest run log wins when the export fails.
+func TestAmpReadDefaultThreadFromRunLog(t *testing.T) {
+	home := t.TempDir()
+	src := Source{Agent: "amp", Instance: "probe", Workdir: "/work/proj", Home: home, AmpRunnerID: "runner-a"}
+	dir := filepath.Join(home, ".local", "state", "agentmux", "sessions", "probe")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := ampExec
+	ampExec = func(_ context.Context, _ Source, _ ...string) ([]byte, error) {
+		return nil, errors.New("fake amp: no auth")
+	}
+	defer func() { ampExec = old }()
+
+	_, rerr := ampReader{}.Read(context.Background(), src, "", "", 20)
+	if rerr == nil {
+		t.Fatal("read with no log and no export should fail")
+	}
+	log := `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "amp-run-"+ampT1+".jsonl"), []byte(log), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	page, err := ampReader{}.Read(context.Background(), src, "", "", 20)
+	if err != nil || page.Thread != ampT1 {
+		t.Fatalf("default: %+v %v", page, err)
+	}
+}

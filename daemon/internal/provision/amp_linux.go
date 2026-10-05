@@ -218,6 +218,7 @@ func createAmp(opts Options) (string, error) {
 		{"AGENTMUX_AMP_DIRS", strings.Join(serveDirs, ",")},
 		{"AGENTMUX_AMP_DISCOVER_DIRS", discoverFlag(opts.AmpDiscoverDirs)},
 		{"AGENTMUX_AMP_UPDATE", opts.AmpUpdate},
+		{"AGENTMUX_AMP_MODE", opts.AmpMode},
 		{"AGENTMUX_SESSION_NAME", sessionName},
 		{"AGENTMUX_TMUX_SESSION_NAME", sessionName},
 		{"AGENTMUX_HOST_NAME", hostName},

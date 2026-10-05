@@ -130,6 +130,10 @@ Every backend here aims for:
   instance's own turns in near real time and pages Discord only when a
   session is stuck, waiting on you, or failing in a loop; everything else is
   logged for a nightly digest. See [Thread watch](docs/thread-watch.md).
+- **Amp threads** — `agentmux sessions run -file prompt.md instance@host`
+  starts an amp thread in the instance's workdir (or continues one with
+  `-thread`), using the host's configured amp mode. See [Starting amp
+  threads](docs/amp-run.md).
 - **Discord** — one outbound channel for everything agentmux needs to tell
   you: doctor findings and repairs plus Claude token-expiry warnings
   (`agentmux notify discord setup`), and cross-session collaboration through

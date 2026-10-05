@@ -890,6 +890,12 @@ type CreateInstanceRequest struct {
 	// amp.runner.autoUpdate.enabled, where an agentmux-driven `amp update`
 	// would fight the runner's own updater.
 	AmpUpdate string `protobuf:"bytes,14,opt,name=amp_update,json=ampUpdate,proto3" json:"amp_update,omitempty"`
+	// amp only. Per-instance amp mode override, stored as AGENTMUX_AMP_MODE
+	// in the registry: wins over the host's ~/.config/agentmux/amp.yaml for
+	// `sessions run`. Empty (the default) means no override. A plugin mode
+	// key or label, or a built-in (low, medium, high, ultra); validated the
+	// same way the host file is — at run time, by amp itself.
+	AmpMode string `protobuf:"bytes,16,opt,name=amp_mode,json=ampMode,proto3" json:"amp_mode,omitempty"`
 	// Absolute paths of individual files outside the workdir that the agent
 	// may read and edit (exactly those files, not their directories), e.g. a
 	// task note kept in a notes vault. Validated and symlink-resolved by
@@ -1025,6 +1031,13 @@ func (x *CreateInstanceRequest) GetAmpDiscoverDirs() bool {
 func (x *CreateInstanceRequest) GetAmpUpdate() string {
 	if x != nil {
 		return x.AmpUpdate
+	}
+	return ""
+}
+
+func (x *CreateInstanceRequest) GetAmpMode() string {
+	if x != nil {
+		return x.AmpMode
 	}
 	return ""
 }
@@ -1800,7 +1813,7 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\x06action\x18\x02 \x01(\x0e2\x1b.agentmuxd.v1.ControlActionR\x06action\";\n" +
 	"\x0fControlResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\x92\x04\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xad\x04\n" +
 	"\x15CreateInstanceRequest\x12#\n" +
 	"\rinstance_name\x18\x01 \x01(\tR\finstanceName\x12\x14\n" +
 	"\x05agent\x18\x02 \x01(\tR\x05agent\x12\x1a\n" +
@@ -1817,7 +1830,8 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\bamp_dirs\x18\f \x01(\tR\aampDirs\x12*\n" +
 	"\x11amp_discover_dirs\x18\r \x01(\bR\x0fampDiscoverDirs\x12\x1d\n" +
 	"\n" +
-	"amp_update\x18\x0e \x01(\tR\tampUpdate\x12\x1f\n" +
+	"amp_update\x18\x0e \x01(\tR\tampUpdate\x12\x19\n" +
+	"\bamp_mode\x18\x10 \x01(\tR\aampMode\x12\x1f\n" +
 	"\vallow_files\x18\x0f \x03(\tR\n" +
 	"allowFiles\"B\n" +
 	"\x16CreateInstanceResponse\x12\x0e\n" +

@@ -28,6 +28,9 @@ type fakeBackend struct {
 	sendRes   *ops.SendResult
 	created   []ops.CreateRequest
 	createErr error
+	ran       []ops.RunRequest
+	runRes    *ops.RunResult
+	runErr    error
 }
 
 func (f *fakeBackend) Host() string { return "hostA" }
@@ -64,6 +67,21 @@ func (f *fakeBackend) Create(_ context.Context, req ops.CreateRequest) (ops.Crea
 		Session: ops.Session{Address: req.Instance + "@hostA", Name: req.Instance, Workdir: "/w/" + req.Instance},
 		Branch:  req.Branch, Created: true,
 	}, nil
+}
+
+func (f *fakeBackend) Run(_ context.Context, req ops.RunRequest) (ops.RunResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ran = append(f.ran, req)
+	if f.runErr != nil {
+		return ops.RunResult{}, f.runErr
+	}
+	if f.runRes != nil {
+		return *f.runRes, nil
+	}
+	return ops.RunResult{OK: true, Address: req.Address, Agent: "amp",
+		Thread: "T-11111111-1111-4111-8111-111111111111", ThreadID: "T-11111111-1111-4111-8111-111111111111",
+		ThreadURL: "https://ampcode.com/threads/T-11111111-1111-4111-8111-111111111111", State: "running"}, nil
 }
 
 type harness struct {
@@ -573,5 +591,50 @@ func TestCreateSharesSendBucket(t *testing.T) {
 	json.Unmarshal(h.post("send", sendBody).Body.Bytes(), &res)
 	if res.OK || res.Reason != safesend.ReasonRateLimited {
 		t.Errorf("send over the shared bucket: %+v", res)
+	}
+}
+
+const runBody = `{"address":"probe@hostA","text":"do the thing"}`
+
+func TestRunGrantAndPassthrough(t *testing.T) {
+	h := newHarness(t,
+		all("list", "read", "status", "threads", "send", "create"),
+		gatewayapi.Grant{Ops: []string{"run"}, Sessions: []string{"probe@*"}})
+	rec := h.post("run", runBody)
+	if rec.Code != 200 {
+		t.Fatalf("run: %d %s", rec.Code, rec.Body)
+	}
+	var res gatewayapi.RunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if !res.OK || res.ThreadID != "T-11111111-1111-4111-8111-111111111111" || res.State != "running" {
+		t.Errorf("response = %+v", res)
+	}
+	got := h.backend.ran[0]
+	if got.Address != "probe@hostA" || got.Text != "do the thing" {
+		t.Errorf("backend request = %+v", got)
+	}
+	if !strings.Contains(h.logs.String(), `op=run target="probe@hostA"`) {
+		t.Errorf("log = %s", h.logs.String())
+	}
+
+	// A thread suffix never widens access: continuing on an ungranted
+	// instance is forbidden even with the thread granted elsewhere.
+	rec = h.post("run", `{"address":"other@hostA#T-11111111-1111-4111-8111-111111111111","text":"again"}`)
+	if rec.Code != 403 || errReason(t, rec) != safesend.ReasonForbidden {
+		t.Errorf("ungranted instance: %d %s", rec.Code, rec.Body)
+	}
+	if len(h.backend.ran) != 1 {
+		t.Errorf("backend saw %d runs", len(h.backend.ran))
+	}
+}
+
+func TestRunRefusalPassthrough(t *testing.T) {
+	h := newHarness(t, all("run"))
+	h.backend.runErr = ops.Refuse(safesend.ReasonInvalid, "bogus thread")
+	rec := h.post("run", `{"address":"probe@hostA#bogus","text":"x"}`)
+	if rec.Code != 400 || errReason(t, rec) != safesend.ReasonInvalid {
+		t.Errorf("refusal: %d %s", rec.Code, rec.Body)
 	}
 }

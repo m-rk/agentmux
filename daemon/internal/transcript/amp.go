@@ -235,9 +235,177 @@ func (ampReader) Threads(ctx context.Context, src Source) ([]Thread, error) {
 func (r ampReader) Read(ctx context.Context, src Source, thread, cursor string, limit int) (Page, error) {
 	ex, err := r.export(ctx, src, thread)
 	if err != nil {
+		// A `sessions run` thread keeps its own stream log under the
+		// state dir, readable without amp auth: prefer it when the
+		// export fails (expired key, CLI gone) and the log exists.
+		if logPage, ok := ampRunLogPage(src, thread, cursor, limit); ok {
+			return logPage, nil
+		}
 		return Page{}, err
 	}
 	return PageFrom(ex.ID, ampMessages(ex), cursor, limit)
+}
+
+// ampRunLogPage reads a `sessions run` thread from its stream log under
+// the state dir (~/.local/state/agentmux/sessions/<instance>/), without
+// touching the amp CLI. It reports false when there is no such log, so
+// the caller falls through to the export path. Stream records map to
+// messages: user records stay user text, assistant text blocks become one
+// assistant message, and the final result record becomes a closing
+// assistant message (its result text) so the turn's outcome is visible.
+func ampRunLogPage(src Source, thread, cursor string, limit int) (Page, bool) {
+	if src.Home == "" || src.Instance == "" {
+		return Page{}, false
+	}
+	want := thread
+	if want == "" {
+		want = newestAmpRunThread(src.Home, src.Instance)
+	}
+	if want == "" || !ampThreadID.MatchString(want) {
+		return Page{}, false
+	}
+	path := filepath.Join(src.Home, ".local", "state", "agentmux", "sessions", src.Instance, "amp-run-"+want+".jsonl")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Page{}, false
+	}
+	var msgs []Message
+	scanner := lineScanner(data)
+	for scanner.Scan() {
+		if m, ok := ampStreamMessage(want, scanner.Bytes()); ok {
+			msgs = append(msgs, m)
+		}
+	}
+	if len(msgs) == 0 {
+		return Page{}, false
+	}
+	page, err := PageFrom(want, msgs, cursor, limit)
+	if err != nil {
+		return Page{}, false
+	}
+	return page, true
+}
+
+// newestAmpRunThread is the most recently modified run log's thread, or
+// "" when none exists: the `read` default when no thread is named.
+func newestAmpRunThread(home, instance string) string {
+	dir := filepath.Join(home, ".local", "state", "agentmux", "sessions", instance)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	var best string
+	var bestMod time.Time
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, "amp-run-") || !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		id := strings.TrimSuffix(strings.TrimPrefix(name, "amp-run-"), ".jsonl")
+		if id == "pending" || !ampThreadID.MatchString(id) {
+			continue
+		}
+		if info, err := e.Info(); err == nil && info.ModTime().After(bestMod) {
+			best, bestMod = id, info.ModTime()
+		}
+	}
+	return best
+}
+
+// lineScanner scans newline-separated records in data.
+func lineScanner(data []byte) *lineScannerT {
+	return &lineScannerT{lines: strings.Split(string(data), "\n")}
+}
+
+type lineScannerT struct {
+	lines []string
+	pos   int
+	cur   string
+}
+
+func (s *lineScannerT) Scan() bool {
+	for s.pos < len(s.lines) {
+		s.cur = s.lines[s.pos]
+		s.pos++
+		if strings.TrimSpace(s.cur) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *lineScannerT) Bytes() []byte { return []byte(s.cur) }
+
+// ampStreamMessage maps one stream-json line to a transcript message.
+// Assistant records carry content blocks (text, tool_use); user records
+// carry the echoed prompt; the result record closes the turn with its
+// result text. Init and other system records have no message content.
+func ampStreamMessage(thread string, line []byte) (Message, bool) {
+	var base struct {
+		Type    string `json:"type"`
+		Message *struct {
+			Role    string `json:"role"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+				Name string `json:"name"`
+			} `json:"content"`
+		} `json:"message"`
+		Subtype string `json:"subtype"`
+		IsError bool   `json:"is_error"`
+		Result  string `json:"result"`
+	}
+	if json.Unmarshal(line, &base) != nil {
+		return Message{}, false
+	}
+	m := Message{Thread: thread, Untrusted: true}
+	switch base.Type {
+	case "user":
+		if base.Message == nil {
+			return Message{}, false
+		}
+		var texts []string
+		for _, b := range base.Message.Content {
+			if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+				texts = append(texts, strings.TrimSpace(b.Text))
+			}
+		}
+		if len(texts) == 0 {
+			return Message{}, false
+		}
+		m.Role, m.Text = RoleUser, CleanText(strings.Join(texts, "\n\n"))
+	case "assistant":
+		if base.Message == nil {
+			return Message{}, false
+		}
+		var texts []string
+		var calls []ToolCall
+		for _, b := range base.Message.Content {
+			switch b.Type {
+			case "text":
+				if strings.TrimSpace(b.Text) != "" {
+					texts = append(texts, strings.TrimSpace(b.Text))
+				}
+			case "tool_use":
+				calls = append(calls, ToolCall{Name: b.Name, Summary: CleanSummary(b.Text)})
+			}
+		}
+		if len(texts) == 0 && len(calls) == 0 {
+			return Message{}, false
+		}
+		m.Role, m.Text, m.Tools = RoleAssistant, CleanText(strings.Join(texts, "\n\n")), calls
+	case "result":
+		if strings.TrimSpace(base.Result) == "" {
+			return Message{}, false
+		}
+		m.Role, m.Text = RoleAssistant, CleanText(base.Result)
+		if base.IsError {
+			m.Tools = []ToolCall{{Name: "error", Summary: CleanSummary(base.Subtype)}}
+		}
+	default:
+		return Message{}, false
+	}
+	return m, true
 }
 
 // AmpThreadState returns the agent state amp last recorded for thread

@@ -35,6 +35,7 @@ type Options struct {
 	AmpDirs         string   // amp only; comma-separated absolute extra --dir paths — see proto doc
 	AmpDiscoverDirs bool     // amp only; pass --discover-dirs — see proto doc
 	AmpUpdate       string   // amp only: "", "on", or "off" — see proto doc
+	AmpMode         string   // amp only; per-instance -m override (AGENTMUX_AMP_MODE) — see proto doc
 	AllowFiles      []string // files outside the workdir the agent may read and edit — see proto doc
 }
 
@@ -84,8 +85,8 @@ func Create(opts Options) (string, error) {
 	if err := guardAgentMismatch(name, opts.Agent); err != nil {
 		return "", err
 	}
-	if opts.Agent != "amp" && (opts.AmpDirs != "" || opts.AmpDiscoverDirs || opts.AmpUpdate != "") {
-		return "", fmt.Errorf("amp-only options (-amp-dirs, -amp-discover-dirs, -amp-update) are not supported for the %q agent", opts.Agent)
+	if opts.Agent != "amp" && (opts.AmpDirs != "" || opts.AmpDiscoverDirs || opts.AmpUpdate != "" || opts.AmpMode != "") {
+		return "", fmt.Errorf("amp-only options (-amp-dirs, -amp-discover-dirs, -amp-update, -amp-mode) are not supported for the %q agent", opts.Agent)
 	}
 
 	msg, err := createForAgent(opts)

@@ -186,6 +186,7 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 			RunUser:           fields["AGENTMUX_RUN_USER"],
 			ProviderBaseUrl:   fields["AGENTMUX_PROVIDER_BASE_URL"],
 			ProviderApiKeyEnv: fields["AGENTMUX_PROVIDER_API_KEY_ENV"],
+			AmpMode:           fields["AGENTMUX_AMP_MODE"],
 			AllowFiles:        allow,
 		})
 		if err != nil {

@@ -1,0 +1,137 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"time"
+
+	"github.com/m-rk/agentmux/daemon/internal/address"
+	"github.com/m-rk/agentmux/daemon/internal/daemoninstall"
+	"github.com/m-rk/agentmux/daemon/internal/gatewayapi"
+	"github.com/m-rk/agentmux/daemon/internal/gatewayclient"
+	"github.com/m-rk/agentmux/daemon/internal/hostsconfig"
+	"github.com/m-rk/agentmux/daemon/internal/ops"
+	"github.com/m-rk/agentmux/daemon/internal/safesend"
+)
+
+// runOutput is `sessions run -json` on success.
+type runOutput struct {
+	OK bool `json:"ok"`
+	ops.RunResult
+}
+
+// runSessionsRun is `agentmux sessions run`: start an amp thread on an
+// instance (or continue one with -thread) by running a prompt through the
+// amp CLI in the instance's workdir, locally or through that host's
+// gateway. See docs/amp-run.md and ops.Env.Run. Exit 0 ran, 1 refused or
+// failed, 2 usage.
+func runSessionsRun(args []string) {
+	fs := flag.NewFlagSet("sessions run", flag.ExitOnError)
+	jsonOut := fs.Bool("json", false, "print machine-readable JSON (also on refusal)")
+	file := fs.String("file", "", "read the prompt from this file (\"-\" for stdin) instead of the argument (required)")
+	thread := fs.String("thread", "", "continue this amp thread id instead of starting a new thread")
+	socketPath := fs.String("socket", daemoninstall.SocketPath(), "Unix socket of the local agentmuxd")
+	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml with the gateway URL of other hosts")
+	fs.Parse(args)
+	if fs.NArg() != 1 || *file == "" {
+		fmt.Fprintln(os.Stderr, "usage: agentmux sessions run [-json] [-socket PATH] [-hosts PATH] [-thread THREAD_ID] -file PATH|- <instance>@<host>[#<thread>]")
+		os.Exit(2)
+	}
+	addrText := fs.Arg(0)
+	if *thread != "" {
+		addr, err := address.Parse(addrText)
+		if err != nil {
+			failRun(*jsonOut, addrText, safesend.ReasonInvalid, err.Error())
+		}
+		if addr.Thread != "" && addr.Thread != *thread {
+			failRun(*jsonOut, addrText, safesend.ReasonInvalid,
+				fmt.Sprintf("address names thread %s but -thread says %s", addr.Thread, *thread))
+		}
+		addr.Thread = *thread
+		addrText = addr.String()
+	}
+
+	text, err := readRunText(fs.Arg(0), *file)
+	if err != nil {
+		failRun(*jsonOut, addrText, safesend.ReasonInvalid, err.Error())
+	}
+
+	req := ops.RunRequest{Address: addrText, Text: text}
+	var res ops.RunResult
+	route, rerr := resolveRoute(req.Address, *hostsPath, address.LocalHostName())
+	switch {
+	case rerr != nil:
+		e := ops.AsError(rerr)
+		failRun(*jsonOut, req.Address, e.Reason, e.Detail)
+	case route.Remote != nil:
+		ctx, cancel := context.WithTimeout(context.Background(), gatewayclient.RunTimeout+time.Minute)
+		defer cancel()
+		var rerr error
+		res, rerr = route.Remote.Run(ctx, gatewayapi.RunRequest{Address: req.Address, Text: req.Text})
+		if rerr != nil {
+			e := ops.AsError(rerr)
+			failRun(*jsonOut, req.Address, e.Reason, e.Detail)
+		}
+	default:
+		ctx, cancel := context.WithTimeout(context.Background(), gatewayclient.RunTimeout+time.Minute)
+		defer cancel()
+		var rerr error
+		res, rerr = ops.Env{SocketPath: *socketPath}.Run(ctx, req)
+		if rerr != nil {
+			e := ops.AsError(rerr)
+			failRun(*jsonOut, req.Address, e.Reason, e.Detail)
+		}
+	}
+
+	if *jsonOut {
+		writeJSON(runOutput{OK: true, RunResult: res})
+		return
+	}
+	fmt.Printf("thread   %s\nurl      %s\nstate    %s\n", res.Address, res.ThreadURL, res.State)
+}
+
+// failRun reports a refusal in the requested shape and exits 1.
+func failRun(jsonOut bool, addr string, reason safesend.Reason, detail string) {
+	if jsonOut {
+		writeJSON(map[string]any{"ok": false, "address": addr, "reason": reason, "detail": detail})
+	} else {
+		fmt.Fprintf(os.Stderr, "not run on %s: %s: %s\n", addr, reason, detail)
+	}
+	os.Exit(1)
+}
+
+// readRunText reads the prompt from file ("-" for stdin). The address
+// argument is unused except for symmetry with readSendText; the prompt
+// never comes from the command line, so shell history can't leak it.
+func readRunText(_ string, file string) (string, error) {
+	if file == "-" {
+		data, err := io.ReadAll(io.LimitReader(os.Stdin, safesend.MaxTextBytes+1))
+		if err != nil {
+			return "", err
+		}
+		if err := checkRunText(string(data)); err != nil {
+			return "", err
+		}
+		return string(data), nil
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return "", err
+	}
+	if err := checkRunText(string(data)); err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// checkRunText applies the send text limits without the provenance
+// wrapper: a run prompt is a fresh thread start, not a paste into a TUI.
+func checkRunText(raw string) error {
+	if _, err := ops.CleanText(raw); err != nil {
+		return err
+	}
+	return nil
+}
