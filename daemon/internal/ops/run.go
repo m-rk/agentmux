@@ -131,6 +131,19 @@ func (e Env) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		return RunResult{}, Refuse(safesend.ReasonInvalid, "%v", err)
 	}
 	logPath := session.AmpRunLogPath(src.Home, addr.Instance, thread)
+	if thread != "" {
+		// Continuing restores the archived thread first (amp archives a
+		// thread when an `-x` run ends, and continuing an archived one
+		// refuses), and stops the stuck process behind a pending
+		// `ask_user_choice` question: in `-x` mode nothing can answer
+		// that dialog, so the run just waits, and the old process would
+		// otherwise keep holding the thread. Both are best-effort — the
+		// continue proceeds either way.
+		if st := session.AmpRunStateOf(logPath); st.State == "waiting" {
+			session.StopAmpRun(ctx, thread, workdir)
+		}
+		session.UnarchiveAmpThread(ctx, src.AmpEnvFile, thread)
+	}
 	id, err := session.StartAmpRun(ctx, src.AmpEnvFile, session.AmpRunArgs(text, mode, thread, title), workdir, logPath)
 	if err != nil {
 		return RunResult{}, Refuse(safesend.ReasonFailed, "amp: %v", err)

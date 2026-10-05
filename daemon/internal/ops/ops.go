@@ -146,10 +146,30 @@ type StatusResult struct {
 
 // RunStateInfo is the stream-log state of a `sessions run` thread.
 type RunStateInfo struct {
-	// State is "running", "done", or "failed".
+	// State is "running", "done", "waiting", or "failed".
 	State string `json:"state"`
 	// Reason is set when State is "failed".
 	Reason string `json:"reason,omitempty"`
+	// WaitingOn is the pending `ask_user_choice` question when State is
+	// "waiting". It mirrors session.AmpWaitingOn.
+	WaitingOn *WaitingOnInfo `json:"waiting_on,omitempty"`
+}
+
+// WaitingOnInfo is a pending question the agent asked through amp's
+// built-in `ask_user_choice` tool: answering it needs `sessions run
+// -thread <id>` with the choice.
+type WaitingOnInfo struct {
+	// Tool is always "ask_user_choice".
+	Tool string `json:"tool"`
+	// ToolUseID is the stream tool_use id (TU-…) the answer addresses.
+	ToolUseID string `json:"tool_use_id,omitempty"`
+	// Question is the question the agent asked.
+	Question string `json:"question,omitempty"`
+	// Options are the choices the agent offered.
+	Options []string `json:"options,omitempty"`
+	// AllowOther reports whether the agent also accepts a free-text
+	// answer outside the options.
+	AllowOther bool `json:"allow_other,omitempty"`
 }
 
 // fileExists reports whether path is a regular file.
@@ -190,16 +210,29 @@ func (e Env) Status(ctx context.Context, addrText string) (StatusResult, error) 
 				if err != nil {
 					return res, err
 				}
-				// A run thread's own stream log knows running/done/failed;
+				// A run thread's own stream log knows running/done/waiting/failed;
 				// otherwise fall back to amp's last-known agent state.
 				logPath := session.AmpRunLogPath(src.Home, addr.Instance, addr.Thread)
 				if runState := session.AmpRunStateOf(logPath); runState.ThreadID == addr.Thread || fileExists(logPath) {
 					res.Run = &RunStateInfo{State: runState.State, Reason: runState.Reason}
+					if runState.WaitingOn != nil {
+						res.Run.WaitingOn = &WaitingOnInfo{
+							Tool: runState.WaitingOn.Tool, ToolUseID: runState.WaitingOn.ToolUseID,
+							Question: runState.WaitingOn.Question, Options: runState.WaitingOn.Options,
+							AllowOther: runState.WaitingOn.AllowOther,
+						}
+					}
 					switch runState.State {
 					case "done":
 						res.State = "done"
 					case "failed":
 						res.State = "failed"
+					case "waiting":
+						// Waiting is not done: the run process is still
+						// alive behind the pending question, so the
+						// thread-level state stays running while run
+						// carries the question.
+						res.State = "running"
 					default:
 						res.State = "running"
 					}

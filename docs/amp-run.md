@@ -23,7 +23,8 @@ state    running
 
 `state` is always `running` here: the agent was just launched (or
 relaunched for a continue). Poll `sessions status` for what happens next —
-`running`, `done`, or `failed` with a reason — and `sessions read` for the
+`running`, `done`, `waiting` (with the pending question under
+`waiting_on`), or `failed` with a reason — and `sessions read` for the
 transcript. Both read the thread's own stream log under the state dir
 (`~/.local/state/agentmux/sessions/<instance>/`), so they work even when
 the amp CLI or its auth is gone.
@@ -47,6 +48,54 @@ the agent works; the rename is best-effort and never fails the run. amp
 refuses to rename archived threads, so an archived task thread keeps
 whatever title it had. Archive task threads when the task note is
 archived, not before.
+
+## Threads stay unarchived
+
+Every run — new or continued — carries `--no-archive-after-execute`, so a
+finished thread stays in the active list instead of vanishing into the
+archive. Continuing also unarchives the thread first (`amp threads archive
+--unarchive <id>`), since amp archives a thread when an `-x` run ends and
+continuing an archived thread refuses with "This thread is archived and
+cannot be continued". Unarchiving an active thread succeeds, so the
+continue does it unconditionally rather than detecting the archived state
+first.
+
+## Waiting on a question
+
+An amp agent can call amp's built-in `ask_user_choice` tool to ask a
+multiple-choice question. In `-x` mode nothing can answer that dialog, so
+the run just waits: the stream log ends at the assistant's `tool_use`
+record with no result record after it. `sessions status -json` on the
+thread then reports the thread-level `state` as `running` with the run as
+`waiting` and the question under `waiting_on`:
+
+```json
+{"state": "running", "run": {"state": "waiting", "waiting_on": {
+  "tool": "ask_user_choice", "tool_use_id": "TU-…",
+  "question": "Tabs or spaces?", "options": ["Tabs", "Spaces"],
+  "allow_other": true}}}
+```
+
+The human-readable status prints the question with its numbered options,
+and `sessions read` appends a closing assistant message naming the
+question and options. Answer with a continue — `sessions run -thread
+<id> -file <answer>`, where the file holds the choice (or free text when
+`allow_other` is set). The continue stops the stuck run process first
+(nothing else can answer the pending dialog) and unarchives the thread,
+then relaunches it with the answer.
+
+## Failed runs
+
+A run whose stream log ends in a `result` record with subtype
+`error_during_execution` (or `error_max_turns`) — `is_error: true` with
+the message in the record's `error` field — reports `state: failed` with
+that error as the reason, even while amp itself still shows the thread as
+`running_tools`: the stream log's final record is authoritative, not
+amp's last-known agent state. A run killed by hand (for example answering
+a pending question by killing the stuck process, unarchiving, and
+continuing) ends the same way, with an error like `User cancelled
+(SIGINT/SIGTERM)`. Poll `sessions status` for `running` / `done` /
+`waiting` / `failed` rather than trusting the thread's agent state.
 
 Through the gateway it is the `run` op, granted like `send` (it starts an
 agent that will act on text it is given, and shares `send`'s rate bucket).

@@ -393,6 +393,70 @@ func TestAmpReadFallsBackToRunLog(t *testing.T) {
 	}
 }
 
+// TestRunReadShowsWaitingQuestion is the `sessions read` side of the
+// stuck-question state: the run log's pending ask_user_choice tool_use
+// becomes a closing assistant message naming the question and options,
+// with the tool call recorded.
+func TestAmpReadShowsWaitingQuestion(t *testing.T) {
+	home := t.TempDir()
+	src := Source{Agent: "amp", Instance: "probe", Workdir: "/work/proj", Home: home, AmpRunnerID: "runner-a"}
+	dir := filepath.Join(home, ".local", "state", "agentmux", "sessions", "probe")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	log := strings.Join([]string{
+		`{"type":"system","subtype":"init","session_id":"` + ampT1 + `"}`,
+		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"do the thing"}]}}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"one question first"}]}}`,
+		`{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"tool_use","id":"TU-7","name":"ask_user_choice","input":{"question":"Tabs or spaces?","options":["Tabs","Spaces"]}}]}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "amp-run-"+ampT1+".jsonl"), []byte(log), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := ampExec
+	ampExec = func(_ context.Context, _ Source, _ ...string) ([]byte, error) {
+		return nil, errors.New("fake amp: no auth")
+	}
+	defer func() { ampExec = old }()
+
+	page, err := ampReader{}.Read(context.Background(), src, ampT1, "", 20)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	// Four: user, text, the question's own tool_use record, and the
+	// trailing pending-question message.
+	if len(page.Messages) != 4 {
+		t.Fatalf("messages: %+v", page.Messages)
+	}
+	last := page.Messages[len(page.Messages)-1]
+	if last.Role != RoleAssistant || !strings.Contains(last.Text, "Tabs or spaces?") || !strings.Contains(last.Text, "Tabs / Spaces") {
+		t.Fatalf("question message: %+v", last)
+	}
+	if len(last.Tools) != 1 || last.Tools[0].Name != "ask_user_choice" {
+		t.Fatalf("question tools: %+v", last.Tools)
+	}
+	// An answered question (tool_result) plus the closing result record
+	// ends the run and clears it: no trailing question message, and the
+	// question's own tool_use record is the only ask_user_choice left.
+	log += `{"type":"user","message":{"type":"message","role":"user","content":[{"type":"tool_result","tool_use_id":"TU-7","content":"Spaces","is_error":false}]}}` + "\n"
+	log += `{"type":"result","subtype":"success","is_error":false,"result":"did the thing"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "amp-run-"+ampT1+".jsonl"), []byte(log), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	page, err = ampReader{}.Read(context.Background(), src, ampT1, "", 20)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	// The trailing pending-question message is gone: no message carries
+	// the "Waiting on a question" text. The question's own tool_use record
+	// stays — it is history, not a pending ask.
+	for _, m := range page.Messages {
+		if strings.HasPrefix(m.Text, "Waiting on a question") {
+			t.Fatalf("stale pending question after result: %+v", page.Messages)
+		}
+	}
+}
+
 // TestAmpReadDefaultThreadFromRunLog covers `sessions read` with no thread:
 // the newest run log wins when the export fails.
 func TestAmpReadDefaultThreadFromRunLog(t *testing.T) {

@@ -252,7 +252,10 @@ func (r ampReader) Read(ctx context.Context, src Source, thread, cursor string, 
 // the caller falls through to the export path. Stream records map to
 // messages: user records stay user text, assistant text blocks become one
 // assistant message, and the final result record becomes a closing
-// assistant message (its result text) so the turn's outcome is visible.
+// assistant message (its result text) so the turn's outcome is visible. A
+// pending `ask_user_choice` tool_use with no result record after it
+// appends a closing assistant message naming the question and options, so
+// the read surfaces the stuck question.
 func ampRunLogPage(src Source, thread, cursor string, limit int) (Page, bool) {
 	if src.Home == "" || src.Instance == "" {
 		return Page{}, false
@@ -271,10 +274,16 @@ func ampRunLogPage(src Source, thread, cursor string, limit int) (Page, bool) {
 	}
 	var msgs []Message
 	scanner := lineScanner(data)
+	var pendingAsk *askPending
 	for scanner.Scan() {
-		if m, ok := ampStreamMessage(want, scanner.Bytes()); ok {
+		line := scanner.Bytes()
+		if m, ok := ampStreamMessage(want, line); ok {
 			msgs = append(msgs, m)
 		}
+		pendingAsk = trackAskPending(pendingAsk, line)
+	}
+	if q := pendingAskMessage(want, pendingAsk); q != nil {
+		msgs = append(msgs, *q)
 	}
 	if len(msgs) == 0 {
 		return Page{}, false
@@ -284,6 +293,107 @@ func ampRunLogPage(src Source, thread, cursor string, limit int) (Page, bool) {
 		return Page{}, false
 	}
 	return page, true
+}
+
+// askPending is a pending `ask_user_choice` question seen in a stream
+// log: the tool_use id plus the question, options, and allow_other from
+// its input.
+type askPending struct {
+	toolUseID  string
+	question   string
+	options    []string
+	allowOther bool
+}
+
+// trackAskPending follows one stream-log line: an assistant record with an
+// `ask_user_choice` tool_use sets the pending question (its tool_use id,
+// question, options, allow_other from the input); a tool_result user
+// record or a result record clears it. Callers keep the returned value
+// across lines and render what remains at the end.
+func trackAskPending(cur *askPending, line []byte) *askPending {
+	var rec struct {
+		Type    string `json:"type"`
+		Message *struct {
+			Content []struct {
+				Type      string          `json:"type"`
+				ID        string          `json:"id"`
+				Name      string          `json:"name"`
+				Input     json.RawMessage `json:"input"`
+				ToolUseID string          `json:"toolUseID"`
+			} `json:"content"`
+		} `json:"message"`
+	}
+	if json.Unmarshal(line, &rec) != nil || rec.Message == nil {
+		return cur
+	}
+	switch rec.Type {
+	case "assistant":
+		for _, b := range rec.Message.Content {
+			if b.Type != "tool_use" || b.Name != "ask_user_choice" || b.ID == "" {
+				continue
+			}
+			p := &askPending{toolUseID: b.ID}
+			var in struct {
+				Question   string   `json:"question"`
+				Options    []string `json:"options"`
+				AllowOther bool     `json:"allowOther"`
+			}
+			if json.Unmarshal(b.Input, &in) == nil {
+				p.question, p.options, p.allowOther = in.Question, in.Options, in.AllowOther
+			}
+			return p
+		}
+	case "user":
+		for _, b := range rec.Message.Content {
+			if b.Type == "tool_result" {
+				return nil
+			}
+		}
+	case "result":
+		return nil
+	}
+	return cur
+}
+
+// ampStreamToolSummary is the one-line summary for a stream-log tool_use:
+// the ask_user_choice question, else the amp input summary (command, path,
+// pattern, …). Stream records carry the tool input, not rendered text,
+// and b.Text is empty there.
+func ampStreamToolSummary(name string, raw json.RawMessage) string {
+	if name == "ask_user_choice" {
+		var in struct {
+			Question string `json:"question"`
+		}
+		if json.Unmarshal(raw, &in) == nil && in.Question != "" {
+			return in.Question
+		}
+		return ""
+	}
+	return ampInputSummary(raw)
+}
+
+// pendingAskMessage renders the still-pending question as a closing
+// assistant message, or nil when nothing is pending. The ToolCall names
+// the tool so the question is visible in both the human-readable read and
+// the JSON page.
+func pendingAskMessage(thread string, pending *askPending) *Message {
+	if pending == nil {
+		return nil
+	}
+	text := "Waiting on a question (ask_user_choice)."
+	if q := strings.TrimSpace(pending.question); q != "" {
+		text = "Waiting on a question: " + q
+	}
+	if len(pending.options) > 0 {
+		text += "\nOptions: " + strings.Join(pending.options, " / ")
+	}
+	summary := pending.question
+	if summary == "" {
+		summary = pending.toolUseID
+	}
+	m := &Message{Thread: thread, Role: RoleAssistant, Text: CleanText(text), Untrusted: true,
+		Tools: []ToolCall{{Name: "ask_user_choice", Summary: CleanSummary(summary)}}}
+	return m
 }
 
 // newestAmpRunThread is the most recently modified run log's thread, or
@@ -339,16 +449,21 @@ func (s *lineScannerT) Bytes() []byte { return []byte(s.cur) }
 // ampStreamMessage maps one stream-json line to a transcript message.
 // Assistant records carry content blocks (text, tool_use); user records
 // carry the echoed prompt; the result record closes the turn with its
-// result text. Init and other system records have no message content.
+// result text. Init and other system records have no message content. A
+// pending `ask_user_choice` tool_use with no result record after it
+// becomes a closing assistant message naming the question and options, so
+// `sessions read` surfaces the stuck question the same way `sessions
+// status` does through waiting_on.
 func ampStreamMessage(thread string, line []byte) (Message, bool) {
 	var base struct {
 		Type    string `json:"type"`
 		Message *struct {
 			Role    string `json:"role"`
 			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-				Name string `json:"name"`
+				Type  string          `json:"type"`
+				Text  string          `json:"text"`
+				Name  string          `json:"name"`
+				Input json.RawMessage `json:"input"`
 			} `json:"content"`
 		} `json:"message"`
 		Subtype string `json:"subtype"`
@@ -387,7 +502,7 @@ func ampStreamMessage(thread string, line []byte) (Message, bool) {
 					texts = append(texts, strings.TrimSpace(b.Text))
 				}
 			case "tool_use":
-				calls = append(calls, ToolCall{Name: b.Name, Summary: CleanSummary(b.Text)})
+				calls = append(calls, ToolCall{Name: b.Name, Summary: CleanSummary(ampStreamToolSummary(b.Name, b.Input))})
 			}
 		}
 		if len(texts) == 0 && len(calls) == 0 {

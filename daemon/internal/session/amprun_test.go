@@ -18,33 +18,43 @@ func writeLog(t *testing.T, lines ...string) string {
 	return p
 }
 
+// TestAmpRunArgs covers the argv shape: flags before -x with the prompt
+// last, -m only with a mode, --title plus --no-archive-after-execute for
+// a new titled thread, and --no-archive-after-execute on every run
+// (untitled starts and continues included) so finished threads stay
+// unarchived and continuable.
 func TestAmpRunArgs(t *testing.T) {
 	// Flags before -x, prompt last: -x eats the next argument as its
 	// message even when it names a flag (confirmed live against the amp
 	// CLI 2026-10-05).
 	got := AmpRunArgs("do it", "high", "", "")
-	want := []string{"--stream-json", "-m", "high", "-x", "do it"}
+	want := []string{"--stream-json", "-m", "high", "--no-archive-after-execute", "-x", "do it"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("start: %q want %q", got, want)
 	}
 	got = AmpRunArgs("again", "", "T-1", "")
-	want = []string{"threads", "continue", "T-1", "--stream-json", "-x", "again"}
+	want = []string{"threads", "continue", "T-1", "--stream-json", "--no-archive-after-execute", "-x", "again"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("continue: %q want %q", got, want)
 	}
 	got = AmpRunArgs("do it", "", "", "")
-	if len(got) != 3 || got[0] != "--stream-json" {
+	if len(got) != 4 || got[0] != "--stream-json" || got[1] != "--no-archive-after-execute" {
 		t.Fatalf("no mode: %q", got)
 	}
 	// A title names a new thread and leaves it unarchived so it stays
-	// findable and renamable; a continue ignores it.
+	// findable and renamable; a continue ignores it but still stays
+	// unarchived.
 	got = AmpRunArgs("do it", "", "", "AMUX-17 do the thing")
 	want = []string{"--stream-json", "--title", "AMUX-17 do the thing", "--no-archive-after-execute", "-x", "do it"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("title: %q want %q", got, want)
 	}
-	if got := AmpRunArgs("again", "", "T-1", "AMUX-17 do the thing"); strings.Contains(strings.Join(got, " "), "--title") {
+	got = AmpRunArgs("again", "", "T-1", "AMUX-17 do the thing")
+	if strings.Contains(strings.Join(got, " "), "--title") {
 		t.Fatalf("continue takes no title: %q", got)
+	}
+	if !strings.Contains(strings.Join(got, " "), "--no-archive-after-execute") {
+		t.Fatalf("continue is archived: %q", got)
 	}
 }
 
@@ -171,9 +181,11 @@ func TestCheckAmpModeValidation(t *testing.T) {
 	}
 }
 
-// TestAmpRunStateOf covers the log states: running mid-turn, done on a
-// success result, failed on an error result or a launch-failure sentinel,
-// and running when the log doesn't exist yet.
+// TestAmpRunStateOf covers the log states: running mid-turn, waiting on
+// a pending ask_user_choice question, done on a success result, failed on
+// an error result (including error_during_execution with an "error"
+// field) or a launch-failure sentinel, and running when the log doesn't
+// exist yet.
 func TestAmpRunStateOf(t *testing.T) {
 	init, _ := json.Marshal(ampStreamInit{Type: "system", Subtype: "init", SessionID: "T-s"})
 	mk := func(lines ...string) string {
@@ -199,11 +211,79 @@ func TestAmpRunStateOf(t *testing.T) {
 	if st.State != "failed" || !strings.Contains(st.Reason, "boom") {
 		t.Fatalf("error result: %+v", st)
 	}
+	// error_during_execution carries its message in "error", not "result":
+	// a crashed run still reports failed with the reason.
+	crashed, _ := json.Marshal(map[string]any{"type": "result", "subtype": "error_during_execution", "is_error": true, "error": "InvalidModelOutputError: bad output"})
+	if st := AmpRunStateOf(mk(string(init), string(crashed))); st.State != "failed" || !strings.Contains(st.Reason, "InvalidModelOutputError") {
+		t.Fatalf("error_during_execution: %+v", st)
+	}
 	p := mk("Error: Unexpected error inside Amp CLI.")
 	if _, err := os.Create(p + ".done"); err != nil {
 		t.Fatal(err)
 	}
 	if st := AmpRunStateOf(p); st.State != "failed" || !strings.Contains(st.Reason, "Unexpected error") {
 		t.Fatalf("launch failure: %+v", st)
+	}
+}
+
+// TestAmpRunStateOfWaitingFailedRun covers a failed run that ends at a
+// pending question: the error_during_execution result (e.g. the operator
+// killing the stuck process with SIGINT/SIGTERM) reports failed with the
+// error, not waiting — the question is answered-by-hand.
+func TestAmpRunStateOfWaitingFailedRun(t *testing.T) {
+	init := `{"type":"system","subtype":"init","session_id":"T-s"}`
+	ask := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"TU-1","name":"ask_user_choice","input":{"question":"Tabs or spaces?","options":["Tabs","Spaces"]}}]}}`
+	cancelled, _ := json.Marshal(map[string]any{"type": "result", "subtype": "error_during_execution", "is_error": true, "error": "User cancelled (SIGINT/SIGTERM)"})
+	mk := func(lines ...string) string {
+		p := filepath.Join(t.TempDir(), "run.jsonl")
+		if err := os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	st := AmpRunStateOf(mk(init, ask, string(cancelled)))
+	if st.State != "failed" || !strings.Contains(st.Reason, "User cancelled") || st.WaitingOn != nil {
+		t.Fatalf("cancelled wait: %+v", st)
+	}
+}
+
+// TestAmpRunStateOfWaiting covers the stuck-question state: the latest
+// assistant record is a pending ask_user_choice tool_use with no result
+// record after it, so the run waits with the question, options, and
+// tool_use id. A result record after it ends the run instead, and a
+// non-question tool_use stays running.
+func TestAmpRunStateOfWaiting(t *testing.T) {
+	init := `{"type":"system","subtype":"init","session_id":"T-s"}`
+	ask := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"TU-1","name":"ask_user_choice","input":{"question":"Tabs or spaces?","options":["Tabs","Spaces"],"allowOther":true}}]}}`
+	mk := func(lines ...string) string {
+		p := filepath.Join(t.TempDir(), "run.jsonl")
+		if err := os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	st := AmpRunStateOf(mk(init, ask))
+	if st.State != "waiting" || st.WaitingOn == nil {
+		t.Fatalf("waiting: %+v", st)
+	}
+	w := st.WaitingOn
+	if w.Tool != "ask_user_choice" || w.ToolUseID != "TU-1" || w.Question != "Tabs or spaces?" || !w.AllowOther {
+		t.Fatalf("question: %+v", w)
+	}
+	if len(w.Options) != 2 || w.Options[0] != "Tabs" || w.Options[1] != "Spaces" {
+		t.Fatalf("options: %+v", w)
+	}
+	ok := `{"type":"result","subtype":"success","is_error":false,"result":"done"}`
+	if st := AmpRunStateOf(mk(init, ask, ok)); st.State != "done" || st.WaitingOn != nil {
+		t.Fatalf("answered by result: %+v", st)
+	}
+	other := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"TU-9","name":"shell_command","input":{"command":"ls"}}]}}`
+	if st := AmpRunStateOf(mk(init, other)); st.State != "running" || st.WaitingOn != nil {
+		t.Fatalf("other tool: %+v", st)
+	}
+	// A second question supersedes the first.
+	ask2 := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"TU-2","name":"ask_user_choice","input":{"question":"Second?","options":["Yes","No"]}}]}}`
+	if st := AmpRunStateOf(mk(init, ask, ask2)); st.State != "waiting" || st.WaitingOn.ToolUseID != "TU-2" {
+		t.Fatalf("second question: %+v", st)
 	}
 }

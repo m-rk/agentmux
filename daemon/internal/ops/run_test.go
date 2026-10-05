@@ -223,3 +223,88 @@ func TestRunModeRejection(t *testing.T) {
 		t.Fatalf("detail quotes amp: %v", rerr)
 	}
 }
+
+// TestRunContinueUnarchivesAndKeepsUnarchived continues a thread with an
+// unarchive before the spawn (amp archives a thread when an -x run ends,
+// and continuing an archived one refuses), and the continued argv keeps
+// --no-archive-after-execute so the thread stays unarchived. A fresh start
+// unarchives nothing.
+func TestRunContinueUnarchivesAndKeepsUnarchived(t *testing.T) {
+	newRunEnv(t)
+	id := "T-aaaaaaaaaaaaaaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	restore, fake := session.AmpSwapForTest(id, nil)
+	defer restore()
+	_, rerr := Env{}.Run(context.Background(), RunRequest{Address: localAddr(id), Text: "again"})
+	if rerr != nil {
+		t.Fatalf("run: %v", rerr)
+	}
+	if !fake.UnarchiveSeen || fake.Unarchived != id {
+		t.Fatalf("unarchive = %v %q", fake.UnarchiveSeen, fake.Unarchived)
+	}
+	if fake.UnarchivedAt != 0 {
+		t.Fatalf("unarchive ran after spawn: %d", fake.UnarchivedAt)
+	}
+	if flat := strings.Join(fake.Argv, " "); !strings.Contains(flat, "--no-archive-after-execute") {
+		t.Fatalf("continued run archives: %q", flat)
+	}
+}
+
+// TestRunContinueWaitingStopsFirst covers answering a pending
+// ask_user_choice question: the continue stops the stuck process first,
+// then unarchives, then spawns — stop, unarchive, spawn in that order.
+// The fake log carries a pending question (no result record after it).
+func TestRunContinueWaitingStopsFirst(t *testing.T) {
+	newRunEnv(t)
+	id := "T-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	restore, fake := session.AmpSwapForTest(id, nil)
+	defer restore()
+	// Write the waiting log under the thread's own name before continuing.
+	home := os.Getenv("HOME")
+	dir := filepath.Join(home, ".local", "state", "agentmux", "sessions", "probe")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	log := strings.Join([]string{
+		`{"type":"system","subtype":"init","session_id":"` + id + `"}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"TU-1","name":"ask_user_choice","input":{"question":"Tabs or spaces?","options":["Tabs","Spaces"]}}]}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "amp-run-"+id+".jsonl"), []byte(log), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, rerr := Env{}.Run(context.Background(), RunRequest{Address: localAddr(id), Text: "Spaces"})
+	if rerr != nil {
+		t.Fatalf("run: %v", rerr)
+	}
+	if !fake.StopSeen || fake.Stopped != id {
+		t.Fatalf("stop = %v %q", fake.StopSeen, fake.Stopped)
+	}
+	if fake.StopWorkdir == "" {
+		t.Fatal("stop ran without the instance workdir scope")
+	}
+	if !fake.UnarchiveSeen || fake.Unarchived != id {
+		t.Fatalf("unarchive = %v %q", fake.UnarchiveSeen, fake.Unarchived)
+	}
+	if !(fake.StoppedAt == 0 && fake.UnarchivedAt == 0) {
+		t.Fatalf("stop/unarchive ran after spawn: stopped=%d unarchived=%d", fake.StoppedAt, fake.UnarchivedAt)
+	}
+}
+
+// TestRunContinueRunningStopsNothing covers the normal continue: no
+// pending question in the log means no stop — only the unarchive runs
+// before the spawn.
+func TestRunContinueRunningStopsNothing(t *testing.T) {
+	newRunEnv(t)
+	id := "T-cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	restore, fake := session.AmpSwapForTest(id, nil)
+	defer restore()
+	_, rerr := Env{}.Run(context.Background(), RunRequest{Address: localAddr(id), Text: "again"})
+	if rerr != nil {
+		t.Fatalf("run: %v", rerr)
+	}
+	if fake.StopSeen {
+		t.Fatalf("stop ran with no pending question: %q", fake.Stopped)
+	}
+	if !fake.UnarchiveSeen || fake.Unarchived != id {
+		t.Fatalf("unarchive = %v %q", fake.UnarchiveSeen, fake.Unarchived)
+	}
+}

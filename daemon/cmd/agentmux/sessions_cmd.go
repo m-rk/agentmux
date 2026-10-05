@@ -274,5 +274,20 @@ func runSessionsStatus(args []string) {
 		} else {
 			fmt.Printf("run      %s\n", st.Run.State)
 		}
+		if st.Run.WaitingOn != nil {
+			w := st.Run.WaitingOn
+			fmt.Printf("question %s", w.Question)
+			if w.ToolUseID != "" {
+				fmt.Printf(" [%s]", w.ToolUseID)
+			}
+			fmt.Println()
+			for i, opt := range w.Options {
+				fmt.Printf("  %d. %s\n", i+1, opt)
+			}
+			if w.AllowOther {
+				fmt.Println("  (free-text answers accepted)")
+			}
+			fmt.Printf("answer with: sessions run -thread %s -file <answer>\n", st.Thread)
+		}
 	}
 }
