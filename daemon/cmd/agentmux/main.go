@@ -107,6 +107,7 @@ Usage:
   agentmux asks reply -thread ID -body-file F [-mention]
   agentmux asks read -thread ID [-after MESSAGE_ID] [-json]
   agentmux asks close -thread ID [-tag NAME]
+  agentmux asks serve                                          record Discord button clicks for asks
   agentmux threadwatch serve [-dry-run] [-once]   follow agent sessions and alert on Discord (see -h)
   agentmux threadwatch status [-since 24h] [-json]   show open intervene signals
   agentmux threadwatch install -run-user USER     (Linux, root) install agentmux-threadwatch.service

@@ -62,7 +62,7 @@ func TestPostAskMentionsOnlyConfiguredUser(t *testing.T) {
 	f := &fakeAsks{}
 	s := f.server(t, nil, nil)
 	defer s.Close()
-	thread, msg, err := asksClientFor(s.URL).PostAsk(context.Background(), "Launch X?", "Please decide @everyone <@888>", []string{"mergentic"})
+	thread, msg, err := asksClientFor(s.URL).PostAsk(context.Background(), "Launch X?", "Please decide @everyone <@888>", []string{"mergentic"}, AskOptions{})
 	if err != nil || thread != "900" || msg != "500" {
 		t.Fatalf("got %q %q %v", thread, msg, err)
 	}
@@ -87,7 +87,7 @@ func TestPostAskMissingTag(t *testing.T) {
 	f := &fakeAsks{}
 	s := f.server(t, nil, nil)
 	defer s.Close()
-	_, _, err := asksClientFor(s.URL).PostAsk(context.Background(), "T", "b", []string{"nope"})
+	_, _, err := asksClientFor(s.URL).PostAsk(context.Background(), "T", "b", []string{"nope"}, AskOptions{})
 	if err == nil || !strings.Contains(err.Error(), `"nope"`) || len(f.hook) != 0 {
 		t.Fatalf("err = %v, posts = %d", err, len(f.hook))
 	}
@@ -178,7 +178,7 @@ func TestPostAskInThreadReopensAndMentions(t *testing.T) {
 	f := &fakeAsks{}
 	s := f.server(t, map[string]Channel{"900": {ID: "900", ParentID: "forum", AppliedTags: []string{"t-ask", "t-answered", "t-proj"}}}, nil)
 	defer s.Close()
-	id, err := asksClientFor(s.URL).PostAskInThread(context.Background(), "900", "MERG-4 combine tasks", "next question @everyone", nil)
+	id, err := asksClientFor(s.URL).PostAskInThread(context.Background(), "900", "MERG-4 combine tasks", "next question @everyone", nil, AskOptions{})
 	if err != nil || id != "500" {
 		t.Fatalf("got %q %v", id, err)
 	}
@@ -205,7 +205,7 @@ func TestPostAskInThreadNoTitleKeepsName(t *testing.T) {
 	f := &fakeAsks{}
 	s := f.server(t, map[string]Channel{"900": {ID: "900", ParentID: "forum", AppliedTags: []string{"t-ask"}}}, nil)
 	defer s.Close()
-	if _, err := asksClientFor(s.URL).PostAskInThread(context.Background(), "900", "", "q", nil); err != nil {
+	if _, err := asksClientFor(s.URL).PostAskInThread(context.Background(), "900", "", "q", nil, AskOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := f.patched["name"]; ok {
@@ -217,7 +217,7 @@ func TestPostAskInThreadRefusesNonAskThread(t *testing.T) {
 	f := &fakeAsks{}
 	s := f.server(t, map[string]Channel{"901": {ID: "901", ParentID: "forum"}}, nil)
 	defer s.Close()
-	if _, err := asksClientFor(s.URL).PostAskInThread(context.Background(), "901", "", "q", nil); err == nil || f.patched != nil || len(f.hook) != 0 {
+	if _, err := asksClientFor(s.URL).PostAskInThread(context.Background(), "901", "", "q", nil, AskOptions{}); err == nil || f.patched != nil || len(f.hook) != 0 {
 		t.Fatalf("err = %v", err)
 	}
 }

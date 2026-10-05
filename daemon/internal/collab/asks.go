@@ -26,13 +26,24 @@ var OutcomeTags = []string{"pending", "launched", "not now", "failed", "answered
 
 var snowflakeRE = regexp.MustCompile(`^[0-9]{1,25}$`)
 
+// AskAnswer is a one-tap answer to an ask, from the configured user only:
+// an emoji reaction (Value is the emoji) or a button click (Value is the
+// button label). MessageID is the message that was reacted to or clicked.
+type AskAnswer struct {
+	Kind      string `json:"kind"`
+	Value     string `json:"value"`
+	MessageID string `json:"message_id"`
+	Timestamp string `json:"timestamp,omitempty"`
+}
+
 type AskMessage struct {
-	ID                     string `json:"id"`
-	AuthorID               string `json:"author_id"`
-	AuthorName             string `json:"author_name"`
-	AuthorIsConfiguredUser bool   `json:"author_is_configured_user"`
-	Text                   string `json:"text"`
-	Timestamp              string `json:"timestamp"`
+	ID                     string      `json:"id"`
+	AuthorID               string      `json:"author_id"`
+	AuthorName             string      `json:"author_name"`
+	AuthorIsConfiguredUser bool        `json:"author_is_configured_user"`
+	Text                   string      `json:"text"`
+	Timestamp              string      `json:"timestamp"`
+	Answers                []AskAnswer `json:"answers,omitempty"`
 }
 
 func (c *Client) mentionUser() (string, error) {
@@ -112,7 +123,15 @@ func askContent(user string, mention bool, body string) (string, error) {
 
 // PostAsk creates a forum post tagged `ask` (plus `pending` and extraTags)
 // whose body opens with a mention of the configured user.
-func (c *Client) PostAsk(ctx context.Context, title, body string, extraTags []string) (threadID, messageID string, err error) {
+//
+// With opts.Buttons the bot posts the message (webhooks can't carry
+// components); otherwise the webhook does. opts.Reactions are seeded by the
+// bot afterwards; if only that step fails the ids are returned with a
+// *ReactionSeedError.
+func (c *Client) PostAsk(ctx context.Context, title, body string, extraTags []string, opts AskOptions) (threadID, messageID string, err error) {
+	if err := opts.validate(); err != nil {
+		return "", "", err
+	}
 	user, err := c.mentionUser()
 	if err != nil {
 		return "", "", err
@@ -146,6 +165,26 @@ func (c *Client) PostAsk(ctx context.Context, title, body string, extraTags []st
 		"applied_tags":     tags,
 		"allowed_mentions": c.mentionPayload(user, true),
 	}
+	if len(opts.Buttons) > 0 {
+		// A forum post's starter message shares the thread's id.
+		botPayload := map[string]any{
+			"name":         title,
+			"applied_tags": tags,
+			"message": map[string]any{
+				"content":          content,
+				"allowed_mentions": c.mentionPayload(user, true),
+				"components":       buttonRows(opts.Buttons),
+			},
+		}
+		var thread Channel
+		if err := c.botJSONBody(ctx, http.MethodPost, "/channels/"+url.PathEscape(c.Config.ForumChannelID)+"/threads", botPayload, &thread); err != nil {
+			return "", "", fmt.Errorf("creating Discord ask with buttons (the bot needs Create Posts on the forum): %w", err)
+		}
+		if thread.ID == "" {
+			return "", "", fmt.Errorf("Discord created the ask but returned no thread id")
+		}
+		return thread.ID, thread.ID, c.seedReactions(ctx, thread.ID, thread.ID, opts.Reactions)
+	}
 	var message Message
 	if err := c.webhookJSON(ctx, http.MethodPost, url.Values{"wait": {"true"}}, payload, &message); err != nil {
 		return "", "", fmt.Errorf("creating Discord ask: %w", err)
@@ -153,7 +192,7 @@ func (c *Client) PostAsk(ctx context.Context, title, body string, extraTags []st
 	if message.ChannelID == "" {
 		return "", "", fmt.Errorf("Discord created the ask but returned no thread id")
 	}
-	return message.ChannelID, message.ID, nil
+	return message.ChannelID, message.ID, c.seedReactions(ctx, message.ChannelID, message.ID, opts.Reactions)
 }
 
 // PostAskInThread adds an ask message to an existing ask thread instead of
@@ -161,7 +200,10 @@ func (c *Client) PostAsk(ctx context.Context, title, body string, extraTags []st
 // tag for `pending` (adding extraTags), optionally renames it, then posts the
 // message with a mention of the configured user. Like close, the thread edit
 // needs the bot (Manage Threads on the forum).
-func (c *Client) PostAskInThread(ctx context.Context, threadID, title, body string, extraTags []string) (string, error) {
+func (c *Client) PostAskInThread(ctx context.Context, threadID, title, body string, extraTags []string, opts AskOptions) (string, error) {
+	if err := opts.validate(); err != nil {
+		return "", err
+	}
 	user, err := c.mentionUser()
 	if err != nil {
 		return "", err
@@ -189,17 +231,28 @@ func (c *Client) PostAskInThread(ctx context.Context, threadID, title, body stri
 	if err := c.botJSONBody(ctx, http.MethodPatch, "/channels/"+url.PathEscape(threadID), patch, nil); err != nil {
 		return "", fmt.Errorf("reopening Discord ask thread (the bot needs Manage Threads on the forum): %w", err)
 	}
-	payload := map[string]any{
-		"content":          content,
-		"username":         asksUsername,
-		"allowed_mentions": c.mentionPayload(user, true),
-	}
 	var message Message
-	query := url.Values{"wait": {"true"}, "thread_id": {threadID}}
-	if err := c.webhookJSON(ctx, http.MethodPost, query, payload, &message); err != nil {
-		return "", fmt.Errorf("posting ask into Discord thread: %w", err)
+	if len(opts.Buttons) > 0 {
+		botPayload := map[string]any{
+			"content":          content,
+			"allowed_mentions": c.mentionPayload(user, true),
+			"components":       buttonRows(opts.Buttons),
+		}
+		if err := c.botJSONBody(ctx, http.MethodPost, "/channels/"+url.PathEscape(threadID)+"/messages", botPayload, &message); err != nil {
+			return "", fmt.Errorf("posting ask with buttons into Discord thread (the bot needs Send Messages in Threads): %w", err)
+		}
+	} else {
+		payload := map[string]any{
+			"content":          content,
+			"username":         asksUsername,
+			"allowed_mentions": c.mentionPayload(user, true),
+		}
+		query := url.Values{"wait": {"true"}, "thread_id": {threadID}}
+		if err := c.webhookJSON(ctx, http.MethodPost, query, payload, &message); err != nil {
+			return "", fmt.Errorf("posting ask into Discord thread: %w", err)
+		}
 	}
-	return message.ID, nil
+	return message.ID, c.seedReactions(ctx, threadID, message.ID, opts.Reactions)
 }
 
 // replaceOutcomeTag returns the applied tag IDs with every outcome tag
@@ -292,27 +345,59 @@ func (c *Client) ReadAsk(ctx context.Context, threadID, after string) ([]AskMess
 	if _, _, err := c.askThread(ctx, threadID); err != nil {
 		return nil, err
 	}
+	clicks, err := c.clicksFor(threadID, user)
+	if err != nil {
+		return nil, err
+	}
 	var out []AskMessage
+	if after != "" {
+		// Answers to the ask itself sit on the message the caller reads
+		// after; surface that message only when it carries any.
+		if anchor, err := c.message(ctx, threadID, after); err == nil {
+			if m, err := c.askMessage(ctx, threadID, anchor, user, clicks); err != nil {
+				return nil, err
+			} else if len(m.Answers) > 0 {
+				out = append(out, m)
+			}
+		}
+	}
 	for {
 		batch, err := c.Messages(ctx, threadID, after, 100)
 		if err != nil {
 			return nil, err
 		}
 		for _, m := range batch {
-			out = append(out, AskMessage{
-				ID:                     m.ID,
-				AuthorID:               m.Author.ID,
-				AuthorName:             m.Author.Username,
-				AuthorIsConfiguredUser: m.WebhookID == "" && m.Author.ID == user,
-				Text:                   m.Content,
-				Timestamp:              m.Timestamp.Format("2006-01-02T15:04:05Z07:00"),
-			})
+			am, err := c.askMessage(ctx, threadID, m, user, clicks)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, am)
 		}
 		if len(batch) < 100 {
 			return out, nil
 		}
 		after = batch[len(batch)-1].ID
 	}
+}
+
+func (c *Client) askMessage(ctx context.Context, threadID string, m Message, user string, clicks map[string][]Click) (AskMessage, error) {
+	am := AskMessage{
+		ID:                     m.ID,
+		AuthorID:               m.Author.ID,
+		AuthorName:             m.Author.Username,
+		AuthorIsConfiguredUser: m.WebhookID == "" && m.Author.ID == user,
+		Text:                   m.Content,
+		Timestamp:              m.Timestamp.Format("2006-01-02T15:04:05Z07:00"),
+	}
+	answers, err := c.userReactions(ctx, threadID, m, user)
+	if err != nil {
+		return AskMessage{}, err
+	}
+	am.Answers = answers
+	for _, click := range clicks[m.ID] {
+		am.Answers = append(am.Answers, AskAnswer{Kind: "button", Value: click.Label, MessageID: m.ID, Timestamp: click.Timestamp.Format("2006-01-02T15:04:05Z07:00")})
+	}
+	return am, nil
 }
 
 // CloseAsk replaces the thread's outcome tag with outcome, then archives it,

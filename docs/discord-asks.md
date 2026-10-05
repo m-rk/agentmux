@@ -3,7 +3,9 @@
 Asks let another system (mergentic's ask service) put a question in front of
 one person through Discord: each ask is a message in a thread in the collaboration
 forum (a new post, or a new message in an existing ask thread so one task keeps
-one thread), it @-mentions that person, and they answer by replying in the thread.
+one thread), it @-mentions that person, and they answer by replying in the thread,
+by tapping an emoji reaction, or by clicking a button (see
+[One-tap answers](#one-tap-answers-reactions-and-buttons)).
 Callers go through `agentmux asks`, so Discord credentials stay in agentmux's
 config. This reuses the collaboration forum, bot and webhook from
 [discord-collaboration.md](discord-collaboration.md); there is no new channel
@@ -47,7 +49,7 @@ or credential.
 ## Commands
 
 ```sh
-agentmux asks post -title T -body-file F [-tag NAME ...] -json
+agentmux asks post -title T -body-file F [-tag NAME ...] [-react 1️⃣,2️⃣,⏸️] [-button LABEL ...] -json
 # {"thread_id":"…","message_id":"…"}
 
 agentmux asks post -thread ID [-title T] -body-file F [-tag NAME ...] -json
@@ -56,7 +58,9 @@ agentmux asks post -thread ID [-title T] -body-file F [-tag NAME ...] -json
 agentmux asks reply -thread ID -body-file F [-mention]
 
 agentmux asks read -thread ID [-after MESSAGE_ID] -json
-# [{"id","author_id","author_name","author_is_configured_user","text","timestamp"}, …] oldest first
+# [{"id","author_id","author_name","author_is_configured_user","text","timestamp","answers":[…]}, …] oldest first
+
+agentmux asks serve   # long-running: records button clicks (buttons only)
 
 agentmux asks close -thread ID [-tag NAME] [-lock]   # default tag: answered
 ```
@@ -85,6 +89,80 @@ agentmux asks close -thread ID [-tag NAME] [-lock]   # default tag: answered
 - `post -thread`, `reply`, `read` and `close` refuse threads that aren't `ask`-tagged posts
   in the configured forum.
 
+## One-tap answers: reactions and buttons
+
+Two ways to answer without typing. They are built side by side so one can be
+picked; a typed reply still counts as "Other" either way. Both show up in
+`asks read -json` as an `answers` array on the message that was reacted to or
+clicked:
+
+```json
+{"id":"500", …, "answers":[{"kind":"reaction","value":"1️⃣","message_id":"500"}]}
+{"id":"500", …, "answers":[{"kind":"button","value":"Ship it","message_id":"500","timestamp":"…"}]}
+```
+
+Only the configured user's answers are reported; the bot's own seed
+reactions and anyone else's reactions or clicks are ignored. `value` is the
+emoji or the button label. Answers to the ask itself sit on the ask message,
+which `-after <ask message_id>` would normally exclude, so when that message
+has answers `read -after` returns it first (a bot/webhook message, never
+`author_is_configured_user`). A caller can pick out answers with
+`answers != null`.
+
+### Reactions
+
+`asks post -react 1️⃣,2️⃣,3️⃣,⏸️` posts as usual (via the webhook), then the bot adds
+each emoji in order. The caller supplies the list, so the convention is
+1️⃣ 2️⃣ 3️⃣ 4️⃣ for options and ⏸️ for Not now. Works with `-thread` too.
+
+- **Permissions:** the bot needs **Add Reactions** on the forum (a channel
+  override, like Manage Threads). Reading uses the existing View Channels and
+  Read Message History.
+- If seeding fails after the ask posted (e.g. no Add Reactions), `post` still
+  prints the ids, adds `"reactions_error"` to the JSON and warns on stderr,
+  exiting 0 so a retry doesn't duplicate the ask.
+- No process needs to be running: Discord stores the reactions, and `read`
+  fetches them on demand.
+
+### Buttons
+
+`asks post -button "Ship it" -button "Not now"` (up to 25 labels of 80
+characters) makes the **bot** post the message with buttons, because webhooks
+can't send interactive components. Discord delivers a click only as an
+interaction that must be acked within 3 seconds, so something must hold a
+Gateway connection open: `agentmux asks serve`. It records the click in
+`~/.local/state/agentmux/asks/clicks.jsonl` (`read` reads the same file, so
+run `serve` and `read` as the same user) and acks by editing the message:
+every button is disabled and the chosen one turns green with a ✓. A click
+from anyone else, or a second click on the same ask, gets a private
+(ephemeral) refusal and records nothing. The first click wins.
+
+- **Permissions:** the bot needs **Create Posts** (new asks) and **Send
+  Messages in Threads** (`post -thread`) on the forum, in addition to what
+  reactions need if used together. No privileged Gateway intents are needed.
+- Run `asks serve` under a service manager (it exits only on SIGINT/SIGTERM
+  and reconnects with backoff on its own). For example a systemd user unit:
+
+  ```ini
+  [Service]
+  ExecStart=/usr/local/bin/agentmux asks serve
+  Restart=always
+  ```
+- Buttons carry their label in the component's `custom_id` (`ask:<label>`),
+  so no ask state is stored beyond the click.
+
+### Trade-offs
+
+| | Reactions | Buttons |
+|---|---|---|
+| Extra permissions | Add Reactions | Create Posts, Send Messages in Threads |
+| Always-on process | none | `asks serve` with an open Gateway connection |
+| Latency to the caller | none beyond polling `read` | none beyond polling `read`; the tap is acked in well under 3s |
+| Tap feedback | emoji shows up | buttons disable and the pick turns green |
+| Daemon down | taps still stored by Discord and read later | taps while down fail ("This interaction failed") and are lost; buttons stay live, so the user can tap again once it is back |
+| Message author | webhook, named "agentmux asks" | the bot |
+| Option text | any emoji, meaning lives in the body | the labels themselves |
+
 ## Keeping asks out of session context
 
 `agentmux collab read` and the collaboration digest skip any thread tagged
@@ -93,5 +171,5 @@ as project context. This only works while the forum has an `ask` tag.
 
 ## Not included
 
-Buttons would need an interactions endpoint or Gateway connection. Answering
-is by reply.
+An HTTPS interactions endpoint (the alternative to the Gateway connection for
+buttons). Reactions and replies are unaffected by it.

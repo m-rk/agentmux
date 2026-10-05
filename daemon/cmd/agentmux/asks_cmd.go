@@ -3,10 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/m-rk/agentmux/daemon/internal/collab"
@@ -28,6 +32,8 @@ func runAsksCmd(args []string) {
 		err = runAsksRead(args[1:])
 	case "close":
 		err = runAsksClose(args[1:])
+	case "serve":
+		err = runAsksServe(args[1:])
 	default:
 		asksUsage()
 		os.Exit(1)
@@ -40,10 +46,11 @@ func runAsksCmd(args []string) {
 
 func asksUsage() {
 	fmt.Fprintln(os.Stderr, `usage:
-  agentmux asks post (-title T | -thread ID [-title T]) -body-file F [-tag NAME ...] [-json]
+  agentmux asks post (-title T | -thread ID [-title T]) -body-file F [-tag NAME ...] [-react EMOJI,EMOJI,...] [-button LABEL ...] [-json]
   agentmux asks reply -thread ID -body-file F [-mention]
   agentmux asks read -thread ID [-after MESSAGE_ID] [-json]
-  agentmux asks close -thread ID [-tag NAME] [-lock]`)
+  agentmux asks close -thread ID [-tag NAME] [-lock]
+  agentmux asks serve                      hold the Discord gateway open to record button clicks`)
 }
 
 type tagFlags []string
@@ -59,7 +66,11 @@ func asksClient() (*collab.Client, error) {
 	if !cfg.Collaboration.Configured() {
 		return nil, fmt.Errorf("Discord collaboration isn't configured; run 'agentmux collab setup'")
 	}
-	return collab.NewClient(cfg.Collaboration), nil
+	client := collab.NewClient(cfg.Collaboration)
+	if home, err := os.UserHomeDir(); err == nil {
+		client.ClicksPath = collab.DefaultClicksPath(home)
+	}
+	return client, nil
 }
 
 func readBodyFile(path string) (string, error) {
@@ -82,10 +93,18 @@ func runAsksPost(args []string) error {
 	thread := fs.String("thread", "", "add the ask to this existing ask thread instead of creating a post")
 	bodyFile := fs.String("body-file", "", "file with the post body ('-' for stdin)")
 	asJSON := fs.Bool("json", false, "print JSON")
-	var tags tagFlags
+	react := fs.String("react", "", "comma-separated emoji the bot adds as reactions, in order (e.g. 1️⃣,2️⃣,⏸️)")
+	var tags, buttons tagFlags
 	fs.Var(&tags, "tag", "extra forum tag; repeatable")
+	fs.Var(&buttons, "button", "button label (needs 'asks serve' running to record clicks); repeatable")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	opts := collab.AskOptions{Buttons: buttons}
+	for _, e := range strings.Split(*react, ",") {
+		if e = strings.TrimSpace(e); e != "" {
+			opts.Reactions = append(opts.Reactions, e)
+		}
 	}
 	body, err := readBodyFile(*bodyFile)
 	if err != nil {
@@ -100,15 +119,21 @@ func runAsksPost(args []string) error {
 	var threadID, messageID string
 	if *thread != "" {
 		threadID = *thread
-		messageID, err = client.PostAskInThread(ctx, threadID, *title, body, tags)
+		messageID, err = client.PostAskInThread(ctx, threadID, *title, body, tags, opts)
 	} else {
-		threadID, messageID, err = client.PostAsk(ctx, *title, body, tags)
+		threadID, messageID, err = client.PostAsk(ctx, *title, body, tags, opts)
 	}
-	if err != nil {
+	result := map[string]string{"thread_id": threadID, "message_id": messageID}
+	var seedErr *collab.ReactionSeedError
+	if errors.As(err, &seedErr) && messageID != "" {
+		// The ask exists; failing now would invite a duplicate post.
+		result["reactions_error"] = seedErr.Error()
+		fmt.Fprintln(os.Stderr, "warning:", seedErr)
+	} else if err != nil {
 		return err
 	}
 	if *asJSON {
-		return json.NewEncoder(os.Stdout).Encode(map[string]string{"thread_id": threadID, "message_id": messageID})
+		return json.NewEncoder(os.Stdout).Encode(result)
 	}
 	fmt.Printf("Ask posted in thread %s (message %s).\n", threadID, messageID)
 	return nil
@@ -170,6 +195,9 @@ func runAsksRead(args []string) error {
 			who += " (you)"
 		}
 		fmt.Printf("%s\t%s\t%s\n", m.ID, safeCollabOutput(who), safeCollabOutput(m.Text))
+		for _, a := range m.Answers {
+			fmt.Printf("%s\t(answer)\t%s %s\n", a.MessageID, a.Kind, safeCollabOutput(a.Value))
+		}
 	}
 	return nil
 }
@@ -193,4 +221,24 @@ func runAsksClose(args []string) error {
 	}
 	fmt.Printf("Closed ask thread %s as %q.\n", *thread, *tag)
 	return nil
+}
+
+// runAsksServe holds the Discord gateway connection that button clicks need,
+// until interrupted. Run it under a service manager; see docs/discord-asks.md.
+func runAsksServe(args []string) error {
+	fs := flag.NewFlagSet("asks serve", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	client, err := asksClient()
+	if err != nil {
+		return err
+	}
+	if client.ClicksPath == "" {
+		return fmt.Errorf("can't find the home directory to record clicks in")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	l := &collab.Listener{Client: client, Store: &collab.ClickStore{Path: client.ClicksPath}}
+	return l.Run(ctx)
 }

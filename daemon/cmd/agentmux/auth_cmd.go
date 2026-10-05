@@ -65,13 +65,13 @@ func authUsage() {
 
 // authStatusResult is one user's check, for -json output.
 type authStatusResult struct {
-	RunUser          string `json:"run_user"`
-	LoggedIn         bool   `json:"logged_in"`
-	AuthMethod       string `json:"auth_method,omitempty"`
-	ExpirySupported  bool   `json:"expiry_supported"`
+	RunUser          string  `json:"run_user"`
+	LoggedIn         bool    `json:"logged_in"`
+	AuthMethod       string  `json:"auth_method,omitempty"`
+	ExpirySupported  bool    `json:"expiry_supported"`
 	AccessExpiresAt  *string `json:"access_expires_at,omitempty"`
 	RefreshExpiresAt *string `json:"refresh_expires_at,omitempty"`
-	Error            string `json:"error,omitempty"`
+	Error            string  `json:"error,omitempty"`
 }
 
 func runAuthStatusCmd(args []string) {

@@ -26,6 +26,9 @@ type Client struct {
 	Config     discordnotify.CollaborationConfig
 	HTTPClient *http.Client
 	APIBaseURL string
+	// ClicksPath is where `asks serve` records button clicks; empty disables
+	// reading them.
+	ClicksPath string
 }
 
 type Channel struct {
@@ -63,14 +66,24 @@ type Attachment struct {
 	Size     int64  `json:"size"`
 }
 
+type MessageReaction struct {
+	Count int  `json:"count"`
+	Me    bool `json:"me"`
+	Emoji struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"emoji"`
+}
+
 type Message struct {
-	ID          string       `json:"id"`
-	ChannelID   string       `json:"channel_id"`
-	Content     string       `json:"content"`
-	Author      Author       `json:"author"`
-	WebhookID   string       `json:"webhook_id"`
-	Timestamp   time.Time    `json:"timestamp"`
-	Attachments []Attachment `json:"attachments"`
+	Reactions   []MessageReaction `json:"reactions"`
+	ID          string            `json:"id"`
+	ChannelID   string            `json:"channel_id"`
+	Content     string            `json:"content"`
+	Author      Author            `json:"author"`
+	WebhookID   string            `json:"webhook_id"`
+	Timestamp   time.Time         `json:"timestamp"`
+	Attachments []Attachment      `json:"attachments"`
 }
 
 type threadList struct {
@@ -413,7 +426,7 @@ func (c *Client) doJSON(req *http.Request, out any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		message, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return fmt.Errorf("Discord returned %s: %s", resp.Status, strings.TrimSpace(string(message)))
+		return &apiError{Status: resp.StatusCode, Text: fmt.Sprintf("Discord returned %s: %s", resp.Status, strings.TrimSpace(string(message))), Body: string(message)}
 	}
 	if out == nil || resp.StatusCode == http.StatusNoContent {
 		return nil
@@ -423,6 +436,16 @@ func (c *Client) doJSON(req *http.Request, out any) error {
 	}
 	return nil
 }
+
+// apiError is a non-2xx Discord response; callers can inspect the status
+// (rate limits, missing messages) without parsing the text.
+type apiError struct {
+	Status int
+	Text   string
+	Body   string
+}
+
+func (e *apiError) Error() string { return e.Text }
 
 func (c *Client) client() *http.Client {
 	if c.HTTPClient != nil {
