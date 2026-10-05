@@ -41,6 +41,9 @@ func runTUI(args []string) {
 
 	clients := map[string]*tuiclient.Client{}
 	for _, h := range hosts {
+		if h.Address == "" {
+			continue // gateway only
+		}
 		c, err := tuiclient.Dial(h.Name, h.Address)
 		if err != nil {
 			log.Fatalf("dialing %s (%s): %v", h.Name, h.Address, err)
@@ -84,6 +87,9 @@ func loadHosts(hostsPath, socketPath string) ([]hostsconfig.Host, error) {
 	if len(cfg.Hosts) == 0 {
 		return nil, fmt.Errorf("%s: no hosts configured", hostsPath)
 	}
+	if err := hostsconfig.CheckUnique(cfg.Hosts); err != nil {
+		return nil, fmt.Errorf("%s: %w", hostsPath, err)
+	}
 	return cfg.Hosts, nil
 }
 
@@ -97,6 +103,9 @@ func dialOneHost(hostsPath, socketPath, hostName string) (*tuiclient.Client, err
 	}
 	for _, h := range hosts {
 		if h.Name == hostName {
+			if h.Address == "" {
+				return nil, fmt.Errorf("host %q has only a gateway in %s; managing its instances needs its daemon address", hostName, hostsPath)
+			}
 			return tuiclient.Dial(h.Name, h.Address)
 		}
 	}

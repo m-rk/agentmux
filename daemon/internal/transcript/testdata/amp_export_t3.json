@@ -1,0 +1,2 @@
+{"v":1,"id":"T-00000000-0000-4000-8000-000000000003","title":"other runner, same tree","env":{"initial":{"runnerID":"runner-b"}},"meta":{"lastKnownAgentState":{"state":"idle"}},
+ "messages":[{"role":"user","messageId":"M-1","createdAt":"2026-01-02T10:00:00.000Z","content":[{"type":"text","text":"not yours"}]}]}

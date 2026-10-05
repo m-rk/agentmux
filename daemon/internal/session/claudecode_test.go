@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -192,4 +193,73 @@ func TestDismissClaudeRemoteMenuIfOpen(t *testing.T) {
 			t.Errorf("sent keys = %v, want none when nothing needed dismissing", sent)
 		}
 	})
+}
+
+// TestClaudeLaunchArgs pins the claude command line: instances without
+// allow-files must launch byte-identically to before the feature existed.
+func TestClaudeLaunchArgs(t *testing.T) {
+	cases := []struct {
+		name     string
+		resume   string
+		settings string
+		want     []string
+	}{
+		{"plain", "", "", []string{"--remote-control", "disp"}},
+		{"resume", "abc123", "", []string{"--remote-control", "disp", "--resume", "abc123"}},
+		{"allow-files", "", "/h/s.json", []string{"--remote-control", "disp", "--settings", "/h/s.json"}},
+		{"allow-files and resume", "abc123", "/h/s.json", []string{"--remote-control", "disp", "--resume", "abc123", "--settings", "/h/s.json"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := claudeLaunchArgs("disp", tc.resume, tc.settings)
+			if strings.Join(got, "\x00") != strings.Join(tc.want, "\x00") {
+				t.Errorf("claudeLaunchArgs = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPrepareClaudeAllowSettings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	work := filepath.Join(home, "work")
+	note := filepath.Join(home, "vault", "TASK-1 t.md")
+	if err := os.MkdirAll(filepath.Dir(note), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(note, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	realNote, _ := filepath.EvalSymlinks(note)
+	fields := map[string]string{"AGENTMUX_ALLOW_FILES": `["` + realNote + `"]`}
+
+	path := prepareClaudeAllowSettings("inst", work, fields)
+	if want := filepath.Join(home, ".agentmux", ".settings", "inst.claude.json"); path != want {
+		t.Fatalf("path = %q, want %q", path, want)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("settings file: %v, %v; want mode 0600", info, err)
+	}
+	if d, _ := os.Stat(filepath.Dir(path)); d.Mode().Perm() != 0o700 {
+		t.Errorf("settings dir mode = %v, want 0700", d.Mode().Perm())
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "Read(/"+realNote+")") {
+		t.Errorf("settings missing read rule: %s", data)
+	}
+
+	// A file that went away is skipped; with nothing left the stale
+	// settings file is removed and no --settings is passed.
+	os.Remove(note)
+	if got := prepareClaudeAllowSettings("inst", work, fields); got != "" {
+		t.Errorf("path with all files gone = %q, want empty", got)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("stale settings file still present: %v", err)
+	}
+	// Cleared field: same.
+	if got := prepareClaudeAllowSettings("inst", work, map[string]string{}); got != "" {
+		t.Errorf("path with no allow-files = %q, want empty", got)
+	}
 }

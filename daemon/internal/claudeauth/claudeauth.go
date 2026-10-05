@@ -34,6 +34,12 @@ func LoginMethodArgs(method string) ([]string, error) {
 	}
 }
 
+// claudeBin is the claude executable, resolved on the run user's PATH. Tests
+// set it to an absolute path: that PATH puts /opt/homebrew/bin and
+// /usr/local/bin ahead of the caller's own, so a fake earlier on $PATH
+// would lose to a real install there.
+var claudeBin = "claude"
+
 // commandForUser builds a claude invocation as runUser: privilege-dropped
 // via runas when root (the daemon/update-timer context), same-user
 // otherwise. A non-root caller asking for a different user gets a clear
@@ -67,7 +73,7 @@ func StartLogin(runUser, method string) (*exec.Cmd, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd, err := commandForUser(runUser, "claude", append([]string{"auth", "login"}, flags...)...)
+	cmd, err := commandForUser(runUser, claudeBin, append([]string{"auth", "login"}, flags...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +92,7 @@ func StartLogin(runUser, method string) (*exec.Cmd, error) {
 // {"loggedIn":false,...} (confirmed live), so a parseable body is trusted
 // over the exit code; only unparseable output is an error.
 func CheckLoggedIn(runUser string) (loggedIn bool, authMethod string, err error) {
-	cmd, err := commandForUser(runUser, "claude", "auth", "status", "--json")
+	cmd, err := commandForUser(runUser, claudeBin, "auth", "status", "--json")
 	if err != nil {
 		return false, "", err
 	}

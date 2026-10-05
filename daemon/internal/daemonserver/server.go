@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/creack/pty"
@@ -137,6 +138,7 @@ func (s *Server) CreateInstance(ctx context.Context, req *pb.CreateInstanceReque
 		AmpDirs:         req.AmpDirs,
 		AmpDiscoverDirs: req.AmpDiscoverDirs,
 		AmpUpdate:       req.AmpUpdate,
+		AllowFiles:      req.AllowFiles,
 	})
 	if err != nil {
 		return &pb.CreateInstanceResponse{Ok: false, Message: err.Error()}, nil
@@ -248,6 +250,9 @@ func (s *Server) ViewPane(ctx context.Context, req *pb.ViewPaneRequest) (*pb.Vie
 		return nil, err
 	}
 	args := []string{"-S", socket, "capture-pane", "-p", "-t", session}
+	if req.Escapes {
+		args = append(args, "-e")
+	}
 	if req.ScrollbackLines > 0 {
 		args = append(args, "-S", fmt.Sprintf("-%d", req.ScrollbackLines))
 	}
@@ -271,6 +276,39 @@ func (s *Server) SendKeys(ctx context.Context, req *pb.SendKeysRequest) (*pb.Sen
 		return &pb.SendKeysResponse{Ok: false, Message: fmt.Sprintf("sending keys to %s: %v: %s", req.Instance, err, out)}, nil
 	}
 	return &pb.SendKeysResponse{Ok: true}, nil
+}
+
+// SendText loads text into a one-off tmux buffer and pastes it with -p, so
+// tmux wraps it in bracketed-paste markers when the pane's program asked for
+// them (Claude Code, opencode and kilo all do) and a multi-line message is
+// one paste rather than several submits. -d deletes the buffer afterwards.
+func (s *Server) SendText(ctx context.Context, req *pb.SendTextRequest) (*pb.SendTextResponse, error) {
+	if req.Text == "" {
+		return &pb.SendTextResponse{Ok: false, Message: "no text given"}, nil
+	}
+	socket, session, err := resolveTmuxTarget(req.Instance)
+	if err != nil {
+		return &pb.SendTextResponse{Ok: false, Message: err.Error()}, nil
+	}
+	buffer := fmt.Sprintf("agentmux-send-%d", time.Now().UnixNano())
+	load := runas.CurrentUserCommand("tmux", "-S", socket, "load-buffer", "-b", buffer, "-")
+	load.Stdin = strings.NewReader(req.Text)
+	if out, err := load.CombinedOutput(); err != nil {
+		return &pb.SendTextResponse{Ok: false, Message: fmt.Sprintf("loading text for %s: %v: %s", req.Instance, err, out)}, nil
+	}
+	if out, err := runas.CurrentUserCommand("tmux", "-S", socket, "paste-buffer", "-p", "-d", "-b", buffer, "-t", session).CombinedOutput(); err != nil {
+		_ = runas.CurrentUserCommand("tmux", "-S", socket, "delete-buffer", "-b", buffer).Run()
+		return &pb.SendTextResponse{Ok: false, Message: fmt.Sprintf("pasting into %s: %v: %s", req.Instance, err, out)}, nil
+	}
+	if req.Submit {
+		// Give the TUI a moment to finish handling the paste, or the Enter
+		// can land inside it as a literal newline.
+		time.Sleep(300 * time.Millisecond)
+		if out, err := runas.CurrentUserCommand("tmux", "-S", socket, "send-keys", "-t", session, "Enter").CombinedOutput(); err != nil {
+			return &pb.SendTextResponse{Ok: false, Message: fmt.Sprintf("submitting in %s: %v: %s", req.Instance, err, out)}, nil
+		}
+	}
+	return &pb.SendTextResponse{Ok: true}, nil
 }
 
 // resolveTmuxTarget looks up instance's live tmux session/socket the same

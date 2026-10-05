@@ -36,6 +36,13 @@ type Channel struct {
 	Type          int            `json:"type"`
 	LastMessageID string         `json:"last_message_id"`
 	ThreadMeta    ThreadMetadata `json:"thread_metadata"`
+	AppliedTags   []string       `json:"applied_tags"`
+	AvailableTags []ForumTag     `json:"available_tags"`
+}
+
+type ForumTag struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type ThreadMetadata struct {
@@ -44,6 +51,7 @@ type ThreadMetadata struct {
 }
 
 type Author struct {
+	ID       string `json:"id"`
 	Username string `json:"username"`
 	Bot      bool   `json:"bot"`
 }
@@ -125,8 +133,12 @@ func (c *Client) ListRelevantThreads(ctx context.Context, project string) ([]Cha
 		return nil, fmt.Errorf("listing archived Discord threads: %w", err)
 	}
 
+	askTag := tagID(forum.AvailableTags, AskTagName)
 	byID := map[string]Channel{}
 	for _, thread := range append(active.Threads, archived.Threads...) {
+		if hasTag(thread.AppliedTags, askTag) {
+			continue // asks are for the configured user, never session context
+		}
 		if thread.ParentID == c.Config.ForumChannelID && ThreadRelevant(thread.Name, project) {
 			byID[thread.ID] = thread
 		}
@@ -151,6 +163,15 @@ func (c *Client) RelevantThread(ctx context.Context, threadID, project string) (
 	}
 	if thread.ParentID != c.Config.ForumChannelID || !ThreadRelevant(thread.Name, project) {
 		return Channel{}, fmt.Errorf("thread %s isn't relevant to project %s", threadID, project)
+	}
+	if len(thread.AppliedTags) > 0 {
+		var forum Channel
+		if err := c.botJSON(ctx, http.MethodGet, "/channels/"+url.PathEscape(c.Config.ForumChannelID), &forum); err != nil {
+			return Channel{}, fmt.Errorf("reading Discord forum channel: %w", err)
+		}
+		if hasTag(thread.AppliedTags, tagID(forum.AvailableTags, AskTagName)) {
+			return Channel{}, fmt.Errorf("thread %s isn't relevant to project %s", threadID, project)
+		}
 	}
 	return thread, nil
 }
@@ -318,13 +339,28 @@ func (c *Client) AttachmentMarkdown(ctx context.Context, attachment Attachment) 
 }
 
 func (c *Client) botJSON(ctx context.Context, method, path string, out any) error {
+	return c.botJSONBody(ctx, method, path, nil, out)
+}
+
+func (c *Client) botJSONBody(ctx context.Context, method, path string, payload, out any) error {
+	var body io.Reader
+	if payload != nil {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(data)
+	}
 	base := strings.TrimRight(c.APIBaseURL, "/")
 	if base == "" {
 		base = discordAPIBaseURL
 	}
-	req, err := http.NewRequestWithContext(ctx, method, base+path, nil)
+	req, err := http.NewRequestWithContext(ctx, method, base+path, body)
 	if err != nil {
 		return err
+	}
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Authorization", "Bot "+c.Config.BotToken)
 	return c.doJSON(req, out)

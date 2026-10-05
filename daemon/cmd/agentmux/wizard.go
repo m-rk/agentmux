@@ -7,6 +7,7 @@ import (
 	"log"
 	"os/user"
 	"sort"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -47,6 +48,8 @@ func runWizard(args []string) {
 	ampDirs := fs.String("amp-dirs", "", "amp only; comma-separated absolute paths served as extra --dir entries; -y only")
 	ampDiscoverDirs := fs.Bool("amp-discover-dirs", false, "amp only; pass --discover-dirs to serve git checkouts under the workdir; -y only")
 	ampUpdate := fs.String("amp-update", "", "amp only: \"\" (default/on) or \"off\"; off skips the nightly update unit for self-updating runners; -y only")
+	var allowFiles stringList
+	fs.Var(&allowFiles, "allow-file", "absolute path of one file outside the workdir the agent may read and edit, exactly that file (repeatable; claude-code, opencode and kilo; see docs/allow-file.md); -y only")
 	force := fs.Bool("force", false, "allow re-provisioning the instance this process is currently running inside of; -y only")
 	fs.Parse(args)
 
@@ -57,6 +60,9 @@ func runWizard(args []string) {
 		}
 		clients := map[string]*tuiclient.Client{}
 		for _, h := range hosts {
+			if h.Address == "" {
+				continue // gateway only
+			}
 			c, err := tuiclient.Dial(h.Name, h.Address)
 			if err != nil {
 				log.Fatalf("dialing %s (%s): %v", h.Name, h.Address, err)
@@ -96,6 +102,7 @@ func runWizard(args []string) {
 		AmpDirs:           *ampDirs,
 		AmpDiscoverDirs:   *ampDiscoverDirs,
 		AmpUpdate:         *ampUpdate,
+		AllowFiles:        allowFiles,
 	})
 	if err != nil {
 		log.Fatalf("new: %v", err)
@@ -105,6 +112,12 @@ func runWizard(args []string) {
 	}
 	fmt.Println(resp.Message)
 }
+
+// stringList is a repeatable string flag, so it shows up in `new -h`.
+type stringList []string
+
+func (l *stringList) String() string     { return strings.Join(*l, ",") }
+func (l *stringList) Set(v string) error { *l = append(*l, v); return nil }
 
 type wizardDoneMsg struct{ err error }
 

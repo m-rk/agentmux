@@ -85,6 +85,10 @@ func runDoctorCmd(args []string) {
 		VerifyDelay:    750 * time.Millisecond,
 		RepairAttempts: previousState.RepairAttempts,
 	})
+	// A broken Paseo supervisor crash loops silently; nothing else surfaces it.
+	if problem := paseoSupervisorProblem(ctx, identity.HomeDir); problem != "" {
+		report.Problems = append(report.Problems, problem)
+	}
 	if stateErr != nil {
 		report.Problems = append(report.Problems, "loading notification state: "+stateErr.Error())
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/m-rk/agentmux/daemon/internal/allowfiles"
 	"hash/fnv"
 	"io"
 	"log"
@@ -105,6 +106,9 @@ func RunAgentmux(name string) error {
 	extraEnv, err := readKiloExtraEnv()
 	if err != nil {
 		return fmt.Errorf("reading local provider env overlay: %w", err)
+	}
+	if env := allowFilesEnv(name, agent, workdir, fields); env != "" {
+		extraEnv = append(extraEnv, env)
 	}
 	if agent == "kilo" {
 		isolatedEnv, err := kiloInstanceXDGEnv(name)
@@ -823,4 +827,40 @@ func writeJSONAtomic(path string, doc any) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// allowFilesEnv returns the KEY=JSON environment entry that grants opencode
+// or kilo the instance's allow-files (see docs/allow-file.md), or "" when
+// there are none or the agent has no generator. Like the claude-code path it
+// never fails the launch: a problem is logged and the session starts without
+// the grant. It reaches the agent through the tmux server's environment, so
+// a changed grant applies once the instance's tmux server is restarted.
+func allowFilesEnv(name, agent, workdir string, fields map[string]string) string {
+	var key string
+	var render func(string, []string) ([]byte, error)
+	switch agent {
+	case "opencode":
+		key, render = allowfiles.OpencodeConfigEnv, allowfiles.OpencodeAllowConfig
+	case "kilo":
+		key, render = allowfiles.KiloConfigEnv, allowfiles.KiloAllowConfig
+	default:
+		return ""
+	}
+	files, err := allowfiles.Decode(fields[allowfiles.RegistryKey])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: allow-file: %v\n", name, err)
+	}
+	files, warns := allowfiles.Existing(files)
+	for _, w := range warns {
+		fmt.Fprintf(os.Stderr, "%s: allow-file: skipping: %s\n", name, w)
+	}
+	if len(files) == 0 {
+		return ""
+	}
+	data, err := render(workdir, files)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: allow-file: rendering %s config: %v\n", name, agent, err)
+		return ""
+	}
+	return key + "=" + string(data)
 }

@@ -889,7 +889,14 @@ type CreateInstanceRequest struct {
 	// present): for runners that self-update via
 	// amp.runner.autoUpdate.enabled, where an agentmux-driven `amp update`
 	// would fight the runner's own updater.
-	AmpUpdate     string `protobuf:"bytes,14,opt,name=amp_update,json=ampUpdate,proto3" json:"amp_update,omitempty"`
+	AmpUpdate string `protobuf:"bytes,14,opt,name=amp_update,json=ampUpdate,proto3" json:"amp_update,omitempty"`
+	// Absolute paths of individual files outside the workdir that the agent
+	// may read and edit (exactly those files, not their directories), e.g. a
+	// task note kept in a notes vault. Validated and symlink-resolved by
+	// internal/allowfiles; stored in the registry so restarts keep them. Only
+	// claude-code applies them so far; other agents store the list and report
+	// that it isn't applied yet. See docs/allow-file.md.
+	AllowFiles    []string `protobuf:"bytes,15,rep,name=allow_files,json=allowFiles,proto3" json:"allow_files,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1020,6 +1027,13 @@ func (x *CreateInstanceRequest) GetAmpUpdate() string {
 		return x.AmpUpdate
 	}
 	return ""
+}
+
+func (x *CreateInstanceRequest) GetAllowFiles() []string {
+	if x != nil {
+		return x.AllowFiles
+	}
+	return nil
 }
 
 type CreateInstanceResponse struct {
@@ -1421,8 +1435,11 @@ type ViewPaneRequest struct {
 	// (the common case) returns just the currently visible pane, matching
 	// what capture-pane -p returns with no -S.
 	ScrollbackLines int32 `protobuf:"varint,2,opt,name=scrollback_lines,json=scrollbackLines,proto3" json:"scrollback_lines,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Include SGR escape sequences (capture-pane -e), so callers can tell
+	// dim text such as a prompt suggestion from typed text.
+	Escapes       bool `protobuf:"varint,3,opt,name=escapes,proto3" json:"escapes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ViewPaneRequest) Reset() {
@@ -1467,6 +1484,13 @@ func (x *ViewPaneRequest) GetScrollbackLines() int32 {
 		return x.ScrollbackLines
 	}
 	return 0
+}
+
+func (x *ViewPaneRequest) GetEscapes() bool {
+	if x != nil {
+		return x.Escapes
+	}
+	return false
 }
 
 type ViewPaneResponse struct {
@@ -1620,6 +1644,119 @@ func (x *SendKeysResponse) GetMessage() string {
 	return ""
 }
 
+type SendTextRequest struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Instance string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
+	Text     string                 `protobuf:"bytes,2,opt,name=text,proto3" json:"text,omitempty"`
+	// Press Enter after pasting.
+	Submit        bool `protobuf:"varint,3,opt,name=submit,proto3" json:"submit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SendTextRequest) Reset() {
+	*x = SendTextRequest{}
+	mi := &file_agentmuxd_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SendTextRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SendTextRequest) ProtoMessage() {}
+
+func (x *SendTextRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agentmuxd_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SendTextRequest.ProtoReflect.Descriptor instead.
+func (*SendTextRequest) Descriptor() ([]byte, []int) {
+	return file_agentmuxd_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *SendTextRequest) GetInstance() string {
+	if x != nil {
+		return x.Instance
+	}
+	return ""
+}
+
+func (x *SendTextRequest) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *SendTextRequest) GetSubmit() bool {
+	if x != nil {
+		return x.Submit
+	}
+	return false
+}
+
+type SendTextResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SendTextResponse) Reset() {
+	*x = SendTextResponse{}
+	mi := &file_agentmuxd_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SendTextResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SendTextResponse) ProtoMessage() {}
+
+func (x *SendTextResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_agentmuxd_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SendTextResponse.ProtoReflect.Descriptor instead.
+func (*SendTextResponse) Descriptor() ([]byte, []int) {
+	return file_agentmuxd_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *SendTextResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+func (x *SendTextResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 var File_agentmuxd_proto protoreflect.FileDescriptor
 
 const file_agentmuxd_proto_rawDesc = "" +
@@ -1663,7 +1800,7 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\x06action\x18\x02 \x01(\x0e2\x1b.agentmuxd.v1.ControlActionR\x06action\";\n" +
 	"\x0fControlResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\xf1\x03\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\x92\x04\n" +
 	"\x15CreateInstanceRequest\x12#\n" +
 	"\rinstance_name\x18\x01 \x01(\tR\finstanceName\x12\x14\n" +
 	"\x05agent\x18\x02 \x01(\tR\x05agent\x12\x1a\n" +
@@ -1680,7 +1817,9 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\bamp_dirs\x18\f \x01(\tR\aampDirs\x12*\n" +
 	"\x11amp_discover_dirs\x18\r \x01(\bR\x0fampDiscoverDirs\x12\x1d\n" +
 	"\n" +
-	"amp_update\x18\x0e \x01(\tR\tampUpdate\"B\n" +
+	"amp_update\x18\x0e \x01(\tR\tampUpdate\x12\x1f\n" +
+	"\vallow_files\x18\x0f \x03(\tR\n" +
+	"allowFiles\"B\n" +
 	"\x16CreateInstanceResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"\x19\n" +
@@ -1702,16 +1841,24 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\fdisplay_name\x18\x03 \x01(\tR\vdisplayName\"B\n" +
 	"\x16RenameInstanceResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"X\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"r\n" +
 	"\x0fViewPaneRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12)\n" +
-	"\x10scrollback_lines\x18\x02 \x01(\x05R\x0fscrollbackLines\",\n" +
+	"\x10scrollback_lines\x18\x02 \x01(\x05R\x0fscrollbackLines\x12\x18\n" +
+	"\aescapes\x18\x03 \x01(\bR\aescapes\",\n" +
 	"\x10ViewPaneResponse\x12\x18\n" +
 	"\acontent\x18\x01 \x01(\tR\acontent\"A\n" +
 	"\x0fSendKeysRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x12\n" +
 	"\x04keys\x18\x02 \x03(\tR\x04keys\"<\n" +
 	"\x10SendKeysResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"Y\n" +
+	"\x0fSendTextRequest\x12\x1a\n" +
+	"\binstance\x18\x01 \x01(\tR\binstance\x12\x12\n" +
+	"\x04text\x18\x02 \x01(\tR\x04text\x12\x16\n" +
+	"\x06submit\x18\x03 \x01(\bR\x06submit\"<\n" +
+	"\x10SendTextResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage*R\n" +
 	"\x06Status\x12\x12\n" +
@@ -1727,7 +1874,7 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\x0fCONTROL_UNKNOWN\x10\x00\x12\x11\n" +
 	"\rCONTROL_START\x10\x01\x12\x10\n" +
 	"\fCONTROL_STOP\x10\x02\x12\x13\n" +
-	"\x0fCONTROL_RESTART\x10\x032\xf1\x06\n" +
+	"\x0fCONTROL_RESTART\x10\x032\xbc\a\n" +
 	"\x0eAgentmuxDaemon\x12X\n" +
 	"\rListInstances\x12\".agentmuxd.v1.ListInstancesRequest\x1a#.agentmuxd.v1.ListInstancesResponse\x12P\n" +
 	"\fStreamEvents\x12!.agentmuxd.v1.StreamEventsRequest\x1a\x1b.agentmuxd.v1.InstanceEvent0\x01\x12F\n" +
@@ -1738,7 +1885,8 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\x15ListResumableSessions\x12*.agentmuxd.v1.ListResumableSessionsRequest\x1a+.agentmuxd.v1.ListResumableSessionsResponse\x12[\n" +
 	"\x0eRenameInstance\x12#.agentmuxd.v1.RenameInstanceRequest\x1a$.agentmuxd.v1.RenameInstanceResponse\x12I\n" +
 	"\bViewPane\x12\x1d.agentmuxd.v1.ViewPaneRequest\x1a\x1e.agentmuxd.v1.ViewPaneResponse\x12I\n" +
-	"\bSendKeys\x12\x1d.agentmuxd.v1.SendKeysRequest\x1a\x1e.agentmuxd.v1.SendKeysResponseB-Z+github.com/m-rk/agentmux/daemon/internal/pbb\x06proto3"
+	"\bSendKeys\x12\x1d.agentmuxd.v1.SendKeysRequest\x1a\x1e.agentmuxd.v1.SendKeysResponse\x12I\n" +
+	"\bSendText\x12\x1d.agentmuxd.v1.SendTextRequest\x1a\x1e.agentmuxd.v1.SendTextResponseB-Z+github.com/m-rk/agentmux/daemon/internal/pbb\x06proto3"
 
 var (
 	file_agentmuxd_proto_rawDescOnce sync.Once
@@ -1753,7 +1901,7 @@ func file_agentmuxd_proto_rawDescGZIP() []byte {
 }
 
 var file_agentmuxd_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_agentmuxd_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
+var file_agentmuxd_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
 var file_agentmuxd_proto_goTypes = []any{
 	(Status)(0),                           // 0: agentmuxd.v1.Status
 	(EventType)(0),                        // 1: agentmuxd.v1.EventType
@@ -1782,6 +1930,8 @@ var file_agentmuxd_proto_goTypes = []any{
 	(*ViewPaneResponse)(nil),              // 24: agentmuxd.v1.ViewPaneResponse
 	(*SendKeysRequest)(nil),               // 25: agentmuxd.v1.SendKeysRequest
 	(*SendKeysResponse)(nil),              // 26: agentmuxd.v1.SendKeysResponse
+	(*SendTextRequest)(nil),               // 27: agentmuxd.v1.SendTextRequest
+	(*SendTextResponse)(nil),              // 28: agentmuxd.v1.SendTextResponse
 }
 var file_agentmuxd_proto_depIdxs = []int32{
 	0,  // 0: agentmuxd.v1.Instance.status:type_name -> agentmuxd.v1.Status
@@ -1802,18 +1952,20 @@ var file_agentmuxd_proto_depIdxs = []int32{
 	21, // 15: agentmuxd.v1.AgentmuxDaemon.RenameInstance:input_type -> agentmuxd.v1.RenameInstanceRequest
 	23, // 16: agentmuxd.v1.AgentmuxDaemon.ViewPane:input_type -> agentmuxd.v1.ViewPaneRequest
 	25, // 17: agentmuxd.v1.AgentmuxDaemon.SendKeys:input_type -> agentmuxd.v1.SendKeysRequest
-	5,  // 18: agentmuxd.v1.AgentmuxDaemon.ListInstances:output_type -> agentmuxd.v1.ListInstancesResponse
-	7,  // 19: agentmuxd.v1.AgentmuxDaemon.StreamEvents:output_type -> agentmuxd.v1.InstanceEvent
-	11, // 20: agentmuxd.v1.AgentmuxDaemon.Attach:output_type -> agentmuxd.v1.ServerMessage
-	13, // 21: agentmuxd.v1.AgentmuxDaemon.Control:output_type -> agentmuxd.v1.ControlResponse
-	15, // 22: agentmuxd.v1.AgentmuxDaemon.CreateInstance:output_type -> agentmuxd.v1.CreateInstanceResponse
-	17, // 23: agentmuxd.v1.AgentmuxDaemon.GetCreateOptions:output_type -> agentmuxd.v1.GetCreateOptionsResponse
-	20, // 24: agentmuxd.v1.AgentmuxDaemon.ListResumableSessions:output_type -> agentmuxd.v1.ListResumableSessionsResponse
-	22, // 25: agentmuxd.v1.AgentmuxDaemon.RenameInstance:output_type -> agentmuxd.v1.RenameInstanceResponse
-	24, // 26: agentmuxd.v1.AgentmuxDaemon.ViewPane:output_type -> agentmuxd.v1.ViewPaneResponse
-	26, // 27: agentmuxd.v1.AgentmuxDaemon.SendKeys:output_type -> agentmuxd.v1.SendKeysResponse
-	18, // [18:28] is the sub-list for method output_type
-	8,  // [8:18] is the sub-list for method input_type
+	27, // 18: agentmuxd.v1.AgentmuxDaemon.SendText:input_type -> agentmuxd.v1.SendTextRequest
+	5,  // 19: agentmuxd.v1.AgentmuxDaemon.ListInstances:output_type -> agentmuxd.v1.ListInstancesResponse
+	7,  // 20: agentmuxd.v1.AgentmuxDaemon.StreamEvents:output_type -> agentmuxd.v1.InstanceEvent
+	11, // 21: agentmuxd.v1.AgentmuxDaemon.Attach:output_type -> agentmuxd.v1.ServerMessage
+	13, // 22: agentmuxd.v1.AgentmuxDaemon.Control:output_type -> agentmuxd.v1.ControlResponse
+	15, // 23: agentmuxd.v1.AgentmuxDaemon.CreateInstance:output_type -> agentmuxd.v1.CreateInstanceResponse
+	17, // 24: agentmuxd.v1.AgentmuxDaemon.GetCreateOptions:output_type -> agentmuxd.v1.GetCreateOptionsResponse
+	20, // 25: agentmuxd.v1.AgentmuxDaemon.ListResumableSessions:output_type -> agentmuxd.v1.ListResumableSessionsResponse
+	22, // 26: agentmuxd.v1.AgentmuxDaemon.RenameInstance:output_type -> agentmuxd.v1.RenameInstanceResponse
+	24, // 27: agentmuxd.v1.AgentmuxDaemon.ViewPane:output_type -> agentmuxd.v1.ViewPaneResponse
+	26, // 28: agentmuxd.v1.AgentmuxDaemon.SendKeys:output_type -> agentmuxd.v1.SendKeysResponse
+	28, // 29: agentmuxd.v1.AgentmuxDaemon.SendText:output_type -> agentmuxd.v1.SendTextResponse
+	19, // [19:30] is the sub-list for method output_type
+	8,  // [8:19] is the sub-list for method input_type
 	8,  // [8:8] is the sub-list for extension type_name
 	8,  // [8:8] is the sub-list for extension extendee
 	0,  // [0:8] is the sub-list for field type_name
@@ -1839,7 +1991,7 @@ func file_agentmuxd_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agentmuxd_proto_rawDesc), len(file_agentmuxd_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   24,
+			NumMessages:   26,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

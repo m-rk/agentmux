@@ -29,6 +29,8 @@ func main() {
 		runSessionCmd(args[1:])
 	case "list":
 		runListCmd(args[1:])
+	case "sessions":
+		runSessionsCmd(args[1:])
 	case "control":
 		runControlCmd(args[1:])
 	case "view":
@@ -43,8 +45,14 @@ func main() {
 		runNotifyCmd(args[1:])
 	case "collab":
 		runCollabCmd(args[1:])
+	case "asks":
+		runAsksCmd(args[1:])
 	case "threadwatch":
 		runThreadwatchCmd(args[1:])
+	case "paseo":
+		runPaseoCmd(args[1:])
+	case "gateway":
+		runGatewayCmd(args[1:])
 	case "-h", "--help", "help":
 		printUsage()
 	default:
@@ -70,6 +78,14 @@ Usage:
   agentmux rename ...          rename an instance's tmux session/display name
   agentmux resume-list ...     list resumable Claude Code sessions for a workdir
   agentmux list                headless instance status (name/agent/model/status/workdir); add -json for scripts
+  agentmux sessions resolve [-json] INSTANCE@HOST[#THREAD]
+                               look up the session an address names (see docs/design/gateway.md)
+  agentmux sessions threads|read [-json] INSTANCE@HOST[#THREAD]
+                               list a local session's threads, or page through its transcript
+  agentmux sessions send -by PRINCIPAL [-json] INSTANCE@HOST[#THREAD] TEXT
+                               deliver one message with readiness checks, provenance and audit
+  agentmux sessions create -template ADDR -instance NAME -branch B [-base REF] [-worktree NAME] [-allow-file PATH ...]
+                               start a task session in a new Git worktree on that host (local or through its gateway)
   agentmux control ...         start/stop/restart an instance without an attached terminal
   agentmux view -instance NAME        headless read-only snapshot of an instance's tmux pane
   agentmux send-keys -instance NAME KEY...   headless equivalent of typing into an instance's pane
@@ -87,11 +103,19 @@ Usage:
   agentmux collab read -instance NAME [-thread ID]
   agentmux collab post -instance NAME -topic TOPIC -summary SENTENCE [-shared] [-details FILE.md]
   agentmux collab post -instance NAME -thread ID -summary TEXT [-details FILE.md]
+  agentmux asks post -title T -body-file F [-tag NAME ...] [-json]   post an ask that mentions the configured user
+  agentmux asks reply -thread ID -body-file F [-mention]
+  agentmux asks read -thread ID [-after MESSAGE_ID] [-json]
+  agentmux asks close -thread ID [-tag NAME]
   agentmux threadwatch serve [-dry-run] [-once]   follow agent sessions and alert on Discord (see -h)
   agentmux threadwatch status [-since 24h] [-json]   show open intervene signals
   agentmux threadwatch install -run-user USER     (Linux, root) install agentmux-threadwatch.service
   agentmux threadwatch jev-test [-config PATH]    check the optional TypeSafe key with one synthetic judgment
   agentmux threadwatch review ...                 nightly digest (see its own -h)
   agentmux threadwatch review install [-at 07:00] (Linux, root) install the nightly review timer
+  agentmux paseo update [-check]                  update the Paseo daemon to the latest stable release, verify, roll back on failure
+  agentmux paseo update install [-at 04:00]       (Linux root / macOS user) schedule that daily
+  agentmux gateway run -capability NAME [-listen ADDR]   serve this host's sessions to other tailnet hosts (see docs/gateway.md)
+  agentmux gateway install -capability NAME        (Linux root / macOS user) keep that running as a service
   agentmux help                show this message`)
 }
