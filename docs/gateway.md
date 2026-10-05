@@ -137,6 +137,8 @@ agentmux sessions create -template web@build-box -instance task-42 -branch featu
 
 `-base` is listed in `agentmux sessions create -h`; a caller can detect support
 from that line. `-json` adds `base` and `base_commit` to the result.
+`-dry-run` checks everything a real create would — including fetching
+`origin/<base>` — but creates nothing; see [Deploy](deploy.md).
 
 ## Running an amp thread
 

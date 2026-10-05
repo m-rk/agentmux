@@ -23,6 +23,10 @@ type RunRequest struct {
 	Address string // <instance>@<host>[#<thread>]
 	Text    string // the prompt; read from -file by the CLI
 	Title   string // thread title for a new thread; "" leaves amp's own
+	// DryRun validates everything a real run would — address, text,
+	// instance, workdir, host config, mode shape, thread id and title —
+	// but starts no amp thread. The result carries DryRun and Plan.
+	DryRun bool
 }
 
 // RunResult is the thread, plus its state when already known.
@@ -38,6 +42,10 @@ type RunResult struct {
 	// relaunched for a continue) and the caller polls `sessions status`
 	// for what happens next.
 	State string `json:"state,omitempty"`
+	// DryRun is set when nothing was started; Plan lists what would
+	// happen, dry-run only.
+	DryRun bool     `json:"dry_run,omitempty"`
+	Plan   []string `json:"plan,omitempty"`
 }
 
 // AmpModeInfo is the effective amp mode for `sessions status -json`.
@@ -129,6 +137,23 @@ func (e Env) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	title, err := session.CleanAmpTitle(req.Title)
 	if err != nil {
 		return RunResult{}, Refuse(safesend.ReasonInvalid, "%v", err)
+	}
+	if req.DryRun {
+		// A dry run validated everything a real run would — address,
+		// text, amp instance and runner, workdir, host config, mode
+		// shape, thread id and title — and stops before spawning
+		// anything: no unarchive, no stop, no amp thread, no log.
+		step := "start amp thread on " + addr.Session().String()
+		if thread != "" {
+			step = "continue amp thread " + addr.String()
+		}
+		if mode != "" {
+			step += " with mode " + mode
+		}
+		return RunResult{
+			OK: true, Address: req.Address, Agent: "amp",
+			DryRun: true, Plan: []string{step},
+		}, nil
 	}
 	if thread == "" && title != "" {
 		// The kickoff notification shows the first message, not the

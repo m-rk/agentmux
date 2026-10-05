@@ -366,3 +366,33 @@ func TestRunContinueRunningStopsNothing(t *testing.T) {
 		t.Fatalf("unarchive = %v %q", fake.UnarchiveSeen, fake.Unarchived)
 	}
 }
+
+// TestRunDryRunStartsNothing exercises the deploy smoke path: a dry run
+// validates the run but starts no amp thread — the fake spawn must see no
+// argv, no log is written, and the result carries DryRun and Plan.
+// See AMUX-24.
+func TestRunDryRunStartsNothing(t *testing.T) {
+	newRunEnv(t)
+	id := "T-44444444-4444-4444-8444-444444444444"
+	restore, fake := session.AmpSwapForTest(id, nil)
+	defer restore()
+	res, rerr := Env{}.Run(context.Background(), RunRequest{Address: localAddr(""), Text: "smoke check", DryRun: true})
+	if rerr != nil {
+		t.Fatalf("dry run: %v", rerr)
+	}
+	if !res.OK || !res.DryRun || len(res.Plan) == 0 {
+		t.Fatalf("result = %+v, want ok dry run with a plan", res)
+	}
+	if len(fake.Argv) != 0 {
+		t.Fatalf("dry run spawned amp: %q", fake.Argv)
+	}
+	if fake.RenameSeen || fake.UnarchiveSeen || fake.StopSeen {
+		t.Fatal("dry run touched rename, unarchive or stop")
+	}
+	// A dry run refuses a bad address exactly like a real run.
+	_, rerr = Env{}.Run(context.Background(), RunRequest{Address: "bogus", Text: "x", DryRun: true})
+	if rerr == nil {
+		t.Fatal("dry run of a bad address succeeded")
+	}
+	wantReason(t, rerr, safesend.ReasonInvalid)
+}

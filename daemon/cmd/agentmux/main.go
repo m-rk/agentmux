@@ -19,6 +19,8 @@ func main() {
 		runTUI(args[1:])
 	case "daemon":
 		runDaemonCmd(args[1:])
+	case "deploy":
+		runDeployCmd(args[1:])
 	case "new":
 		runWizard(args[1:])
 	case "rename":
@@ -73,6 +75,9 @@ Usage:
   agentmux daemon uninstall   remove the daemon
   agentmux daemon status      check whether the daemon is installed/running
   agentmux daemon run         run the daemon in the foreground (used by the installed unit)
+  agentmux deploy [-template INSTANCE] [-base BRANCH]
+                               pin the binary, restart the daemon and every agentmux-owned
+                               service, verify versions, and run the cross-host smoke test
   agentmux new                 interactive wizard to create a new instance
   agentmux new -y ...          create an instance non-interactively (see -h)
   agentmux new -y -instance NAME -agent kilo -provider custom -provider-base-url URL -model M

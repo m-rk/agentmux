@@ -36,17 +36,19 @@ func runSessionsCreate(args []string) {
 	worktree := fs.String("worktree", "", "worktree directory name (default: the instance name)")
 	var allowFiles stringList
 	fs.Var(&allowFiles, "allow-file", "absolute path, on the target host, of one file outside the worktree the agent may read and edit (repeatable)")
+	dryRun := fs.Bool("dry-run", false, "check template, names and origin base without creating anything (deploy smoke test)")
 	socketPath := fs.String("socket", daemoninstall.SocketPath(), "Unix socket of the local agentmuxd")
 	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml with the gateway URL of other hosts")
 	fs.Parse(args)
 	if fs.NArg() != 0 || *template == "" || *instance == "" || *branch == "" {
-		fmt.Fprintln(os.Stderr, "usage: agentmux sessions create [-json] [-socket PATH] [-hosts PATH] -template <instance>@<host> -instance NAME -branch B [-base BRANCH] [-worktree NAME] [-allow-file PATH ...]")
+		fmt.Fprintln(os.Stderr, "usage: agentmux sessions create [-json] [-dry-run] [-socket PATH] [-hosts PATH] -template <instance>@<host> -instance NAME -branch B [-base BRANCH] [-worktree NAME] [-allow-file PATH ...]")
 		os.Exit(2)
 	}
 
 	req := ops.CreateRequest{
 		Template: *template, Instance: *instance, Branch: *branch,
 		Base: *base, Worktree: *worktree, AllowFiles: allowFiles,
+		DryRun: *dryRun,
 	}
 	var res ops.CreateResult
 	route, err := resolveRoute(req.Template, *hostsPath, address.LocalHostName())
@@ -57,6 +59,7 @@ func runSessionsCreate(args []string) {
 			res, err = route.Remote.Create(ctx, gatewayapi.CreateRequest{
 				Template: req.Template, Instance: req.Instance, Branch: req.Branch,
 				Base: req.Base, Worktree: req.Worktree, AllowFiles: req.AllowFiles,
+				DryRun: req.DryRun,
 			})
 		} else {
 			res, err = ops.Env{SocketPath: *socketPath}.Create(ctx, req)
@@ -80,7 +83,14 @@ func runSessionsCreate(args []string) {
 	if !res.Created {
 		verb = "reused existing"
 	}
-	fmt.Printf("%s %s\nworkdir  %s\nbranch   %s\n", verb, res.Address, res.Workdir, res.Branch)
+	if res.DryRun {
+		fmt.Printf("would create %s\nworkdir  %s\nbranch   %s\n", res.Address, res.Workdir, res.Branch)
+		for _, step := range res.Plan {
+			fmt.Printf("  - %s\n", step)
+		}
+	} else {
+		fmt.Printf("%s %s\nworkdir  %s\nbranch   %s\n", verb, res.Address, res.Workdir, res.Branch)
+	}
 	if res.BaseCommit != "" {
 		fmt.Printf("base     origin/%s @ %s\n", res.Base, res.BaseCommit)
 	}

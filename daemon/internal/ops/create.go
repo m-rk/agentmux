@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,12 @@ type CreateRequest struct {
 	Base       string   // branch on origin a new branch starts from, fetched first; default origin/HEAD's target, else HEAD
 	Worktree   string   // directory name under <repo>-worktrees; default Instance
 	AllowFiles []string // absolute paths outside the worktree the agent may read and edit
+	// DryRun checks everything a real create would — names, template,
+	// instance clash, and (when Base is set) fetching origin/Base — but
+	// creates no worktree, branch, instance, registry entry or env-file.
+	// A fetch from origin may still update remote-tracking refs. The
+	// result carries DryRun and Plan instead of a session.
+	DryRun bool
 }
 
 // CreateResult is the new (or reused) session plus what Create decided.
@@ -41,6 +48,10 @@ type CreateResult struct {
 	// call made the branch from it.
 	Base       string `json:"base,omitempty"`
 	BaseCommit string `json:"base_commit,omitempty"`
+	// DryRun is set when nothing was changed; Plan lists what would happen,
+	// dry-run only.
+	DryRun bool     `json:"dry_run,omitempty"`
+	Plan   []string `json:"plan,omitempty"`
 }
 
 // Daemon is the part of the daemon client that Create uses.
@@ -71,7 +82,31 @@ func (e Env) git(ctx context.Context, dir string, args ...string) (string, error
 // runGit runs git as the current user, with the PATH fix-ups a service
 // needs, and never prompts.
 func runGit(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := runas.CurrentUserCommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	return runGitAs(ctx, "", dir, args...)
+}
+
+// asUser returns an Env whose git work runs as runUser (dropping root's
+// privilege), for callers already running as root — the deploy smoke test
+// (see AMUX-23: a root git would rewrite the repo's config and
+// packed-refs root-owned). A non-root caller keeps its own identity;
+// dropping to another unprivileged user is refused at git time.
+func (e Env) asUser(runUser string) Env {
+	e.Git = func(ctx context.Context, dir string, args ...string) (string, error) {
+		return runGitAs(ctx, runUser, dir, args...)
+	}
+	return e
+}
+
+// runGitAs runs git as runUser ("": the current user), never as root
+// unless the caller already is root without a target user, and never
+// prompts.
+func runGitAs(ctx context.Context, runUser, dir string, args ...string) (string, error) {
+	var cmd *exec.Cmd
+	if runUser == "" {
+		cmd = runas.CurrentUserCommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	} else {
+		cmd = runas.CommandContext(ctx, runUser, "git", append([]string{"-C", dir}, args...)...)
+	}
 	cmd.Env = append(cmd.Env, "GIT_TERMINAL_PROMPT=0")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -120,9 +155,17 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 	if tmplWorkdir == "" {
 		return CreateResult{}, Refuse(safesend.ReasonUnsupported, "template %s has no workdir", tmpl.Instance)
 	}
-	if runUser := fields["AGENTMUX_RUN_USER"]; runUser != "" {
+	runUser := fields["AGENTMUX_RUN_USER"]
+	if runUser != "" {
 		if cur, err := user.Current(); err != nil || cur.Username != runUser {
-			return CreateResult{}, Refuse(safesend.ReasonUnsupported, "template %s runs as %s, not the gateway's user", tmpl.Instance, runUser)
+			if cur == nil || cur.Username != "root" {
+				return CreateResult{}, Refuse(safesend.ReasonUnsupported, "template %s runs as %s, not the gateway's user", tmpl.Instance, runUser)
+			}
+			// Root (the deploy smoke test) drops to the run user for
+			// the git work below, exactly like retire's gitRunner —
+			// see AMUX-23: a root git would rewrite the repo's
+			// config and packed-refs root-owned.
+			e = e.asUser(runUser)
 		}
 	}
 	agent := fields["AGENTMUX_AGENT"]
@@ -171,9 +214,43 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 			return CreateResult{}, Refuse(safesend.ReasonInvalid, "base %q is not a valid branch name", req.Base)
 		}
 	}
-	baseCommit, err := e.ensureWorktree(ctx, toplevel, wtPath, req.Branch, req.Base)
+	baseCommit, err := e.ensureWorktree(ctx, toplevel, wtPath, req.Branch, req.Base, req.DryRun)
 	if err != nil {
 		return CreateResult{}, err
+	}
+
+	if req.DryRun {
+		// A dry run never creates a worktree, branch, instance,
+		// registry entry or env-file: report what would happen. The
+		// daemon is still consulted above for the name-clash check,
+		// and ensureWorktree with dryRun still fetched origin/Base
+		// and resolved the start commit. Like retire's dry run, this
+		// needs no daemon beyond the list it already did: the
+		// ListInstances call it made needs the daemon up, which is
+		// exactly what a deploy smoke test wants to prove.
+		plan := []string{"worktree " + wtPath + " on branch " + req.Branch}
+		if req.Base != "" {
+			plan = append(plan, "from origin/"+req.Base+" @ "+baseCommit)
+		}
+		if existing != nil {
+			plan = append(plan, "reuse instance "+req.Instance)
+		} else {
+			plan = append(plan, "create instance "+req.Instance+" ("+agent+") in "+wtPath)
+		}
+		res := CreateResult{Branch: req.Branch, DryRun: true, Plan: plan}
+		if req.Base != "" {
+			res.Base, res.BaseCommit = req.Base, baseCommit
+		}
+		res.Session = Session{
+			Address:  req.Instance + "@" + tmpl.Host,
+			Name:     req.Instance,
+			Agent:    agent,
+			Provider: fields["AGENTMUX_PROVIDER"],
+			Model:    fields["AGENTMUX_MODEL"],
+			Status:   "unknown",
+			Workdir:  wtPath,
+		}
+		return res, nil
 	}
 
 	created := existing == nil
@@ -294,9 +371,11 @@ func copyOpEnvFile(template, instance string) error {
 
 // ensureWorktree makes wtPath a worktree on branch, or accepts one that
 // already is. It returns the commit a new branch was started from when base
-// was given, else "".
-func (e Env) ensureWorktree(ctx context.Context, repo, wtPath, branch, base string) (string, error) {
-	if base == "" {
+// was given, else "". With dryRun it resolves that same start commit —
+// fetching origin/Base so a stale or missing remote base still refuses —
+// but creates no worktree or branch.
+func (e Env) ensureWorktree(ctx context.Context, repo, wtPath, branch, base string, dryRun bool) (string, error) {
+	if base == "" && !dryRun {
 		// A fetch that fails (offline, no origin) just leaves the start stale.
 		fctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		_, _ = e.git(fctx, repo, "fetch", "origin")
@@ -325,6 +404,9 @@ func (e Env) ensureWorktree(ctx context.Context, repo, wtPath, branch, base stri
 				return "", Refuse(safesend.ReasonInvalid, "branch %s is already checked out at %s", branch, wt.path)
 			}
 		}
+		if dryRun {
+			return "", nil
+		}
 		if _, err := e.git(ctx, repo, "worktree", "add", wtPath, branch); err != nil {
 			return "", Refuse(safesend.ReasonFailed, "%v", err)
 		}
@@ -352,6 +434,14 @@ func (e Env) ensureWorktree(ctx context.Context, repo, wtPath, branch, base stri
 		if _, err := e.git(ctx, repo, "rev-parse", "--verify", "--quiet", start+"^{commit}"); err != nil {
 			return "", Refuse(safesend.ReasonInvalid, "start point %q is not a commit in the template's repository", start)
 		}
+	}
+	if dryRun {
+		if base == "" {
+			return "", nil
+		}
+		// resolve start to the commit, as the result reports it
+		start, _ = e.git(ctx, repo, "rev-parse", "--verify", "--quiet", start+"^{commit}")
+		return start, nil
 	}
 	if _, err := e.git(ctx, repo, "worktree", "add", "-b", branch, wtPath, start); err != nil {
 		return "", Refuse(safesend.ReasonFailed, "%v", err)

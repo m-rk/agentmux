@@ -34,9 +34,9 @@ const sessionsUsage = `usage:
   agentmux sessions read [-json] [-hosts PATH] [-limit N] [-cursor C] <instance>@<host>[#<thread>]
   agentmux sessions send -by PRINCIPAL [-via relayed|dispatched|sent] [-from REF] [-correlation ID]
                          [-hosts PATH] [-wait DUR] [-json] <instance>@<host>[#<thread>] (TEXT | -file PATH|-)
-  agentmux sessions create [-json] [-socket PATH] [-hosts PATH] -template <instance>@<host> -instance NAME -branch B
+  agentmux sessions create [-json] [-dry-run] [-socket PATH] [-hosts PATH] -template <instance>@<host> -instance NAME -branch B
                            [-base BRANCH] [-worktree NAME] [-allow-file PATH ...]
-  agentmux sessions run [-json] [-hosts PATH] [-thread THREAD_ID] [-title TEXT] -file PATH|- <instance>@<host>[#<thread>]
+  agentmux sessions run [-json] [-dry-run] [-hosts PATH] [-thread THREAD_ID] [-title TEXT] -file PATH|- <instance>@<host>[#<thread>]
   agentmux sessions retire [-json] [-dry-run] [-hosts PATH] <instance>@<host>
   agentmux gc [-json] [-dry-run] [-hosts PATH] [-host NAME]`
 

@@ -506,3 +506,112 @@ func TestCreateDaemonFailure(t *testing.T) {
 		t.Fatalf("error lost the daemon message: %v", err)
 	}
 }
+
+// TestCreateDryRunChecksBaseButCreatesNothing exercises the deploy smoke
+// path: with Base set, a dry run fetches origin/Base (a stale or missing
+// remote base still refuses) but makes no worktree, branch, instance,
+// registry entry or env-file. See AMUX-24.
+func TestCreateDryRunChecksBaseButCreatesNothing(t *testing.T) {
+	c := newCreateEnv(t)
+	_, pusher := originFor(t, c)
+	git(t, pusher, "checkout", "-q", "-b", "release")
+	git(t, pusher, "commit", "-q", "--allow-empty", "-m", "release work")
+	git(t, pusher, "push", "-q", "origin", "release")
+	want := git(t, pusher, "rev-parse", "HEAD")
+	// A stale local ref of the same name must not be used.
+	git(t, c.repo, "branch", "release", "HEAD")
+
+	r := c.req()
+	r.Base = "release"
+	r.DryRun = true
+	res, err := c.env.Create(context.Background(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.DryRun || res.Base != "release" || res.BaseCommit != want {
+		t.Fatalf("dry run = %+v, want dry run of release @ %s", res, want)
+	}
+	if len(res.Plan) == 0 {
+		t.Fatal("dry run has no plan")
+	}
+	wt := filepath.Join(c.wtRoot, "task-1")
+	if _, statErr := os.Lstat(wt); statErr == nil {
+		t.Fatalf("dry run made worktree %s", wt)
+	}
+	if len(c.d.created) != 0 {
+		t.Fatal("dry run created an instance")
+	}
+	if _, err := session.ReadRegistry("task-1"); err == nil {
+		t.Fatal("dry run wrote a registry entry")
+	}
+	if _, err := c.env.Create(context.Background(), c.req()); err != nil {
+		t.Fatalf("real create after dry run: %v", err)
+	}
+}
+
+// TestCreateDryRunRefusesMissingBase: a base that cannot be fetched or is
+// missing on origin refuses, like the real create (the MERG-20/AMUX-12
+// failure this smoke test exists to catch).
+func TestCreateDryRunRefusesMissingBase(t *testing.T) {
+	c := newCreateEnv(t)
+	r := c.req()
+	r.Base = "main" // local main exists, but there is no origin to fetch from
+	r.DryRun = true
+	if _, err := c.env.Create(context.Background(), r); err == nil {
+		t.Fatal("dry run with unfetchable base succeeded")
+	} else {
+		wantReason(t, err, safesend.ReasonFailed)
+	}
+	if _, statErr := os.Lstat(filepath.Join(c.wtRoot, "task-1")); statErr == nil {
+		t.Fatal("a refused dry run made a worktree")
+	}
+	if len(c.d.created) != 0 {
+		t.Fatal("a refused dry run created an instance")
+	}
+}
+
+// TestCreateAsRootDropsToRunUser is the AMUX-23 guard: a root caller
+// creating from a template owned by a run user runs git as that user, so
+// the smoke test's fetch never leaves root-owned files in the repo.
+func TestCreateAsRootDropsToRunUser(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root to test the privilege drop")
+	}
+	u, err := user.Lookup("nobody")
+	if err != nil {
+		t.Skip("no nobody user")
+	}
+	c := newCreateEnv(t, "AGENTMUX_RUN_USER=nobody")
+	root := filepath.Dir(c.repo)
+	// The temp tree is 0700 root, untraversable by the run user: open the
+	// path down to the repo and hand the repo and registry to them.
+	chown := func(who string) {
+		t.Helper()
+		for _, p := range []string{root, filepath.Dir(root), c.repo, filepath.Join(root, "env")} {
+			if out, err := exec.Command("chown", who, p).CombinedOutput(); err != nil {
+				t.Fatalf("chown %s %s: %v\n%s", who, p, err, out)
+			}
+		}
+		if out, err := exec.Command("chmod", "755", root, filepath.Dir(root)).CombinedOutput(); err != nil {
+			t.Fatalf("chmod: %v\n%s", err, out)
+		}
+		if out, err := exec.Command("chown", "-R", who, c.repo, filepath.Join(root, "env")).CombinedOutput(); err != nil {
+			t.Fatalf("chown -R %s: %v\n%s", who, err, out)
+		}
+	}
+	chown("nobody:nogroup")
+	t.Cleanup(func() { chown("root:root") })
+	_ = u
+	r := c.req()
+	r.DryRun = true
+	if _, err := c.env.Create(context.Background(), r); err != nil {
+		t.Fatalf("root dry run: %v", err)
+	}
+	out, err := exec.Command("find", filepath.Join(c.repo, ".git"), "-uid", "0", "-print").CombinedOutput()
+	if err != nil {
+		t.Fatalf("find: %v\n%s", err, out)
+	}
+	if len(out) != 0 {
+		t.Fatalf("root-owned files after root dry run:\n%s", out)
+	}
+}

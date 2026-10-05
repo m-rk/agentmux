@@ -150,6 +150,56 @@ func launchAgentPath(agentLabel string) (string, error) {
 // itself stays in the same unprivileged, per-user world — no root needed
 // anywhere in the macOS path.
 func Install(doctorTime string) error {
+	if err := InstallForDeploy(doctorTime); err != nil {
+		return err
+	}
+
+	dir, err := agentmuxDir()
+	if err != nil {
+		return err
+	}
+	plist, err := plistPath()
+	if err != nil {
+		return err
+	}
+	doctorPlist, err := doctorPlistPath()
+	if err != nil {
+		return err
+	}
+	gcPlist, err := gcPlistPath()
+	if err != nil {
+		return err
+	}
+
+	domain := "gui/" + strconv.Itoa(os.Getuid())
+	_ = runCmd("launchctl", "bootout", domain, plist) // ignore error: may not be loaded yet
+	if err := runCmd("launchctl", "bootstrap", domain, plist); err != nil {
+		return err
+	}
+	if err := runCmd("launchctl", "kickstart", "-k", domain+"/"+label); err != nil {
+		return err
+	}
+	_ = runCmd("launchctl", "bootout", domain, doctorPlist)
+	if err := runCmd("launchctl", "bootstrap", domain, doctorPlist); err != nil {
+		return err
+	}
+	_ = runCmd("launchctl", "bootout", domain, gcPlist)
+	if err := runCmd("launchctl", "bootstrap", domain, gcPlist); err != nil {
+		return err
+	}
+
+	sock := filepath.Join(dir, "run", "agentmuxd.sock")
+	bin := filepath.Join(dir, "bin", "agentmux")
+	fmt.Printf("Installed and started %s plus %s at %s local time plus %s (binary: %s, socket: %s)\n", label, doctorLabel, doctorTime, gcLabel, bin, sock)
+	return nil
+}
+
+// InstallForDeploy pins the current binary under ~/.agentmux/bin and
+// rewrites the daemon, doctor and gc plists without loading anything, so
+// `agentmux deploy` can refresh every unit before restarting all the
+// services itself (see AMUX-24). doctorTime is still parsed, so a bad
+// value fails the same way Install would.
+func InstallForDeploy(doctorTime string) error {
 	if os.Geteuid() == 0 {
 		return fmt.Errorf("must not be run as root/sudo on macOS; run as your normal user")
 	}
@@ -200,24 +250,6 @@ func Install(doctorTime string) error {
 		return fmt.Errorf("writing %s: %w", gcPlist, err)
 	}
 
-	domain := "gui/" + strconv.Itoa(os.Getuid())
-	_ = runCmd("launchctl", "bootout", domain, plist) // ignore error: may not be loaded yet
-	if err := runCmd("launchctl", "bootstrap", domain, plist); err != nil {
-		return err
-	}
-	if err := runCmd("launchctl", "kickstart", "-k", domain+"/"+label); err != nil {
-		return err
-	}
-	_ = runCmd("launchctl", "bootout", domain, doctorPlist)
-	if err := runCmd("launchctl", "bootstrap", domain, doctorPlist); err != nil {
-		return err
-	}
-	_ = runCmd("launchctl", "bootout", domain, gcPlist)
-	if err := runCmd("launchctl", "bootstrap", domain, gcPlist); err != nil {
-		return err
-	}
-
-	fmt.Printf("Installed and started %s plus %s at %s local time plus %s (binary: %s, socket: %s)\n", label, doctorLabel, doctorTime, gcLabel, bin, sock)
 	return nil
 }
 

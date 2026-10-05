@@ -43,6 +43,9 @@ go build -o agentmux ./cmd/agentmux
 sudo ./agentmux daemon install   # Linux: daemon + doctor systemd timer
 ./agentmux daemon install        # macOS: daemon + doctor LaunchAgent, no sudo
 
+# Later, to ship a new binary to every service on the host:
+sudo ./agentmux deploy           # pin, restart daemon + services, verify, smoke-test (see docs/deploy.md)
+
 ./agentmux new                   # agent-specific wizard: device, agent, relevant settings
 ./agentmux                       # TUI: attach, rename, restart, create — across every host
 ```

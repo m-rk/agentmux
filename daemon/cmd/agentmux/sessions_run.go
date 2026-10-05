@@ -34,11 +34,12 @@ func runSessionsRun(args []string) {
 	file := fs.String("file", "", "read the prompt from this file (\"-\" for stdin) instead of the argument (required)")
 	thread := fs.String("thread", "", "continue this amp thread id instead of starting a new thread")
 	title := fs.String("title", "", "title a new thread (\"<task id> <task name>\" from the dispatcher); ignored when continuing")
+	dryRun := fs.Bool("dry-run", false, "validate the run without starting any amp thread (deploy smoke test)")
 	socketPath := fs.String("socket", daemoninstall.SocketPath(), "Unix socket of the local agentmuxd")
 	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml with the gateway URL of other hosts")
 	fs.Parse(args)
 	if fs.NArg() != 1 || *file == "" {
-		fmt.Fprintln(os.Stderr, "usage: agentmux sessions run [-json] [-socket PATH] [-hosts PATH] [-thread THREAD_ID] [-title TEXT] -file PATH|- <instance>@<host>[#<thread>]")
+		fmt.Fprintln(os.Stderr, "usage: agentmux sessions run [-json] [-dry-run] [-socket PATH] [-hosts PATH] [-thread THREAD_ID] [-title TEXT] -file PATH|- <instance>@<host>[#<thread>]")
 		os.Exit(2)
 	}
 	addrText := fs.Arg(0)
@@ -60,7 +61,7 @@ func runSessionsRun(args []string) {
 		failRun(*jsonOut, addrText, safesend.ReasonInvalid, err.Error())
 	}
 
-	req := ops.RunRequest{Address: addrText, Text: text, Title: *title}
+	req := ops.RunRequest{Address: addrText, Text: text, Title: *title, DryRun: *dryRun}
 	var res ops.RunResult
 	route, rerr := resolveRoute(req.Address, *hostsPath, address.LocalHostName())
 	switch {
@@ -71,7 +72,7 @@ func runSessionsRun(args []string) {
 		ctx, cancel := context.WithTimeout(context.Background(), gatewayclient.RunTimeout+time.Minute)
 		defer cancel()
 		var rerr error
-		res, rerr = route.Remote.Run(ctx, gatewayapi.RunRequest{Address: req.Address, Text: req.Text, Title: req.Title})
+		res, rerr = route.Remote.Run(ctx, gatewayapi.RunRequest{Address: req.Address, Text: req.Text, Title: req.Title, DryRun: req.DryRun})
 		if rerr != nil {
 			e := ops.AsError(rerr)
 			failRun(*jsonOut, req.Address, e.Reason, e.Detail)
@@ -89,6 +90,13 @@ func runSessionsRun(args []string) {
 
 	if *jsonOut {
 		writeJSON(runOutput{OK: true, RunResult: res})
+		return
+	}
+	if res.DryRun {
+		fmt.Printf("would run on %s\n", res.Address)
+		for _, step := range res.Plan {
+			fmt.Printf("  - %s\n", step)
+		}
 		return
 	}
 	fmt.Printf("thread   %s\nurl      %s\nstate    %s\n", res.Address, res.ThreadURL, res.State)

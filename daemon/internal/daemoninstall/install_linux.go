@@ -93,6 +93,33 @@ func SocketPath() string {
 // unit (and the agentmux-<instance>.service units it will manage) are
 // system-scoped, matching backends/*/install.sh's existing root requirement.
 func Install(doctorTime string) error {
+	if err := InstallForDeploy(doctorTime); err != nil {
+		return err
+	}
+
+	if err := runCmd("systemctl", "daemon-reload"); err != nil {
+		return err
+	}
+	if err := runCmd("systemctl", "enable", "--now", unitName); err != nil {
+		return err
+	}
+	if err := runCmd("systemctl", "enable", "--now", doctorTimerName); err != nil {
+		return err
+	}
+	if err := runCmd("systemctl", "enable", "--now", gcTimerName); err != nil {
+		return err
+	}
+
+	fmt.Printf("Installed and started %s plus %s at %s Australia/Perth plus %s (binary: %s, socket: %s)\n", unitName, doctorTimerName, doctorTime, gcTimerName, binPath, daemonSocket)
+	return nil
+}
+
+// InstallForDeploy pins the current binary to binPath and rewrites the
+// daemon, doctor and gc unit files without enabling or starting anything,
+// so `agentmux deploy` can refresh every unit before restarting all the
+// services itself (see AMUX-24). doctorTime is still parsed, so a bad
+// value fails the same way Install would.
+func InstallForDeploy(doctorTime string) error {
 	if os.Geteuid() != 0 {
 		return fmt.Errorf("must be run as root; try: sudo agentmux daemon install")
 	}
@@ -125,20 +152,6 @@ func Install(doctorTime string) error {
 		return fmt.Errorf("writing %s: %w", gcTimerPath, err)
 	}
 
-	if err := runCmd("systemctl", "daemon-reload"); err != nil {
-		return err
-	}
-	if err := runCmd("systemctl", "enable", "--now", unitName); err != nil {
-		return err
-	}
-	if err := runCmd("systemctl", "enable", "--now", doctorTimerName); err != nil {
-		return err
-	}
-	if err := runCmd("systemctl", "enable", "--now", gcTimerName); err != nil {
-		return err
-	}
-
-	fmt.Printf("Installed and started %s plus %s at %s Australia/Perth plus %s (binary: %s, socket: %s)\n", unitName, doctorTimerName, doctorTime, gcTimerName, binPath, daemonSocket)
 	return nil
 }
 

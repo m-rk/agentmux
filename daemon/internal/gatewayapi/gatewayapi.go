@@ -104,7 +104,9 @@ type SendResponse = ops.SendResult
 // CreateRequest starts a task session on the host: a Git worktree on Branch
 // plus an instance in it, configured like Template. Instance is the new
 // session, and the grant is checked against <instance>@<host>. See
-// ops.CreateRequest.
+// ops.CreateRequest. DryRun checks everything a real create would —
+// including fetching origin/Base — but creates nothing; the reply carries
+// DryRun and Plan instead of a session.
 type CreateRequest struct {
 	Template   string   `json:"template"`
 	Instance   string   `json:"instance"`
@@ -112,6 +114,7 @@ type CreateRequest struct {
 	Base       string   `json:"base,omitempty"`
 	Worktree   string   `json:"worktree,omitempty"`
 	AllowFiles []string `json:"allow_files,omitempty"`
+	DryRun     bool     `json:"dry_run,omitempty"`
 }
 
 // CreateResponse is the session plus branch and created; a refusal is a
@@ -120,11 +123,13 @@ type CreateResponse = ops.CreateResult
 
 // RunRequest starts an amp thread on the host (Thread "" in Address) or
 // continues one. Text is the prompt; Title names a new thread and is
-// ignored for a continue.
+// ignored for a continue. DryRun validates the run without starting any
+// amp thread; the reply carries DryRun and Plan.
 type RunRequest struct {
 	Address string `json:"address"`
 	Text    string `json:"text"`
 	Title   string `json:"title,omitempty"`
+	DryRun  bool   `json:"dry_run,omitempty"`
 }
 
 // RunResponse is the thread plus its state; a refusal is a non-2xx

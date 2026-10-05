@@ -34,6 +34,10 @@ A refusal exits 1 (`-json` reports `{"ok": false, ...}` instead): `invalid`
 from amp's own error), `not_found`, `unsupported` (not an amp instance),
 `failed` (the CLI died before printing its init record). Exit 2 is usage.
 
+`-dry-run` validates everything a real run would — address, text,
+instance, workdir, host config, mode shape, thread id and title — but
+starts no amp thread; see [Deploy](deploy.md).
+
 ## Thread titles
 
 `-title "<task id> <task name>"` names a new thread in the amp sidebar

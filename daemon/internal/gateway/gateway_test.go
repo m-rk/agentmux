@@ -67,6 +67,12 @@ func (f *fakeBackend) Create(_ context.Context, req ops.CreateRequest) (ops.Crea
 	if f.createErr != nil {
 		return ops.CreateResult{}, f.createErr
 	}
+	if req.DryRun {
+		return ops.CreateResult{
+			Session: ops.Session{Address: req.Instance + "@hostA", Name: req.Instance, Workdir: "/w/" + req.Instance},
+			Branch:  req.Branch, DryRun: true, Plan: []string{"worktree /w/" + req.Instance},
+		}, nil
+	}
 	return ops.CreateResult{
 		Session: ops.Session{Address: req.Instance + "@hostA", Name: req.Instance, Workdir: "/w/" + req.Instance},
 		Branch:  req.Branch, Created: true,
@@ -79,6 +85,10 @@ func (f *fakeBackend) Run(_ context.Context, req ops.RunRequest) (ops.RunResult,
 	f.ran = append(f.ran, req)
 	if f.runErr != nil {
 		return ops.RunResult{}, f.runErr
+	}
+	if req.DryRun {
+		return ops.RunResult{OK: true, Address: req.Address, Agent: "amp",
+			DryRun: true, Plan: []string{"start amp thread"}}, nil
 	}
 	if f.runRes != nil {
 		return *f.runRes, nil
@@ -754,5 +764,45 @@ func TestGCErrorMapping(t *testing.T) {
 	h.backend.gcErr = ops.Refuse(safesend.ReasonFailed, "boom")
 	if rec := h.post("gc", `{}`); rec.Code != 500 || errReason(t, rec) != safesend.ReasonFailed {
 		t.Errorf("refusal: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestDryRunFlagsPassThrough(t *testing.T) {
+	h := newHarness(t, all("create", "run"))
+	rec := h.post("create", `{"template":"tmpl@hostA","instance":"task-9","branch":"feature/x","base":"main","dry_run":true}`)
+	if rec.Code != 200 {
+		t.Fatalf("dry-run create: %d %s", rec.Code, rec.Body)
+	}
+	if !h.backend.created[0].DryRun {
+		t.Errorf("backend create request = %+v, want DryRun", h.backend.created[0])
+	}
+	var cres gatewayapi.CreateResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &cres); err != nil {
+		t.Fatal(err)
+	}
+	if !cres.DryRun || len(cres.Plan) == 0 {
+		t.Errorf("dry-run create response = %+v, want DryRun and Plan", cres)
+	}
+	rec = h.post("run", `{"address":"probe@hostA","text":"smoke","dry_run":true}`)
+	if rec.Code != 200 {
+		t.Fatalf("dry-run run: %d %s", rec.Code, rec.Body)
+	}
+	if !h.backend.ran[0].DryRun {
+		t.Errorf("backend run request = %+v, want DryRun", h.backend.ran[0])
+	}
+	var rres gatewayapi.RunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &rres); err != nil {
+		t.Fatal(err)
+	}
+	if !rres.DryRun || len(rres.Plan) == 0 {
+		t.Errorf("dry-run run response = %+v, want DryRun and Plan", rres)
+	}
+	// A dry run needs the same explicit grant as the real op.
+	h2 := newHarness(t, all("list"))
+	if rec := h2.post("create", createBody); rec.Code != 403 {
+		t.Errorf("ungranted create: %d %s", rec.Code, rec.Body)
+	}
+	if rec := h2.post("run", runBody); rec.Code != 403 {
+		t.Errorf("ungranted run: %d %s", rec.Code, rec.Body)
 	}
 }
