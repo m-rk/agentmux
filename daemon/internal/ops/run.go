@@ -51,7 +51,7 @@ type AmpModeInfo struct {
 // ampThreadURLPrefix is the public address of one amp thread.
 const ampThreadURLPrefix = "https://ampcode.com/threads/"
 
-// runTimeout bounds a run: mode probe plus spawn plus init record. A bogus
+// runTimeout bounds a run: mode check plus spawn plus init record. A bogus
 // -m fails in seconds (confirmed live ~8s); the bound is for a hung
 // launch, not the mode-rejection path.
 const runTimeout = 3 * time.Minute
@@ -130,6 +130,15 @@ func (e Env) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, Refuse(safesend.ReasonInvalid, "%v", err)
 	}
+	if thread == "" && title != "" {
+		// The kickoff notification shows the first message, not the
+		// sidebar title, so the prompt opens with a one-line
+		// "<title>" header naming the task before anything else. A
+		// title is at most 256 bytes against a 64 KiB prompt, and
+		// CleanAmpTitle already rejected line breaks, so the header is
+		// always exactly one line.
+		text = title + "\n\n" + text
+	}
 	logPath := session.AmpRunLogPath(src.Home, addr.Instance, thread)
 	if thread != "" {
 		// Continuing restores the archived thread first (amp archives a
@@ -146,6 +155,15 @@ func (e Env) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	}
 	id, err := session.StartAmpRun(ctx, src.AmpEnvFile, session.AmpRunArgs(text, mode, thread, title), workdir, logPath)
 	if err != nil {
+		// The real run is also the mode check now: a name amp rejects
+		// dies here before printing its init record, quoting amp's own
+		// error (confirmed live: a bogus -m fails fast with no thread
+		// created server-side — the log tail carries amp's "Unexpected
+		// error inside Amp CLI"). Invalid, not failed — retrying the same
+		// mode cannot succeed.
+		if mode != "" && strings.Contains(err.Error(), "Unexpected error inside Amp CLI") {
+			return RunResult{}, Refuse(safesend.ReasonInvalid, "amp rejected mode %q: %v", mode, err)
+		}
 		return RunResult{}, Refuse(safesend.ReasonFailed, "amp: %v", err)
 	}
 	// A new thread keeps the task's title even if amp retitles it while

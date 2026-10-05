@@ -128,16 +128,16 @@ func ampRunCommand(ctx context.Context, envFile string, argv []string) (*exec.Cm
 // releases the middle child, never the agent itself. A ".done" sentinel
 // appears at logPath+".done" once the agent exits, which is how
 // scanAmpInit tells "no init yet" from "exited without init".
-// Replaceable in tests (this package swaps ampStartNew/checkAmpMode
-// directly; ops tests use the Amp*ForTest helpers below since unexported
-// vars don't cross packages).
+// Replaceable in tests (this package swaps ampStartNew directly; ops
+// tests use the Amp*ForTest helpers below since unexported vars don't
+// cross packages).
 var ampStartNew = startAmpProcessDetached
 
 // StartAmpRun launches argv detached in workdir with output to logPath
 // and returns once the init record arrives. argv holds the amp arguments
 // (AmpRunArgs shape, without the binary); the binary resolves through
 // ampRunCommand, so an instance env-file runs amp under `op run` exactly
-// like the mode probe. The child outlives this process: callers report
+// like the mode check. The child outlives this process: callers report
 // the thread while the agent keeps working.
 func StartAmpRun(ctx context.Context, envFile string, argv []string, workdir, logPath string) (string, error) {
 	proc, err := ampStartNew(ctx, envFile, argv, workdir, logPath)
@@ -502,8 +502,11 @@ func ampLogTail(logPath string) string {
 type AmpFakeSpawn struct {
 	// Argv is the argv the fake was asked to spawn.
 	Argv []string
-	// Mode is the mode the probe was asked about.
+	// Mode is the mode the check was asked about.
 	Mode string
+	// Checked counts mode checks, so tests can assert the check runs (or
+	// doesn't) without spawning.
+	Checked int
 	// Renamed is the title the fake rename was asked to apply; RenameSeen
 	// reports whether a rename ran at all.
 	Renamed    string
@@ -523,17 +526,32 @@ type AmpFakeSpawn struct {
 	spawnedAt    int
 }
 
-// AmpSwapForTest substitutes the detached spawn, the mode probe, the
+// AmpSwapForTest substitutes the detached spawn, the mode check, the
 // rename, the unarchive, and the run stop so ops tests never touch a real
-// amp CLI. The fake spawn records argv, writes an init record for threadID
-// to the log, and returns a stand-in process; probeErr is the probe's
-// verdict (nil succeeds). The fake rename records its title and succeeds;
+// amp CLI. The fake spawn records argv and returns a stand-in process;
+// spawnLog, when non-nil, is written to the log instead of an init record
+// (plus the .done sentinel), standing in for a child that exits before
+// any init — e.g. amp rejecting the mode. checkErr is the check's
+// verdict, except nil means "run the real shape validation" rather than
+// "succeed unconditionally" — so a shape-bad mode is still refused by the
+// check under test while a well-formed one passes through without
+// spawning. Pass an explicit non-nil error only to force a check failure
+// for another reason. The fake rename records its title and succeeds;
 // the fake unarchive records its thread id, and the fake stop records its
 // thread id and workdir. UnarchivedAt/StoppedAt count spawns before each,
 // so continue tests can assert the ordering: stop, then unarchive, then
 // spawn. It returns a restore func the test defers, and the record the
 // fakes fill in.
-func AmpSwapForTest(threadID string, probeErr error) (restore func(), fake *AmpFakeSpawn) {
+func AmpSwapForTest(threadID string, checkErr error) (restore func(), fake *AmpFakeSpawn) {
+	return AmpSwapSpawnForTest(threadID, nil, checkErr)
+}
+
+// AmpSwapSpawnForTest is AmpSwapForTest with a spawn-level log override:
+// spawnLog replaces the init record the fake child would write (plus the
+// .done sentinel marking its exit), so tests can drive the real run's
+// launch-failure path — e.g. amp's own mode rejection — without a real
+// CLI. A nil spawnLog writes the init record for threadID as usual.
+func AmpSwapSpawnForTest(threadID string, spawnLog []byte, checkErr error) (restore func(), fake *AmpFakeSpawn) {
 	fake = &AmpFakeSpawn{}
 	oldStart, oldCheck, oldRename := ampStartNew, checkAmpMode, renameAmpThread
 	oldUnarchive, oldStop := unarchiveAmpThread, stopAmpRun
@@ -543,6 +561,17 @@ func AmpSwapForTest(threadID string, probeErr error) (restore func(), fake *AmpF
 		if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 			return nil, err
 		}
+		if spawnLog != nil {
+			if err := os.WriteFile(logPath, spawnLog, 0o600); err != nil {
+				return nil, err
+			}
+			f, err := os.Create(logPath + ".done")
+			if err != nil {
+				return nil, err
+			}
+			_ = f.Close()
+			return os.FindProcess(os.Getpid())
+		}
 		if err := os.WriteFile(logPath, []byte(`{"type":"system","subtype":"init","session_id":"`+threadID+`"}`+"\n"), 0o600); err != nil {
 			return nil, err
 		}
@@ -550,7 +579,13 @@ func AmpSwapForTest(threadID string, probeErr error) (restore func(), fake *AmpF
 	}
 	checkAmpMode = func(_ context.Context, _ string, mode string) error {
 		fake.Mode = mode
-		return probeErr
+		fake.Checked++
+		if checkErr != nil {
+			return checkErr
+		}
+		// oldCheck is the real validation captured above (calling
+		// CheckAmpMode here would recurse into this fake).
+		return oldCheck(context.Background(), "", mode)
 	}
 	renameAmpThread = func(_ context.Context, _, _, title string) {
 		fake.RenameSeen = true
@@ -681,7 +716,7 @@ func ampRunCmdlineMatch(cmdlinePath, threadID, workdir string) bool {
 	return true
 }
 
-// checkAmpMode is the mode probe var: production calls it through
+// checkAmpMode is the mode check var: production calls it through
 // CheckAmpMode, tests swap it (this package directly, ops through
 // AmpSwapForTest).
 var checkAmpMode = checkAmpModeImpl
@@ -744,17 +779,18 @@ func renameAmpThreadImpl(ctx context.Context, envFile, threadID, title string) {
 	_ = cmd.Run()
 }
 
-// CheckAmpMode fails fast when the CLI rejects mode, quoting amp's own
-// error: it runs the real run argv with a harmless prompt (`-x "ok"` last)
-// before anything is spawned detached. --help and --version don't parse
-// -m (both exit 0 for a bogus mode, confirmed live), while -x validates
-// it before doing anything else — a bogus mode exits 1 in seconds
-// (confirmed live ~8s). The probe costs one cheap turn that answers "ok".
-func CheckAmpMode(ctx context.Context, envFile, mode string) error {
-	return checkAmpMode(ctx, envFile, mode)
+// CheckAmpMode validates the shape of mode without spawning anything:
+// empty means "no mode" and always succeeds, while an overlong value or
+// one carrying line breaks or NUL bytes is refused before it can ride
+// along in argv. A mode that passes the shape check but names nothing
+// real is rejected by the real run itself, which refuses quoting amp's
+// own error — so no turn is ever spent on a throwaway check thread and no
+// junk thread reaches the sidebar or the phone notification.
+func CheckAmpMode(_ context.Context, _ string, mode string) error {
+	return checkAmpMode(context.Background(), "", mode)
 }
 
-func checkAmpModeImpl(ctx context.Context, envFile, mode string) error {
+func checkAmpModeImpl(_ context.Context, _ string, mode string) error {
 	if mode == "" {
 		return nil
 	}
@@ -763,21 +799,6 @@ func checkAmpModeImpl(ctx context.Context, envFile, mode string) error {
 	}
 	if strings.ContainsAny(mode, "\x00\r\n") {
 		return fmt.Errorf("amp mode %q contains a line break or NUL byte", mode)
-	}
-	cmd, err := ampRunCommand(ctx, envFile, AmpRunArgs("ok", mode, "", ""))
-	if err != nil {
-		return err
-	}
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		msg := strings.Join(strings.Fields(string(out)), " ")
-		if len(msg) > 300 {
-			msg = msg[len(msg)-300:]
-		}
-		if msg == "" {
-			msg = err.Error()
-		}
-		return fmt.Errorf("amp rejected mode %q: %s", mode, msg)
 	}
 	return nil
 }

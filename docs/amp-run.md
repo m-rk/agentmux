@@ -42,12 +42,14 @@ thing"`), where amp's own summary would otherwise say nothing about which
 task the thread belongs to. It is ignored when continuing a thread. The
 title rides `amp -x --title` with `--no-archive-after-execute`, so a
 finished thread stays unarchived — findable and renamable — instead of
-vanishing into the archive. Once the thread exists the title is re-applied
-with `amp threads rename`, since amp may retitle the thread itself while
-the agent works; the rename is best-effort and never fails the run. amp
-refuses to rename archived threads, so an archived task thread keeps
-whatever title it had. Archive task threads when the task note is
-archived, not before.
+vanishing into the archive. The prompt itself also opens with the title as
+a one-line header, since the kickoff notification shows the first message
+rather than the sidebar title. Once the thread exists the title is
+re-applied with `amp threads rename`, since amp may retitle the thread
+itself while the agent works; the rename is best-effort and never fails
+the run. amp refuses to rename archived threads, so an archived task
+thread keeps whatever title it had. Archive task threads when the task
+note is archived, not before.
 
 ## Threads stay unarchived
 
@@ -106,9 +108,12 @@ suffix never widens access. See [Gateway](gateway.md).
 
 Every run uses one amp mode (`amp -m`), chosen per host and kept out of
 the repo. The value is a built-in (`low`, `medium`, `high`, `ultra`) or a
-plugin mode by key or label; amp validates it at run time, and an unknown
-mode refuses the run quoting amp's error. With no mode configured anywhere,
-runs omit `-m` and amp uses whatever it would by default.
+plugin mode by key or label. Malformed values (overlong, or carrying line
+breaks or NUL bytes) are refused before anything spawns; anything else
+rides the real run's `-m`, and an unknown mode fails there — the run is
+refused quoting amp's own error, with no throwaway check thread first.
+With no mode configured anywhere, runs omit `-m` and amp uses whatever it
+would by default.
 
 - Host default: `~/.config/agentmux/amp.yaml`, with `mode: <amp mode key or
   label>`. Docs and tests use placeholders such as `high` — never put a

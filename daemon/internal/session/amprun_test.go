@@ -168,16 +168,29 @@ func fakeRunProcess() (*os.Process, error) {
 	return os.FindProcess(os.Getpid())
 }
 
-// TestCheckAmpModeValidation rejects hostile modes without spawning.
+// TestCheckAmpModeValidation accepts an empty mode and a well-formed one
+// and rejects hostile modes, all without spawning: the check never starts
+// a thread (a bad mode would otherwise cost a turn and a junk thread).
 func TestCheckAmpModeValidation(t *testing.T) {
 	if err := checkAmpMode(context.Background(), "", ""); err != nil {
 		t.Fatalf("empty: %v", err)
+	}
+	if err := checkAmpMode(context.Background(), "", "high"); err != nil {
+		t.Fatalf("plain mode: %v", err)
 	}
 	if err := checkAmpMode(context.Background(), "", strings.Repeat("x", 300)); err == nil {
 		t.Fatal("overlong mode accepted")
 	}
 	if err := checkAmpMode(context.Background(), "", "a\nb"); err == nil {
 		t.Fatal("newline mode accepted")
+	}
+	// Through the public entry too, with an env-file set: it must not
+	// matter, since the check spawns nothing.
+	if err := CheckAmpMode(context.Background(), "/nonexistent.env", "high"); err != nil {
+		t.Fatalf("public plain mode: %v", err)
+	}
+	if err := CheckAmpMode(context.Background(), "/nonexistent.env", "a\nb"); err == nil {
+		t.Fatal("public newline mode accepted")
 	}
 }
 

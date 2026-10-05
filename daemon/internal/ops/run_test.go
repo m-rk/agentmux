@@ -2,7 +2,6 @@ package ops
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -127,8 +126,9 @@ func TestRunContinuesThread(t *testing.T) {
 }
 
 // TestRunTitlesNewThread passes --title plus --no-archive-after-execute
-// for a new thread and re-applies the title once it exists; a continue
-// ignores the title entirely.
+// for a new thread, opens the prompt with a one-line "<title>" header so
+// the kickoff notification names the task, and re-applies the title once
+// it exists; a continue ignores the title entirely.
 func TestRunTitlesNewThread(t *testing.T) {
 	newRunEnv(t)
 	id := "T-77777777-7777-4777-8777-777777777777"
@@ -139,7 +139,7 @@ func TestRunTitlesNewThread(t *testing.T) {
 		t.Fatalf("run: %v", rerr)
 	}
 	flat := strings.Join(fake.Argv, " ")
-	if !strings.Contains(flat, "--title AMUX-17 do the thing --no-archive-after-execute") || !strings.HasSuffix(flat, "-x hi") {
+	if !strings.Contains(flat, "--title AMUX-17 do the thing --no-archive-after-execute") || !strings.HasSuffix(flat, "-x AMUX-17 do the thing\n\nhi") {
 		t.Fatalf("argv = %q", flat)
 	}
 	if !fake.RenameSeen || fake.Renamed != "AMUX-17 do the thing" {
@@ -160,6 +160,9 @@ func TestRunContinueIgnoresTitle(t *testing.T) {
 	}
 	if flat := strings.Join(fake.Argv, " "); strings.Contains(flat, "--title") {
 		t.Fatalf("continue names a thread: %q", flat)
+	}
+	if strings.Contains(fake.Argv[len(fake.Argv)-1], "AMUX-17") {
+		t.Fatalf("continue carries a title header: %q", fake.Argv)
 	}
 	if fake.RenameSeen {
 		t.Fatalf("continue renamed: %q", fake.Renamed)
@@ -213,14 +216,69 @@ func TestRunRefusals(t *testing.T) {
 }
 
 func TestRunModeRejection(t *testing.T) {
-	newRunEnv(t, "AGENTMUX_AMP_MODE=bogus-mode")
-	restore, _ := session.AmpSwapForTest("T-66666666-6666-4666-8666-666666666666",
-		errors.New(`amp rejected mode "bogus-mode": Unexpected error inside Amp CLI.`))
+	// A shape-bad mode is refused by the check before anything spawns: no
+	// probe thread, no turn spent. (A newline can't ride the KEY=VALUE
+	// registry file, so the overlong value stands in for a hostile one.)
+	// The fake check runs the real validation, so the refusal comes from
+	// the check itself rather than an injected error.
+	newRunEnv(t, "AGENTMUX_AMP_MODE="+strings.Repeat("x", 300))
+	restore, fake := session.AmpSwapForTest("T-66666666-6666-4666-8666-666666666666", nil)
 	defer restore()
 	_, rerr := Env{}.Run(context.Background(), RunRequest{Address: localAddr(""), Text: "hi"})
 	wantReason(t, rerr, safesend.ReasonInvalid)
-	if !strings.Contains(AsError(rerr).Detail, "Unexpected error") {
+	if !strings.Contains(AsError(rerr).Detail, "limit") {
+		t.Fatalf("detail quotes the check: %v", rerr)
+	}
+	if fake.Checked != 1 {
+		t.Fatalf("checks = %d, want 1", fake.Checked)
+	}
+	if fake.Argv != nil {
+		t.Fatalf("refused run spawned: %q", fake.Argv)
+	}
+}
+
+// TestRunModeCheckSpawnsNothing covers the shape check passing through:
+// a configured mode reaches the real run's argv (which is where amp
+// itself rejects an unknown mode, quoting its own error) without any
+// throwaway thread first — the check records no spawn of its own.
+func TestRunModeCheckSpawnsNothing(t *testing.T) {
+	newRunEnv(t, "AGENTMUX_AMP_MODE=bogus-mode")
+	restore, fake := session.AmpSwapForTest("T-66666666-6666-4666-8666-666666666666", nil)
+	defer restore()
+	_, rerr := Env{}.Run(context.Background(), RunRequest{Address: localAddr(""), Text: "hi"})
+	if rerr != nil {
+		t.Fatalf("run: %v", rerr)
+	}
+	if fake.Checked != 1 {
+		t.Fatalf("checks = %d, want 1", fake.Checked)
+	}
+	if fake.Mode != "bogus-mode" {
+		t.Fatalf("mode = %q", fake.Mode)
+	}
+	if !strings.Contains(strings.Join(fake.Argv, " "), "-m bogus-mode") {
+		t.Fatalf("no -m bogus-mode in %q", fake.Argv)
+	}
+}
+
+// TestRunBadModeFailsAtRealRun covers the real run refusing a mode amp
+// rejects: the spawn writes amp's own error to the log and exits before
+// any init record, so the run is refused as invalid quoting amp — with no
+// throwaway check thread first.
+func TestRunBadModeFailsAtRealRun(t *testing.T) {
+	newRunEnv(t, "AGENTMUX_AMP_MODE=bogus-mode")
+	restore, fake := session.AmpSwapSpawnForTest("T-66666666-6666-4666-8666-666666666666",
+		[]byte("Error: Unexpected error inside Amp CLI.\n"), nil)
+	defer restore()
+	_, rerr := Env{}.Run(context.Background(), RunRequest{Address: localAddr(""), Text: "hi"})
+	wantReason(t, rerr, safesend.ReasonInvalid)
+	if !strings.Contains(AsError(rerr).Detail, `amp rejected mode "bogus-mode"`) {
 		t.Fatalf("detail quotes amp: %v", rerr)
+	}
+	if fake.Checked != 1 {
+		t.Fatalf("checks = %d, want 1", fake.Checked)
+	}
+	if !strings.Contains(strings.Join(fake.Argv, " "), "-m bogus-mode") {
+		t.Fatalf("no -m bogus-mode in %q", fake.Argv)
 	}
 }
 
