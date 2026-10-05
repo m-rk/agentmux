@@ -475,7 +475,7 @@ type gitRunnerFunc func(ctx context.Context, dir string, args ...string) (string
 // dropping to the run user via runas, anything else a clear refusal.
 // Git and worktree operations must never run as root: a root git rewrote
 // the template repo's config and packed-refs root-owned (confirmed live
-// on mproject2000), breaking every later unprivileged fetch.
+// on a Linux host), breaking every later unprivileged fetch.
 func gitRunner(runUser string) gitRunnerFunc {
 	return func(ctx context.Context, dir string, args ...string) (string, error) {
 		var cmd *exec.Cmd
