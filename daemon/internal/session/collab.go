@@ -122,6 +122,11 @@ func syncCollaboration(name string) error {
 		if err != nil || strings.TrimSpace(string(currentKey)) != strings.TrimSpace(string(sessionKeyBytes)) {
 			return nil
 		}
+		if safesend.Classify(agent, string(pane)) == safesend.StateDraft {
+			// Someone's real draft (or a stuck earlier paste): typing on top of it
+			// would merge the two. Skip; the next tick retries.
+			return nil
+		}
 		if err := deliverCollabPrompt(tmux, socket, session, agent, delivery.Prompt); err != nil {
 			return fmt.Errorf("delivering Discord collaboration to %s: %w", session, err)
 		}
@@ -202,6 +207,9 @@ func collaborationPaneSafe(agent, pane string) bool {
 // before Enter, and between submit checks.
 var collabSubmitSettle = 300 * time.Millisecond
 
+// collabSubmitAttempts bounds the Enter retries before the paste is cleared.
+const collabSubmitAttempts = 3
+
 // deliverCollabPrompt pastes prompt as one bracketed paste (Claude Code folds
 // a multi-line paste into "[Pasted text #1 +N lines]" and absorbs an Enter
 // sent in the same tmux call), presses Enter after a settle delay, and then
@@ -219,7 +227,7 @@ func deliverCollabPrompt(tmux func(args ...string) *exec.Cmd, socket, session, a
 		_ = tmux("-L", socket, "delete-buffer", "-b", buffer).Run()
 		return fmt.Errorf("pasting digest: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < collabSubmitAttempts; attempt++ {
 		time.Sleep(collabSubmitSettle)
 		if out, err := tmux("-L", socket, "send-keys", "-t", session, "Enter").CombinedOutput(); err != nil {
 			return fmt.Errorf("submitting digest: %w: %s", err, strings.TrimSpace(string(out)))
@@ -233,5 +241,28 @@ func deliverCollabPrompt(tmux func(args ...string) *exec.Cmd, socket, session, a
 			return nil
 		}
 	}
-	return fmt.Errorf("digest still unsent in the input line after submitting")
+	// Never leave our own paste behind: it would block the next send (or a
+	// human) with what looks like a real draft. Pane was draft-free before the
+	// paste (checked by the caller under the input lock), so whatever is in the
+	// input line now is ours. One C-c clears Claude Code's input without
+	// exiting (it only exits on an empty line); C-u covers other TUIs.
+	cleared := clearCollabDraft(tmux, socket, session, agent)
+	if cleared {
+		return fmt.Errorf("digest was not submitted; cleared it from the input line, will retry next tick")
+	}
+	return fmt.Errorf("digest still unsent in the input line after submitting, and clearing it failed")
+}
+
+// clearCollabDraft empties the input line and reports whether the pane no
+// longer shows a draft.
+func clearCollabDraft(tmux func(args ...string) *exec.Cmd, socket, session, agent string) bool {
+	for _, key := range []string{"C-c", "C-u"} {
+		_ = tmux("-L", socket, "send-keys", "-t", session, key).Run()
+		time.Sleep(collabSubmitSettle)
+		pane, err := tmux("-L", socket, "capture-pane", "-p", "-t", session).Output()
+		if err == nil && safesend.Classify(agent, string(pane)) != safesend.StateDraft {
+			return true
+		}
+	}
+	return false
 }

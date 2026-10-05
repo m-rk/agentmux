@@ -86,4 +86,17 @@ func TestDeliverCollabPrompt(t *testing.T) {
 	if err := deliverCollabPrompt(stuck.cmd, "sock", "sess", "claude-code", "a\nb"); err == nil {
 		t.Fatal("an unsent draft must not count as delivered")
 	}
+	if !strings.Contains(strings.Join(stuck.calls, "|"), "send-keys -t sess C-c") {
+		t.Fatalf("unsent paste was not cleared: %v", stuck.calls)
+	}
+
+	// Cleared by the first C-c: error, but no C-u.
+	cleared := &collabFakeTmux{captures: []string{"❯ [Pasted text #1 +9 lines]\n", "❯ [Pasted text #1 +9 lines]\n", "❯ [Pasted text #1 +9 lines]\n", "❯ \n"}}
+	err := deliverCollabPrompt(cleared.cmd, "sock", "sess", "claude-code", "a\nb")
+	if err == nil || !strings.Contains(err.Error(), "cleared") {
+		t.Fatalf("want a cleared-and-retry error, got %v", err)
+	}
+	if strings.Contains(strings.Join(cleared.calls, "|"), "C-u") {
+		t.Fatalf("C-u sent after C-c already cleared the draft: %v", cleared.calls)
+	}
 }
