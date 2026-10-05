@@ -137,7 +137,7 @@ func (c *Client) ListRelevantThreads(ctx context.Context, project string) ([]Cha
 	byID := map[string]Channel{}
 	for _, thread := range append(active.Threads, archived.Threads...) {
 		if hasTag(thread.AppliedTags, askTag) {
-			continue // asks are for Mark, never session context
+			continue // asks are for the configured user, never session context
 		}
 		if thread.ParentID == c.Config.ForumChannelID && ThreadRelevant(thread.Name, project) {
 			byID[thread.ID] = thread
