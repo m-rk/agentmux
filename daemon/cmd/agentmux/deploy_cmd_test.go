@@ -115,3 +115,54 @@ func TestSmokeCreateSkippableOnlyForbidden(t *testing.T) {
 		}
 	}
 }
+
+// TestSmokeRunSkippable pins the AMUX-27 matrix: a forbidden run always
+// skips (the fleet's run grants cover task-* sessions only); a not_found
+// run skips only when the create already failed, because the smoke
+// session was never made (dry-run creates make nothing). After a passed
+// create a not_found run is a real failure — the smoke name should
+// exist; anything else refuses as a failure either way.
+func TestSmokeRunSkippable(t *testing.T) {
+	if !smokeRunSkippable(ops.Refuse(safesend.ReasonForbidden, "nope"), true) {
+		t.Error("forbidden run after passed create: want skippable")
+	}
+	if !smokeRunSkippable(ops.Refuse(safesend.ReasonForbidden, "nope"), false) {
+		t.Error("forbidden run after failed create: want skippable")
+	}
+	if !smokeRunSkippable(ops.Refuse(safesend.ReasonNotFound, "nope"), false) {
+		t.Error("not_found run after failed create: want skippable")
+	}
+	if smokeRunSkippable(ops.Refuse(safesend.ReasonNotFound, "nope"), true) {
+		t.Error("not_found run after passed create: want failing, not skippable")
+	}
+	for _, reason := range []safesend.Reason{
+		safesend.ReasonFailed, safesend.ReasonInvalid,
+		safesend.ReasonNotLocal, safesend.ReasonRateLimited,
+		safesend.ReasonUnsupported,
+	} {
+		if smokeRunSkippable(ops.Refuse(reason, "nope"), true) {
+			t.Errorf("reason %q after passed create: want failing, not skippable", reason)
+		}
+		if smokeRunSkippable(ops.Refuse(reason, "nope"), false) {
+			t.Errorf("reason %q after failed create: want failing, not skippable", reason)
+		}
+	}
+}
+
+// TestDeployAmpNamesKeepsOnlyAmp sorts the no-checkout skip: it names the
+// amp instances whose workdirs were all outside checkouts, not the
+// unrelated sessions around them.
+func TestDeployAmpNamesKeepsOnlyAmp(t *testing.T) {
+	sessions := []ops.Session{
+		{Name: "web", Agent: "claude-code"},
+		{Name: "a1", Agent: "amp"},
+		{Name: "a2", Agent: "amp"},
+	}
+	got := deployAmpNames(sessions)
+	if len(got) != 2 || got[0] != "a1" || got[1] != "a2" {
+		t.Errorf("deployAmpNames = %q, want [a1 a2]", got)
+	}
+	if len(deployAmpNames(nil)) != 0 {
+		t.Error("deployAmpNames(nil) is not empty")
+	}
+}

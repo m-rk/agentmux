@@ -85,6 +85,16 @@ func runGit(ctx context.Context, dir string, args ...string) (string, error) {
 	return runGitAs(ctx, "", dir, args...)
 }
 
+// GitTopLevel resolves dir to its repository top level, running git as
+// runUser ("": the current user) — the read-only half of runGitAs, for
+// callers that probe a checkout without an Env at hand. Deploy's default
+// template check uses it so the probe mirrors the create's own template
+// check, including the drop from root to the run user (AMUX-23: a root
+// git rewrites the repo's config and packed-refs root-owned).
+func GitTopLevel(ctx context.Context, runUser, dir string) (string, error) {
+	return runGitAs(ctx, runUser, dir, "rev-parse", "--show-toplevel")
+}
+
 // asUser returns an Env whose git work runs as runUser (dropping root's
 // privilege), for callers already running as root — the deploy smoke test
 // (see AMUX-23: a root git would rewrite the repo's config and

@@ -374,11 +374,14 @@ const defaultSmokeName = "task-smoke-deploy"
 // or threads would spam the fleet on every deploy; the dry runs exercise
 // the same code paths short of the spawn.
 //
-// A host whose gateway refuses the create as forbidden gets the create
-// skipped, not failed: its grant grants this host no create pattern that
+// The create copies a template instance; the run targets the smoke name,
+// not the template — the fleet's run grants cover task-* sessions only,
+// so running on the template is refused as forbidden (AMUX-27). A host
+// whose gateway refuses the create or the run as forbidden gets that
+// check skipped, not failed: its grant grants this host no pattern that
 // fits the smoke name, and widening the grant is not deploy's call. The
-// run check still runs there. The skip names the fix: add a grant for a
-// name deploy may use, or pick one with -smoke-name.
+// skip names the fix: add a grant for a name deploy may use, or pick one
+// with -smoke-name.
 func deploySmokeTest(ctx context.Context, socketPath, hostsPath, template, base, smokeName string) error {
 	hostsPath, source := deployHostsPath(hostsPath)
 	fmt.Printf("deploy: hosts file %s (from %s)\n", hostsPath, source)
@@ -408,9 +411,13 @@ func deploySmokeTest(ctx context.Context, socketPath, hostsPath, template, base,
 }
 
 // deploySmokeHost runs the smoke check on one host: a dry-run create of
-// the smoke instance, then a dry-run run on the template. A forbidden
-// create is skipped, not failed (see deploySmokeTest); anything else that
-// fails fails the deploy.
+// the smoke instance from the template, then a dry-run run on the smoke
+// name (not the template — the fleet's run grants cover task-* sessions
+// only; see deploySmokeTest). A forbidden create or run is skipped, not
+// failed; anything else that fails fails the deploy.
+//
+// A skipped run after a passed create reports both: the create proved
+// the dispatch path, the run just has no grant for the smoke name yet.
 func deploySmokeHost(ctx context.Context, socketPath string, t deployTarget, local, template, base, smokeName string) error {
 	tmpl := template
 	if tmpl == "" {
@@ -428,6 +435,10 @@ func deploySmokeHost(ctx context.Context, socketPath string, t deployTarget, loc
 	if _, err := address.Parse(tmplAddr); err != nil {
 		return fmt.Errorf("bad template %q: %w", tmplAddr, err)
 	}
+	runAddr := smokeName + "@" + t.name
+	if _, err := address.Parse(runAddr); err != nil {
+		return fmt.Errorf("bad run address %q: %w", runAddr, err)
+	}
 	branch := "smoke/deploy-" + time.Now().Format("20060102-150405")
 	creq := ops.CreateRequest{
 		Template: tmplAddr, Instance: smokeName,
@@ -443,14 +454,26 @@ func deploySmokeHost(ctx context.Context, socketPath string, t deployTarget, loc
 		fmt.Printf("deploy: smoke %-12s skipped (no create grant for a smoke name: %s; grant a task-* create or rerun with -smoke-name NAME)\n", t.name, e.Detail)
 	}
 	rreq := ops.RunRequest{
-		Address: tmplAddr,
+		Address: runAddr,
 		Text:    "deploy smoke test: reply with exactly: ok",
 		DryRun:  true,
 	}
-	rres, err := deployRunOn(ctx, socketPath, t, local, rreq)
-	if err != nil {
-		e := ops.AsError(err)
-		return fmt.Errorf("smoke %s: dry-run run: %s: %s", t.name, e.Reason, e.Detail)
+	rres, rerr := deployRunOn(ctx, socketPath, t, local, rreq)
+	if rerr != nil && smokeRunSkippable(rerr, cerr == nil) {
+		e := ops.AsError(rerr)
+		switch {
+		case cerr != nil:
+			fmt.Printf("deploy: smoke %-12s skipped (no grant for a run of smoke name %s: %s; grant a task-* run or rerun with -smoke-name NAME)\n",
+				t.name, smokeName, e.Detail)
+		default:
+			fmt.Printf("deploy: smoke %-12s create ok (origin/%s @ %.12s) run skipped (no grant for a run of smoke name %s: %s; grant a task-* run or rerun with -smoke-name NAME)\n",
+				t.name, cres.Base, cres.BaseCommit, smokeName, e.Detail)
+		}
+		return nil
+	}
+	if rerr != nil {
+		e := ops.AsError(rerr)
+		return fmt.Errorf("smoke %s: dry-run run of %s: %s: %s", t.name, runAddr, e.Reason, e.Detail)
 	}
 	if cerr != nil {
 		fmt.Printf("deploy: smoke %-12s create skipped (no grant) run ok (%s)\n",
@@ -470,37 +493,140 @@ func smokeCreateSkippable(err error) bool {
 	return ops.AsError(err).Reason == safesend.ReasonForbidden
 }
 
+// smokeRunSkippable reports whether a failed smoke run is a skip, not a
+// deploy failure. When the dry-run create failed (skipped), the smoke
+// session was never made, so the run against it stops at a not_found:
+// nothing ran, nothing broke, and the host is skipped with the fix. A
+// forbidden run skips on its own: the remote grants run only on task-*
+// sessions, and a grant that doesn't cover the smoke name is not deploy's
+// call to widen. When the create passed, a not_found run is a real
+// failure — the smoke instance should exist.
+func smokeRunSkippable(err error, createPassed bool) bool {
+	switch ops.AsError(err).Reason {
+	case safesend.ReasonForbidden:
+		return true
+	case safesend.ReasonNotFound:
+		return !createPassed
+	default:
+		return false
+	}
+}
+
 // deployHostTemplate resolves the smoke template for one host: that host's
-// first amp instance, else its first instance. Empty when the host has
+// first amp instance whose workdir is a Git checkout, else its first
+// instance. A non-checkout workdir can never be a create template (the
+// dry-run create would refuse it as unsupported), so the default skips
+// past it; a host whose amp instances are all outside checkouts is
+// skipped with a reason naming them. An explicitly flagged -template is
+// used as-is — its create refusal is the signal. Empty when the host has
 // none. Remote hosts are listed through their gateway.
 func deployHostTemplate(ctx context.Context, socketPath string, t deployTarget, local string) (string, error) {
-	var sessions []ops.Session
-	if t.name != local {
-		if t.gateway == "" {
-			return "", ops.Refuse(safesend.ReasonNotLocal, "host %q has no gateway in hosts.yaml", t.name)
-		}
-		c := &gatewayclient.Client{BaseURL: t.gateway, HTTP: &http.Client{}, Host: t.name}
-		res, err := c.List(ctx)
-		if err != nil {
-			return "", err
-		}
-		sessions = res.Sessions
-	} else {
-		var err error
-		sessions, err = ops.Env{SocketPath: socketPath}.List(ctx)
-		if err != nil {
-			return "", err
-		}
+	sessions, err := deployHostSessions(ctx, socketPath, t, local)
+	if err != nil {
+		return "", err
 	}
 	for _, s := range sessions {
-		if s.Agent == "amp" {
-			return s.Name, nil
+		if s.Agent != "amp" {
+			continue
 		}
+		if ok, err := deployWorkdirIsCheckout(ctx, socketPath, t, local, s); err != nil || !ok {
+			continue
+		}
+		return s.Name, nil
+	}
+	if names := deployAmpNames(sessions); len(names) > 0 {
+		return "", ops.Refuse(safesend.ReasonUnsupported,
+			"host %q has amp instances but none in a Git checkout: %s", t.name, strings.Join(names, ", "))
 	}
 	if len(sessions) > 0 {
 		return sessions[0].Name, nil
 	}
 	return "", nil
+}
+
+// deployAmpNames names a host's amp instances for the no-checkout skip.
+func deployAmpNames(sessions []ops.Session) []string {
+	var out []string
+	for _, s := range sessions {
+		if s.Agent == "amp" {
+			out = append(out, s.Name)
+		}
+	}
+	return out
+}
+
+// deployHostSessions lists one host's instances: locally, or through
+// its gateway for a remote host.
+func deployHostSessions(ctx context.Context, socketPath string, t deployTarget, local string) ([]ops.Session, error) {
+	if t.name != local {
+		if t.gateway == "" {
+			return nil, ops.Refuse(safesend.ReasonNotLocal, "host %q has no gateway in hosts.yaml", t.name)
+		}
+		c := &gatewayclient.Client{BaseURL: t.gateway, HTTP: &http.Client{}, Host: t.name}
+		res, err := c.List(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return res.Sessions, nil
+	}
+	return ops.Env{SocketPath: socketPath}.List(ctx)
+}
+
+// deployWorkdirIsCheckout reports whether a session's workdir is inside
+// a Git checkout. Sessions carry their workdir in the list reply, so no
+// registry read is needed; an empty workdir is never a checkout. A
+// checkout check runs on the host that owns the session: locally the
+// deploy caller can only stat its own filesystem, and a remote caller
+// can't reach the remote workdir at all. The remote probe is a dry-run
+// create of a throwaway smoke name against the candidate template: it
+// exercises the real template path on the remote host (registry,
+// run-user drop, rev-parse) and creates nothing. A forbidden probe
+// answers nothing about the workdir — the grant, not the template,
+// refused — so it reads as a pass and lets the real create decide.
+//
+// The probe's instance name must fit the fleet's task-* create grants
+// (AMUX-26); its branch is never made, so any valid name not colliding
+// with the smoke name would do.
+func deployWorkdirIsCheckout(ctx context.Context, socketPath string, t deployTarget, local string, s ops.Session) (bool, error) {
+	if s.Workdir == "" {
+		return false, nil
+	}
+	if t.name == local {
+		// Mirror ops.Create's template check: the workdir must resolve
+		// to a repository top level. Deploy runs as root, so the git
+		// probe drops to the run user exactly like the create's own git
+		// work does (see ops.Env.asUser) — a root git would rewrite the
+		// repo's config and packed-refs root-owned (AMUX-23).
+		runUser := deployRunUser()
+		env := ops.Env{SocketPath: socketPath}
+		if env.Git != nil {
+			top, err := env.Git(ctx, s.Workdir, "rev-parse", "--show-toplevel")
+			return err == nil && top != "", nil
+		}
+		if runUser == "" {
+			top, err := ops.GitTopLevel(ctx, "", s.Workdir)
+			return err == nil && top != "", nil
+		}
+		top, err := ops.GitTopLevel(ctx, runUser, s.Workdir)
+		return err == nil && top != "", nil
+	}
+	probe := ops.CreateRequest{
+		Template: s.Name + "@" + t.name, Instance: "task-smoke-probe",
+		Branch: "smoke/deploy-probe", DryRun: true,
+	}
+	_, err := deployCreateOn(ctx, socketPath, t, local, probe)
+	if err == nil {
+		return true, nil
+	}
+	e := ops.AsError(err)
+	if e.Reason == safesend.ReasonForbidden {
+		// The grant refused before the template was examined.
+		return true, nil
+	}
+	if e.Reason == safesend.ReasonUnsupported && strings.Contains(e.Detail, "is not in a Git checkout") {
+		return false, nil
+	}
+	return false, err
 }
 
 // deployCreateOn runs a create on one host, locally or through its

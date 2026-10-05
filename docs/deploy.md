@@ -43,18 +43,25 @@ sudo agentmux deploy -template agentmux-amp -base main
 
 The smoke test never creates sessions or threads: it exercises the same
 code paths short of the spawn. `-template` names the instance to copy on
-each host (default: that host's first amp instance, else its first
-instance); hosts with no instances are skipped, and a host with no gateway
-fails with `not_local`.
+each host (default: that host's first amp instance whose workdir is a Git
+checkout, else its first instance); hosts with no instances are skipped,
+and a host with no gateway fails with `not_local`. A host whose amp
+instances all live outside checkouts is skipped with a reason naming
+them — no checkout can supply the create's template.
 
 The dry-run create names the `task-smoke-deploy` instance, so it fits the
 fleet's gateway create grants (`task-*@<host>`); the grant stays narrow by
 design (AMUX-26). `-smoke-name NAME` picks another name when a host grants
-a different pattern. A host whose gateway still refuses the create as
-forbidden is reported as skipped — `deploy: smoke <host> skipped (no
-create grant for a smoke name: ...; grant a task-* create or rerun with
--smoke-name NAME)` — and its run check still runs, rather than failing the
-deploy.
+a different pattern. The dry-run run targets the smoke name too, not the
+template — the fleet's run grants cover `task-*` sessions only (AMUX-27).
+A host whose gateway still refuses the create as forbidden is reported as
+skipped — `deploy: smoke <host> skipped (no create grant for a smoke name:
+...; grant a task-* create or rerun with -smoke-name NAME)` — and its run
+check still runs against the smoke name, rather than failing the deploy.
+A forbidden run skips the same way; a run that finds no smoke session
+after a skipped create skips as well, since the dry-run create made
+nothing. Only a run that finds no session after a passed create fails —
+the smoke name should exist.
 
 ```text
 deploy: pinned /usr/local/bin/agentmux (5b7072e48fe8)
@@ -64,7 +71,7 @@ deploy: agentmuxd.service                pid 1816454 ok 5b7072e48fe8
 deploy: agentmux-gateway.service         pid 1816462 ok 5b7072e48fe8
 deploy: agentmux-threadwatch.service    pid 1816478 ok 5b7072e48fe8
 deploy: every service runs 5b7072e48fe8
-deploy: smoke build-box   create ok (origin/main @ 9fceb02d0ae5) run ok (start amp thread on web@build-box)
+deploy: smoke build-box   create ok (origin/main @ 9fceb02d0ae5) run ok (start amp thread on task-smoke-deploy@build-box)
 deploy: smoke test passed on every host
 ```
 
