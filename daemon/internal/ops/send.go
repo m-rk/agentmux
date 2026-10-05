@@ -27,6 +27,9 @@ type SendRequest struct {
 	Correlation string
 	Wait        time.Duration // wait out a busy session for up to this long
 	Confirm     time.Duration // watch this long for the turn starting
+	// Doorbell makes the send a wake-up nudge: if the session is busy, or
+	// already holds an undelivered doorbell, succeed without sending.
+	Doorbell bool
 }
 
 // SendResult is the outcome, on success and on refusal.
@@ -42,7 +45,10 @@ type SendResult struct {
 	// Confirmed is true when the session was seen to start a turn after the
 	// submit (or amp returned the thread). False means submitted but not
 	// observed, not that it failed.
-	Confirmed   bool   `json:"confirmed"`
+	Confirmed bool `json:"confirmed"`
+	// Coalesced is true when a doorbell send succeeded without sending
+	// because the session was busy or already had a doorbell waiting.
+	Coalesced   bool   `json:"coalesced,omitempty"`
 	Bytes       int    `json:"bytes,omitempty"`
 	SHA256      string `json:"sha256,omitempty"`
 	Correlation string `json:"correlation,omitempty"`
@@ -125,7 +131,7 @@ func (e Env) Send(ctx context.Context, req SendRequest) SendResult {
 	if src.Agent == "amp" {
 		err = sendAmp(ctx, src, addr, message, req.Wait, &res)
 	} else {
-		err = e.sendTmux(ctx, addr.Instance, src.Agent, message, req.Wait, req.Confirm, &res)
+		err = e.sendTmux(ctx, addr.Instance, src.Agent, message, req.Wait, req.Confirm, req.Doorbell, &res)
 	}
 	outcome, detail := "delivered", ""
 	if err != nil {
@@ -151,7 +157,7 @@ func checkAuditWritable(path string) error {
 
 // sendTmux delivers to a TUI agent through the local daemon: check the pane,
 // paste as one message, submit, then watch for the turn starting.
-func (e Env) sendTmux(ctx context.Context, instance, agent, message string, wait, confirm time.Duration, res *SendResult) error {
+func (e Env) sendTmux(ctx context.Context, instance, agent, message string, wait, confirm time.Duration, doorbell bool, res *SendResult) error {
 	c, err := e.dial()
 	if err != nil {
 		return err
@@ -183,6 +189,10 @@ ready:
 		case safesend.StateReady:
 			break ready
 		case safesend.StateBusy:
+			if doorbell {
+				res.Coalesced = true
+				return nil
+			}
 			if time.Now().Before(deadline) {
 				time.Sleep(2 * time.Second)
 				continue
@@ -191,6 +201,10 @@ ready:
 		case safesend.StatePrompt:
 			return Refuse(safesend.ReasonPrompt, "%s is showing a prompt that needs a person", instance)
 		case safesend.StateDraft:
+			if doorbell && safesend.PendingPaste(agent, pane.Content) {
+				res.Coalesced = true
+				return nil
+			}
 			return Refuse(safesend.ReasonDraft, "%s has unsent text in its input box", instance)
 		default:
 			return Refuse(safesend.ReasonUnsupported, "no readiness check for agent %q", agent)

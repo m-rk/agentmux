@@ -175,3 +175,20 @@ func TestAuditNeverHoldsText(t *testing.T) {
 		t.Fatalf("modes %v %v", info.Mode().Perm(), dir.Mode().Perm())
 	}
 }
+
+func TestPendingPaste(t *testing.T) {
+	pasted := strings.Replace(claudeDraft, "❯ make a throwaway vault and try it", "❯ [Pasted text #1 +3 lines]", 1)
+	for _, tc := range []struct {
+		name, agent, pane string
+		want              bool
+	}{
+		{"pasted doorbell", "claude-code", pasted, true},
+		{"idle", "claude-code", claudeIdle, false},
+		{"typed draft", "claude-code", claudeDraft, false},
+		{"other agent", "opencode", pasted, false},
+	} {
+		if got := PendingPaste(tc.agent, tc.pane); got != tc.want {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

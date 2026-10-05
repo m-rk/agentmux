@@ -31,18 +31,19 @@ func runSessionsSend(args []string) {
 	correlation := fs.String("correlation", "", "opaque id recorded in the audit log, not in the message")
 	file := fs.String("file", "", "read the message from this file (\"-\" for stdin) instead of the argument")
 	wait := fs.Duration("wait", 0, "if the session is busy, wait up to this long for it to finish before refusing")
+	doorbell := fs.Bool("doorbell", false, "wake-up nudge: if the session is busy or already has an undelivered doorbell, succeed without sending")
 	confirm := fs.Duration("confirm", 15*time.Second, "how long to watch for the session starting a turn")
 	socketPath := fs.String("socket", daemoninstall.SocketPath(), "Unix socket of the local agentmuxd")
 	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml with the gateway URL of other hosts")
 	fs.Parse(args)
 	if fs.NArg() < 1 || fs.NArg() > 2 || (fs.NArg() == 2) == (*file != "") {
-		fmt.Fprintln(os.Stderr, "usage: agentmux sessions send -by PRINCIPAL [-via relayed|dispatched|sent] [-from REF] [-correlation ID] [-hosts PATH] [-wait DUR] [-json] <instance>@<host>[#<thread>] (TEXT | -file PATH|-)")
+		fmt.Fprintln(os.Stderr, "usage: agentmux sessions send -by PRINCIPAL [-via relayed|dispatched|sent] [-from REF] [-correlation ID] [-hosts PATH] [-wait DUR] [-doorbell] [-json] <instance>@<host>[#<thread>] (TEXT | -file PATH|-)")
 		os.Exit(2)
 	}
 
 	req := ops.SendRequest{
 		Address: fs.Arg(0), Via: *via, By: *by, From: *from,
-		Correlation: *correlation, Wait: *wait, Confirm: *confirm,
+		Correlation: *correlation, Wait: *wait, Confirm: *confirm, Doorbell: *doorbell,
 	}
 	var res ops.SendResult
 	text, err := readSendText(fs.Arg(1), *file)
@@ -60,7 +61,11 @@ func runSessionsSend(args []string) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), *wait+*confirm+gatewayclient.SendMargin+time.Minute)
 		defer cancel()
-		res = route.Remote.Send(ctx, remoteSendRequest(req))
+		if req.Doorbell {
+			res = ops.SendResult{Address: req.Address, Reason: safesend.ReasonUnsupported, Detail: "-doorbell is not supported for remote sessions yet", Correlation: req.Correlation}
+		} else {
+			res = route.Remote.Send(ctx, remoteSendRequest(req))
+		}
 	default:
 		req.Text = text
 		ctx, cancel := context.WithTimeout(context.Background(), *wait+*confirm+3*time.Minute)
@@ -72,7 +77,9 @@ func runSessionsSend(args []string) {
 		writeJSON(res)
 	} else if res.OK {
 		state := "submitted; turn start not observed"
-		if res.Confirmed {
+		if res.Coalesced {
+			state = "coalesced; not sent"
+		} else if res.Confirmed {
 			state = "confirmed"
 		}
 		fmt.Printf("delivered to %s (%s)\n", res.Address, state)

@@ -129,6 +129,22 @@ func Classify(agent, pane string) State {
 	return StateReady
 }
 
+// PendingPaste reports whether a claude-code pane's input line holds an
+// already-pasted, unsubmitted message (Claude Code collapses a paste to
+// "[Pasted text #N +M lines]"). A doorbell send treats that as a doorbell
+// still waiting to be delivered.
+func PendingPaste(agent, pane string) bool {
+	if agent != "claude-code" {
+		return false
+	}
+	plain := ansiSeq.ReplaceAllString(pane, "")
+	m := claudeInput.FindAllStringSubmatch(lastLines(strings.Split(strings.TrimRight(plain, "\n"), "\n"), promptLines), -1)
+	if len(m) == 0 {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimSpace(m[len(m)-1][1]), "[Pasted text")
+}
+
 var ansiSeq = regexp.MustCompile(`\x1b\[[0-9;:?]*[ -/]*[@-~]`)
 
 // suggestionOnly reports whether the last input line holds nothing but

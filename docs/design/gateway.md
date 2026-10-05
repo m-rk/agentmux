@@ -258,7 +258,7 @@ Each phase is shippable and useful alone.
 
    ```text
    agentmux sessions send -by PRINCIPAL [-via relayed|dispatched|sent] [-from REF]
-                          [-correlation ID] [-wait DUR] [-confirm DUR] [-json]
+                          [-correlation ID] [-wait DUR] [-confirm DUR] [-doorbell] [-json]
                           <instance>@<host>[#<thread>] (TEXT | -file PATH|-)
    ```
 
@@ -278,6 +278,12 @@ Each phase is shippable and useful alone.
      back in `thread`.
    - `-wait` polls a busy session until it finishes; without it, busy is an
      immediate refusal.
+   - `-doorbell` marks the send as a wake-up nudge for a session that drains
+     its own queue (see [orchestrator-instance.md](../orchestrator-instance.md)).
+     If the session is busy, or its input box already holds a pasted,
+     unsubmitted message, the send succeeds without sending and the result
+     has `coalesced: true`. A prompt or someone's typed draft still refuses.
+     Local sessions only for now.
    - Every attempt after validation appends to
      `~/.local/state/agentmux/send-audit.jsonl` (0600): time, principal,
      verb, source, address, thread, correlation, byte count, SHA-256 of the
