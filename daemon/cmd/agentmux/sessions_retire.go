@@ -79,7 +79,7 @@ func runSessionsRetire(args []string) {
 		fmt.Printf("removed worktree %s\n", res.Workdir)
 	}
 	if res.BranchDeleted {
-		fmt.Printf("deleted branch %s (main contained it)\n", res.Branch)
+		fmt.Printf("deleted branch %s (upstream contains it)\n", res.Branch)
 	} else if res.BranchKept != "" {
 		fmt.Printf("kept branch %s: %s\n", res.Branch, res.BranchKept)
 	}

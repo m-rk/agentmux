@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -270,11 +271,64 @@ func TestAmpCommandPlain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(cmd.Args, []string{"amp", "threads", "list", "--json"}) {
-		t.Errorf("argv: %v", cmd.Args)
+	if got := cmd.Args[len(cmd.Args)-3:]; !reflect.DeepEqual(got, []string{"threads", "list", "--json"}) {
+		t.Errorf("argv tail: %v (full argv %v)", got, cmd.Args)
 	}
 	if cmd.Stdin == nil {
 		t.Error("stdin not set to an empty reader")
+	}
+}
+
+// TestAmpCommandFindsNpmGlobalAmp covers a host where amp lives in the
+// run user's ~/.npm-global/bin while the daemon runs with a minimal
+// ambient PATH. ampCommand must resolve it through the fixed-up PATH
+// (the same way session launch does), not fail with
+// "executable file not found in $PATH".
+func TestAmpCommandFindsNpmGlobalAmp(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh")
+	}
+	home := t.TempDir()
+	bin := filepath.Join(home, ".npm-global", "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ampPath := filepath.Join(bin, "amp")
+	if err := os.WriteFile(ampPath, []byte("#!/bin/sh\necho amp-stub\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", "/nonexistent-minimal-path")
+	cmd, err := ampCommand(context.Background(), Source{Home: home}, "threads", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd.Path != ampPath {
+		t.Errorf("cmd.Path = %q, want %q (should resolve via ~/.npm-global/bin despite the minimal ambient PATH)", cmd.Path, ampPath)
+	}
+	if cmd.Err != nil {
+		t.Errorf("cmd.Err = %v, want nil", cmd.Err)
+	}
+}
+
+// TestAmpCommandRunUserDropsPrivileges checks the run-user branch: with
+// RunUser set to the current user, amp resolves through runas.Command
+// (same-user path, no credential change) rather than the ambient PATH.
+func TestAmpCommandRunUserDropsPrivileges(t *testing.T) {
+	u, err := user.Current()
+	if err != nil {
+		t.Skip("no current user")
+	}
+	cmd, err := ampCommand(context.Background(),
+		Source{Home: u.HomeDir, RunUser: u.Username}, "threads", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd.Stdin == nil {
+		t.Error("stdin not set")
+	}
+	if cmd.Err != nil {
+		t.Errorf("cmd.Err = %v, want nil for a resolvable run user", cmd.Err)
 	}
 }
 
@@ -293,8 +347,10 @@ func TestAmpCommandWrapsInOp(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"op", "run", "--env-file=/envs/x.env", "--", "/usr/bin/env", "-u", "OP_SERVICE_ACCOUNT_TOKEN", "amp", "threads", "export", ampT1}
-	if !reflect.DeepEqual(cmd.Args, want) {
-		t.Errorf("argv: %v", cmd.Args)
+	// runas resolves the binary to an absolute path (the same fixed-up
+	// PATH session launch uses), so only the tail is stable.
+	if got := cmd.Args[len(cmd.Args)-len(want)+1:]; !reflect.DeepEqual(got, want[1:]) {
+		t.Errorf("argv tail: %v (full argv %v)", got, cmd.Args)
 	}
 	for _, a := range cmd.Args {
 		if strings.Contains(a, tok) {
@@ -343,8 +399,16 @@ func TestAmpExecStdinEmpty(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("no sh")
 	}
+	// runas builds its PATH from HOME plus the ambient PATH, so the stub
+	// dir must be visible both ways: via HOME's fixed-up entries and via
+	// the ambient PATH (which runas appends verbatim).
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".local", "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	out, err := ampExec(context.Background(), Source{Home: t.TempDir()}, "threads", "list", "--json")
+	out, err := ampExec(context.Background(), Source{Home: home}, "threads", "list", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}

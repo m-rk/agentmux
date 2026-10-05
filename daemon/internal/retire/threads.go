@@ -29,6 +29,7 @@ func ampSource(instance string, fields map[string]string) transcript.Source {
 		Instance:    instance,
 		Agent:       "amp",
 		Workdir:     fields["AGENTMUX_WORKDIR"],
+		RunUser:     fields["AGENTMUX_RUN_USER"],
 		AmpRunnerID: fields["AGENTMUX_AMP_RUNNER_ID"],
 	}
 	home := ""

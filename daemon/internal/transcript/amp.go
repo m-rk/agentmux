@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/m-rk/agentmux/daemon/internal/runas"
 	"github.com/m-rk/agentmux/daemon/internal/threadwatch"
 )
 
@@ -75,10 +76,24 @@ var ampExec = func(ctx context.Context, src Source, args ...string) ([]byte, err
 // is set on the child's environment only (never argv) and stripped again by
 // `env -u` before amp starts. stdin is empty because with stdin open the CLI
 // waits and fails with "Timeout while reading from stdin".
+//
+// The binaries resolve the way session launch resolves them —
+// runas.Command for the run user (privilege-dropped, run-user PATH) or
+// runas.CurrentUserCommand when no run user is set — not a bare
+// exec.Command: the daemon runs with a minimal ambient PATH, while run
+// users install amp into ~/.npm-global/bin, so a bare lookup fails with
+// "executable file not found in $PATH" for exactly the users retire
+// must serve.
 func ampCommand(ctx context.Context, src Source, args ...string) (*exec.Cmd, error) {
+	build := func(name string, args ...string) *exec.Cmd {
+		if src.RunUser != "" {
+			return runas.CommandContext(ctx, src.RunUser, name, args...)
+		}
+		return runas.CurrentUserCommandContext(ctx, name, args...)
+	}
 	var cmd *exec.Cmd
 	if src.AmpEnvFile == "" {
-		cmd = exec.CommandContext(ctx, "amp", args...)
+		cmd = build("amp", args...)
 	} else {
 		tok, err := ampOpToken(src.Home)
 		if err != nil {
@@ -86,8 +101,8 @@ func ampCommand(ctx context.Context, src Source, args ...string) (*exec.Cmd, err
 		}
 		argv := append([]string{"run", "--env-file=" + src.AmpEnvFile, "--",
 			"/usr/bin/env", "-u", ampOpTokenEnv, "amp"}, args...)
-		cmd = exec.CommandContext(ctx, "op", argv...)
-		cmd.Env = append(os.Environ(), ampOpTokenEnv+"="+tok)
+		cmd = build("op", argv...)
+		cmd.Env = append(cmd.Env, ampOpTokenEnv+"="+tok)
 	}
 	cmd.Stdin = bytes.NewReader(nil)
 	cmd.WaitDelay = time.Second

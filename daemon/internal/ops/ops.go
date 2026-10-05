@@ -283,6 +283,7 @@ func Source(addr address.Address) (transcript.Source, transcript.Reader, error) 
 		Agent:       fields["AGENTMUX_AGENT"],
 		Workdir:     fields["AGENTMUX_WORKDIR"],
 		Home:        runas.CurrentUserHome(),
+		RunUser:     fields["AGENTMUX_RUN_USER"],
 		AmpRunnerID: fields["AGENTMUX_AMP_RUNNER_ID"],
 	}
 	if src.Agent == "" {

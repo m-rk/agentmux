@@ -48,6 +48,16 @@ type State struct {
 	Branch string
 	// Repo is the worktree's toplevel parent (git rev-parse --show-toplevel).
 	Repo string
+	// BranchOK reports Inspect verified the branch is safe to delete:
+	// its tip is on origin/<default>, or every unique commit has an
+	// upstream equivalent (squash merge, cherry-pick).
+	BranchOK bool
+	// BranchWhy says why the branch is kept, when Branch is set but
+	// BranchOK is false.
+	BranchWhy string
+	// BranchUpstream is the origin ref the check ran against, e.g.
+	// "origin/main".
+	BranchUpstream string
 	// AmpThread is the instance's amp thread id; amp only.
 	AmpThread string
 	// OpencodeSessions are the stored opencode session ids whose
@@ -75,8 +85,14 @@ func (s State) Plan(agent string) []string {
 	if s.Workdir != "" {
 		plan = append(plan, "remove worktree "+s.Workdir)
 	}
-	if s.Branch != "" {
-		plan = append(plan, "delete branch "+s.Branch+" (main contains it)")
+	switch {
+	case s.Branch == "":
+	case s.BranchOK:
+		plan = append(plan, "delete branch "+s.Branch+" ("+s.BranchUpstream+" contains it)")
+	case s.BranchWhy != "":
+		plan = append(plan, "keep branch "+s.Branch+": "+s.BranchWhy)
+	default:
+		plan = append(plan, "keep branch "+s.Branch)
 	}
 	return plan
 }
@@ -110,9 +126,11 @@ func (LiveEnv) RetentionPath() string {
 	return filepath.Join(home, ".config", "agentmux", "retention.yaml")
 }
 
-// Inspect gathers threads, worktree state, and branch containment. It
-// refuses when the worktree is dirty or the branch has commits not on
-// main — the caller raises an ask instead of retiring half-merged work.
+// Inspect gathers threads, worktree state, and branch safety. It refuses
+// when the worktree is dirty. Branch safety never refuses here: Inspect
+// records whether the branch is safe to delete (BranchOK) and why not
+// (BranchWhy), so the dry run reports it truthfully and Apply refuses a
+// real retire of unmerged work.
 func (LiveEnv) Inspect(ctx context.Context, instance string, fields map[string]string) (State, error) {
 	agent := fields["AGENTMUX_AGENT"]
 	if agent == "" {
@@ -140,6 +158,12 @@ func (LiveEnv) Inspect(ctx context.Context, instance string, fields map[string]s
 		return st, errorf(safesend.ReasonInvalid,
 			"worktree %s has uncommitted changes; commit or stash them before retiring", workdir)
 	}
+	if ok, why, upstream := checkBranchSafe(ctx, st.Repo, st.Branch); !ok {
+		st.BranchWhy = why
+	} else {
+		st.BranchOK = true
+		st.BranchUpstream = upstream
+	}
 	switch agent {
 	case "amp":
 		thread, err := liveAmpThread(ctx, instance, fields)
@@ -158,7 +182,12 @@ func (LiveEnv) Inspect(ctx context.Context, instance string, fields map[string]s
 }
 
 // Apply performs the retire: archive or stop, remove units and registry,
-// remove the worktree, delete the branch when main contains it.
+// remove the worktree, delete the branch only when Inspect verified it is
+// safe. A real retire of unmerged work is refused so the caller can raise
+// an ask; rerun the dry run after merging.
+// Inspect verified BranchOK against the template repo it runs in, but the
+// delete runs from the main checkout, so Apply re-verifies there before
+// deleting: a branch that moved on since Inspect must not be deleted.
 func (e LiveEnv) Apply(ctx context.Context, instance, agent string, fields map[string]string, st State) (RetireResult, error) {
 	var res RetireResult
 	res.Workdir = st.Workdir
@@ -192,7 +221,7 @@ func (e LiveEnv) Apply(ctx context.Context, instance, agent string, fields map[s
 		return res, err
 	}
 	res.Branch, res.BranchDeleted, res.BranchKept = st.Branch, branchRes.deleted, branchRes.kept
-	if err := removeWorktree(ctx, st); err != nil {
+	if err := removeWorktree(ctx, st, branchRes.deleted); err != nil {
 		return res, err
 	}
 	return res, nil
@@ -240,28 +269,119 @@ type branchDisposition struct {
 	kept    string // why not, when not deleted
 }
 
-// deleteBranchWhenMerged deletes the worktree's branch when main contains
-// it, and removes the worktree first: `git worktree remove` refuses while
-// its branch is checked out elsewhere, and the branch delete refuses
-// while a worktree still holds it. A dirty check already ran in Inspect;
-// Apply re-checks cheaply through the remove itself.
+// defaultBranchName returns the template repo's default-branch short name
+// ("main", "master", ...): the local symbolic ref of origin/HEAD, or the
+// configured init.defaultBranch, or the first of main/master that exists.
+// It never guesses blindly — an unknown default is an error.
+func defaultBranchName(ctx context.Context, repo string) (string, error) {
+	if out, err := gitOut(ctx, repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"); err == nil {
+		if name := strings.TrimPrefix(strings.TrimSpace(out), "origin/"); name != "" && name != out {
+			return name, nil
+		}
+	}
+	if out, err := gitOut(ctx, repo, "config", "--get", "init.defaultBranch"); err == nil {
+		if name := strings.TrimSpace(out); name != "" {
+			return name, nil
+		}
+	}
+	for _, name := range []string{"main", "master"} {
+		if runGitOK(ctx, repo, "show-ref", "--verify", "--quiet", "refs/heads/"+name) == nil {
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("cannot determine the default branch (no origin/HEAD, no init.defaultBranch, no main or master)")
+}
+
+// fetchOrigin updates only the default branch from origin. A full fetch
+// would touch every remote-tracking ref; retire needs one ref fresh.
+// GIT_TERMINAL_PROMPT=0 is already in gitOut's environment, so a network
+// outage fails fast instead of prompting.
+func fetchOrigin(ctx context.Context, repo, def string) error {
+	if _, err := gitOut(ctx, repo, "fetch", "origin", def); err != nil {
+		return fmt.Errorf("fetching origin %s: %v", def, err)
+	}
+	return nil
+}
+
+// branchUpstreamEquivalent reports whether every commit unique to branch
+// has an equivalent on upstream — the squash-merge and cherry-pick case:
+// `git cherry upstream branch` marks equivalents with "-" and missing
+// commits with "+". No "+" lines means nothing would be lost. Merge
+// commits always show as "+" (cherry can't match them), so they fall
+// through to the keep path with a reason naming them.
+func branchUpstreamEquivalent(ctx context.Context, repo, upstream, branch string) (bool, error) {
+	out, err := gitOut(ctx, repo, "cherry", upstream, branch)
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "+") {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// checkBranchSafe verifies branch is safe to delete from repo: after
+// fetching origin's default branch, either the tip is an ancestor of the
+// fresh origin/<default>, or every unique commit has an upstream
+// equivalent. It returns (ok, keep-reason, upstream-ref). "main" itself
+// and empty names are never deletable. Any git failure keeps the branch
+// with the failure as the reason — retire deletes only on positive proof.
+func checkBranchSafe(ctx context.Context, repo, branch string) (ok bool, why, upstream string) {
+	if branch == "" || branch == "main" || branch == "master" {
+		return false, "not a task branch", ""
+	}
+	def, err := defaultBranchName(ctx, repo)
+	if err != nil {
+		return false, err.Error(), ""
+	}
+	upstream = "origin/" + def
+	if err := fetchOrigin(ctx, repo, def); err != nil {
+		return false, err.Error(), upstream
+	}
+	if err := runGitOK(ctx, repo, "merge-base", "--is-ancestor", branch, upstream); err == nil {
+		return true, "", upstream
+	}
+	equiv, err := branchUpstreamEquivalent(ctx, repo, upstream, branch)
+	if err != nil {
+		return false, fmt.Sprintf("checking %s against %s: %v", branch, upstream, err), upstream
+	}
+	if equiv {
+		return true, "", upstream
+	}
+	return false, fmt.Sprintf("branch %s has commits not on %s; merge it before retiring", branch, upstream), upstream
+}
+
+// deleteBranchWhenMerged decides the branch's fate at retire time. It
+// deletes only when Inspect verified safety (BranchOK) and the check
+// still holds now: re-fetch and re-verify, because the branch may have
+// moved on since Inspect ran. Otherwise it keeps the branch and says why
+// — the caller raises an ask instead of deleting unmerged work.
 func deleteBranchWhenMerged(ctx context.Context, st State) (branchDisposition, error) {
-	if st.Branch == "" || st.Branch == "main" {
+	if st.Branch == "" || st.Branch == "main" || st.Branch == "master" {
 		return branchDisposition{kept: "not a task branch"}, nil
 	}
-	// main must contain the branch tip: no commits left behind.
-	if err := runGitOK(ctx, st.Repo, "merge-base", "--is-ancestor", st.Branch, "main"); err != nil {
-		return branchDisposition{}, errorf(safesend.ReasonInvalid,
-			"branch %s has commits not on main; merge it before retiring", st.Branch)
+	if !st.BranchOK {
+		why := st.BranchWhy
+		if why == "" {
+			why = fmt.Sprintf("branch %s was not verified safe to delete; merge it before retiring", st.Branch)
+		}
+		return branchDisposition{}, errorf(safesend.ReasonInvalid, "%s", why)
+	}
+	if ok, why, _ := checkBranchSafe(ctx, st.Repo, st.Branch); !ok {
+		return branchDisposition{}, errorf(safesend.ReasonInvalid, "%s", why)
 	}
 	return branchDisposition{deleted: true}, nil
 }
 
-// removeWorktree removes the worktree and deletes the branch in one step:
-// `git worktree remove` plus `git branch -d` (which re-verifies main
-// contains it). The branch delete runs first so a leftover worktree never
-// outlives its branch silently — remove's own failure is still reported.
-func removeWorktree(ctx context.Context, st State) error {
+// removeWorktree removes the worktree; when the branch was deleted it also
+// deletes the branch ref with -D (safety was verified twice already, and
+// the worktree's own checkout can make -d's check unreliable). When the
+// branch was kept the ref is left alone. The worktree goes first: with
+// --force the remove succeeds even while the branch is checked out in
+// it, and the branch delete follows from the main checkout.
+func removeWorktree(ctx context.Context, st State, branchDeleted bool) error {
 	if st.Workdir == "" {
 		return nil
 	}
@@ -278,8 +398,8 @@ func removeWorktree(ctx context.Context, st State) error {
 	if _, err := gitOut(ctx, st.Repo, "worktree", "remove", "--force", st.Workdir); err != nil {
 		return errorf(safesend.ReasonFailed, "removing worktree %s: %v", st.Workdir, err)
 	}
-	if st.Branch != "" && st.Branch != "main" {
-		if _, err := gitOut(ctx, main, "branch", "-d", st.Branch); err != nil {
+	if branchDeleted && st.Branch != "" && st.Branch != "main" && st.Branch != "master" {
+		if _, err := gitOut(ctx, main, "branch", "-D", st.Branch); err != nil {
 			return errorf(safesend.ReasonFailed, "deleting branch %s: %v", st.Branch, err)
 		}
 	}

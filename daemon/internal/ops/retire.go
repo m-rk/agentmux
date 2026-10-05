@@ -22,9 +22,10 @@ type RetireResult struct {
 
 // Retire ends one finished task session on this host: archive the amp
 // thread (or stop the local session), remove units and registry, remove
-// the worktree, delete the branch when main contains it. Only task-*
+// the worktree, delete the branch only when origin's default branch
+// provably contains every commit. Only task-*
 // instances are touched; anything else is refused as forbidden. A dirty
-// worktree or unmerged branch is refused as invalid — the caller raises
+// worktree or an unverified branch is refused as invalid — the caller raises
 // an ask instead.
 func (e Env) Retire(ctx context.Context, req RetireRequest) (RetireResult, error) {
 	addr, err := parseLocal(req.Address)

@@ -323,14 +323,25 @@ func TestGCEmptyState(t *testing.T) {
 }
 
 func TestPlan(t *testing.T) {
-	st := State{Workdir: "/w/t", Branch: "task/9",
+	st := State{Workdir: "/w/t", Branch: "task/9", BranchOK: true, BranchUpstream: "origin/main",
 		AmpThread: "T-00000000-0000-4000-8000-000000000001"}
 	plan := st.Plan("amp")
 	joined := strings.Join(plan, "\n")
-	for _, want := range []string{"archive amp thread", "stop session", "remove units", "remove worktree", "delete branch"} {
+	for _, want := range []string{"archive amp thread", "stop session", "remove units", "remove worktree",
+		"delete branch task/9 (origin/main contains it)"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("amp plan missing %q: %v", want, plan)
 		}
+	}
+	// An unverified branch is kept with its reason — the AMUX-20
+	// regression: the dry run must never claim "contains it" unchecked.
+	kept := State{Workdir: "/w/t", Branch: "task/9",
+		BranchWhy: "branch task/9 has commits not on origin/main; merge it before retiring"}.Plan("amp")
+	if joined := strings.Join(kept, "\n"); !strings.Contains(joined, "keep branch task/9: branch task/9 has commits not on origin/main") {
+		t.Errorf("unverified plan should keep the branch with a reason: %v", kept)
+	}
+	if strings.Contains(strings.Join(kept, "\n"), "delete branch") {
+		t.Errorf("unverified plan claims a delete: %v", kept)
 	}
 	claude := State{Workdir: "/w/t", Branch: "task/9"}.Plan("claude-code")
 	if strings.Join(claude, "\n") == "" || !strings.Contains(strings.Join(claude, "\n"), "keep transcripts") {

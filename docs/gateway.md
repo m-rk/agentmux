@@ -181,12 +181,16 @@ served its purpose. `retire` ends it: for an amp instance it archives
 the thread with `amp threads archive` (the thread stays readable on
 ampcode.com); for every agent it stops the session, removes the
 instance's units and registry entry, and removes the worktree. The
-branch is deleted only when `main` contains its commits. Claude Code
+branch is deleted only when origin's default branch provably contains
+every commit (directly, or as a squash/cherry-pick equivalent);
+otherwise the branch is kept and a real retire is refused. Claude Code
 transcripts are kept; an opencode session's stored rows are recorded so
 `gc` can delete them later. Only `task-*` instances are ever touched —
-anything else is refused (`forbidden`) — and a dirty worktree or a
-branch with commits not on `main` is refused (`invalid`) so the caller
-can raise an ask instead.
+anything else is refused (`forbidden`) — and a dirty worktree or an
+unverified branch is refused (`invalid`) so the caller
+can raise an ask instead. A dry run reports the branch check
+truthfully: it names "keep branch …" with the reason rather than
+claiming containment it never verified.
 
 ```json
 POST /v1/retire

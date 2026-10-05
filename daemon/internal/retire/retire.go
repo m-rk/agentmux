@@ -2,7 +2,9 @@
 // left of it. `agentmux sessions retire <addr>` runs after a task is done
 // and merged: it archives the amp thread (or stops the local session),
 // removes the instance's units and registry entry, removes its worktree,
-// and deletes its branch when main contains it. `agentmux gc` runs daily:
+// and deletes its branch only when origin's default branch provably
+// contains every commit (directly, or as a squash/cherry-pick
+// equivalent). `agentmux gc` runs daily:
 // for records retired longer ago than retention.yaml allows, it deletes
 // the archived amp threads and stored opencode sessions. Claude Code
 // transcripts are never deleted — only the registration and units go,
@@ -10,8 +12,11 @@
 //
 // Only task-* instances created by `sessions create` are ever touched.
 // Long-lived agents (mergentic, orchestrator, *-amp templates, …) are
-// refused. Retire refuses when the worktree has uncommitted changes or
-// the branch has commits not on main; the caller raises an ask instead.
+// refused. Retire refuses when the worktree has uncommitted changes;
+// the branch is deleted only on positive proof of safety, otherwise the
+// branch is kept and a real retire is refused so the caller can raise an
+// ask. A dry run reports the branch check truthfully instead of claiming
+// "main contains it" unchecked.
 //
 // Every external effect (amp CLI, sqlite3, systemctl/launchctl, git,
 // tmux) goes through a package-level var so tests substitute fakes;

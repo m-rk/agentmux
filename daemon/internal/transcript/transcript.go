@@ -29,6 +29,11 @@ type Source struct {
 	Workdir  string
 	Home     string // run user's home directory
 
+	// RunUser is the instance's AGENTMUX_RUN_USER; amp only. When set,
+	// invocations run as that user (runas.Command) so a per-user install
+	// like ~/.npm-global/bin/amp resolves the way session launch sees
+	// it. Empty means the current user (runas.CurrentUserCommand).
+	RunUser string
 	// AmpRunnerID is the instance's AGENTMUX_AMP_RUNNER_ID; amp only.
 	AmpRunnerID string
 	// AmpEnvFile is the instance's op env-file supplying AMP_API_KEY
