@@ -43,6 +43,8 @@ its state is in the vault, not the conversation.
 ## Context hygiene
 
 Not automated yet. The skill re-reads state on every wake, so clearing the
-session is safe. Until a scheduled clear exists, run
-`agentmux sessions send -by PRINCIPAL -via sent orchestrator@HOST "/clear"`
-when the instance is idle, for example from cron after N events.
+session is safe. Until a scheduled clear exists, check the pane is idle with
+`agentmux view -instance orchestrator`, then run
+`agentmux send-keys -instance orchestrator -- /clear Enter`, for example from
+cron after N events. (`sessions send` can't carry a slash command: it puts a
+provenance line before the text.)
