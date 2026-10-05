@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/m-rk/agentmux/daemon/internal/discovery"
 	"github.com/m-rk/agentmux/daemon/internal/transcript"
@@ -42,25 +43,79 @@ func thread(id, title string) transcript.Thread {
 	return transcript.Thread{ID: id, Title: title}
 }
 
-func TestLiveAmpThreadPicksNewest(t *testing.T) {
-	fakeThreads(t, []transcript.Thread{
-		thread("T-00000000-0000-4000-8000-000000000002", "second"),
-		thread("T-00000000-0000-4000-8000-000000000001", "first"),
-	}, nil)
+func TestLiveAmpThreadPrefersRecordedRunLogs(t *testing.T) {
+	// No amp CLI threads at all: the recorded run logs are the threads.
+	fakeThreads(t, nil, nil)
+	home := t.TempDir()
+	fakeHome(t, home)
+	runLogDir(t, home, "task-1",
+		"T-00000000-0000-4000-8000-000000000001",
+		"T-00000000-0000-4000-8000-000000000002")
 	got, err := liveAmpThread(context.Background(), "task-1", map[string]string{
 		"AGENTMUX_WORKDIR": "/w/task-1", "AGENTMUX_AMP_RUNNER_ID": "task-1@host",
+		"AGENTMUX_RUN_USER": "taskuser",
 	})
 	if err != nil {
 		t.Fatalf("liveAmpThread: %v", err)
 	}
-	if got != "T-00000000-0000-4000-8000-000000000002" {
-		t.Errorf("thread = %q, want the newest", got)
+	if len(got) != 2 {
+		t.Fatalf("threads = %v, want both recorded run logs", got)
 	}
+}
+
+func TestLiveAmpThreadFallsBackToListed(t *testing.T) {
+	fakeThreads(t, []transcript.Thread{
+		thread("T-00000000-0000-4000-8000-000000000002", "second"),
+		thread("T-00000000-0000-4000-8000-000000000001", "first"),
+	}, nil)
+	fakeHome(t, t.TempDir())
+	got, err := liveAmpThread(context.Background(), "task-1", map[string]string{
+		"AGENTMUX_WORKDIR": "/w/task-1", "AGENTMUX_AMP_RUNNER_ID": "task-1@host",
+		"AGENTMUX_RUN_USER": "taskuser",
+	})
+	if err != nil {
+		t.Fatalf("liveAmpThread: %v", err)
+	}
+	if len(got) != 1 || got[0] != "T-00000000-0000-4000-8000-000000000002" {
+		t.Errorf("threads = %v, want the newest listed thread", got)
+	}
+}
+
+// fakeHome points ampSource's home resolution at dir: the run-user
+// lookup returns dir, so tests never touch a real home.
+func fakeHome(t *testing.T, dir string) {
+	t.Helper()
+	old := lookupUser
+	lookupUser = func(name string) (*user.User, error) {
+		return &user.User{Username: name, HomeDir: dir}, nil
+	}
+	t.Cleanup(func() { lookupUser = old })
+}
+
+// runLogDir writes empty run logs for ids under the fake state dir.
+func runLogDir(t *testing.T, home, instance string, ids ...string) string {
+	t.Helper()
+	dir := filepath.Join(home, ".local", "state", "agentmux", "sessions", instance)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i, id := range ids {
+		// Distinct mod times so newest-first ordering is deterministic.
+		if err := os.WriteFile(filepath.Join(dir, "amp-run-"+id+".jsonl"), []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(filepath.Join(dir, "amp-run-"+id+".jsonl"),
+			time.Now().Add(time.Duration(i)*time.Second), time.Now().Add(time.Duration(i)*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
 }
 
 func TestLiveAmpThreadNoThreadsIsNotFound(t *testing.T) {
 	fakeThreads(t, nil, nil)
-	_, err := liveAmpThread(context.Background(), "task-1", map[string]string{})
+	fakeHome(t, t.TempDir())
+	_, err := liveAmpThread(context.Background(), "task-1", map[string]string{"AGENTMUX_RUN_USER": "taskuser"})
 	if ReasonOf(err) != "not_found" {
 		t.Errorf("reason = %s, want not_found", ReasonOf(err))
 	}
@@ -68,9 +123,25 @@ func TestLiveAmpThreadNoThreadsIsNotFound(t *testing.T) {
 
 func TestLiveAmpThreadPropagatesListError(t *testing.T) {
 	fakeThreads(t, nil, errors.New("amp exploded"))
-	_, err := liveAmpThread(context.Background(), "task-1", map[string]string{})
+	fakeHome(t, t.TempDir())
+	_, err := liveAmpThread(context.Background(), "task-1", map[string]string{"AGENTMUX_RUN_USER": "taskuser"})
 	if ReasonOf(err) != "failed" {
 		t.Errorf("reason = %s, want failed", ReasonOf(err))
+	}
+}
+
+func TestRecordedAmpThreadsSkipsPendingAndJunk(t *testing.T) {
+	home := t.TempDir()
+	dir := runLogDir(t, home, "task-1", "T-00000000-0000-4000-8000-000000000001")
+	if err := os.WriteFile(filepath.Join(dir, "amp-run-pending.jsonl"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := recordedAmpThreads(transcript.Source{Home: home, Instance: "task-1"})
+	if len(got) != 1 || got[0] != "T-00000000-0000-4000-8000-000000000001" {
+		t.Errorf("threads = %v, want only the threaded run log", got)
 	}
 }
 

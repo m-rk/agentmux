@@ -69,8 +69,8 @@ func runSessionsRetire(args []string) {
 		return
 	}
 	fmt.Printf("retired %s (%s)\n", res.Address, res.Agent)
-	if res.AmpThread != "" {
-		fmt.Printf("archived amp thread %s (deleted by gc after retention)\n", res.AmpThread)
+	for _, thread := range res.AmpThreads {
+		fmt.Printf("archived amp thread %s (deleted by gc after retention)\n", thread)
 	}
 	if len(res.OpencodeSessions) > 0 {
 		fmt.Printf("%d stored opencode sessions recorded for gc\n", len(res.OpencodeSessions))

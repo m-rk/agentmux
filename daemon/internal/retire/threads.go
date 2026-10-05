@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -71,19 +72,69 @@ var ampArchiveRun = func(ctx context.Context, src transcript.Source, args ...str
 	return transcript.AmpRun(ctx, src, args...)
 }
 
-// liveAmpThread resolves the instance's amp thread: the newest thread on
-// its runner. Task instances run exactly one thread (started by
-// `sessions run` with the task title), so the newest is the task's.
-func liveAmpThread(ctx context.Context, instance string, fields map[string]string) (string, error) {
+// liveAmpThread resolves the instance's amp threads: every thread id
+// agentmux itself recorded in the `sessions run` state dir
+// (~/.local/state/agentmux/sessions/<instance>/amp-run-<thread>.jsonl),
+// newest first. Those logs are the threads this instance started, so they
+// are found even when `amp threads list` can't see them (archived, or the
+// runner mapping never learned them). When the state dir holds no thread
+// ids but the transcript lists one on the instance's runner, that listed
+// thread is used. No ids from either source is not_found.
+func liveAmpThread(ctx context.Context, instance string, fields map[string]string) ([]string, error) {
 	src := ampSource(instance, fields)
+	if recorded := recordedAmpThreads(src); len(recorded) > 0 {
+		return recorded, nil
+	}
 	threads, err := listAmpThreads(ctx, src)
 	if err != nil {
-		return "", errorf(safesend.ReasonFailed, "listing amp threads for %s: %v", instance, err)
+		return nil, errorf(safesend.ReasonFailed, "listing amp threads for %s: %v", instance, err)
 	}
 	if len(threads) == 0 {
-		return "", errorf(safesend.ReasonNotFound, "no amp thread found for %s", instance)
+		return nil, errorf(safesend.ReasonNotFound, "no amp thread found for %s", instance)
 	}
-	return threads[0].ID, nil
+	return []string{threads[0].ID}, nil
+}
+
+// recordedAmpThreads lists the thread ids in the instance's run-log state
+// dir, newest first. `sessions run` renames each log under its thread id
+// once the init record arrives (see ops.Run), so every amp-run-<id>.jsonl
+// names a thread this instance started. The pending log (no id yet) names
+// none and is skipped. An empty or missing dir is nil, not an error.
+func recordedAmpThreads(src transcript.Source) []string {
+	if src.Home == "" || src.Instance == "" {
+		return nil
+	}
+	dir := filepath.Join(src.Home, ".local", "state", "agentmux", "sessions", src.Instance)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	type logged struct {
+		id  string
+		mod time.Time
+	}
+	var found []logged
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, "amp-run-") || !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		id := strings.TrimSuffix(strings.TrimPrefix(name, "amp-run-"), ".jsonl")
+		if id == "pending" || !transcript.ValidAmpThreadID(id) {
+			continue
+		}
+		mod := time.Time{}
+		if info, err := e.Info(); err == nil {
+			mod = info.ModTime()
+		}
+		found = append(found, logged{id: id, mod: mod})
+	}
+	sort.SliceStable(found, func(i, j int) bool { return found[i].mod.After(found[j].mod) })
+	var ids []string
+	for _, f := range found {
+		ids = append(ids, f.id)
+	}
+	return ids
 }
 
 // ampArchive archives one amp thread. The thread stays readable on

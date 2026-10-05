@@ -56,7 +56,7 @@ func (f *fakeEnv) Apply(_ context.Context, instance, agent string, _ map[string]
 	f.applied = append(f.applied, instance+"/"+agent)
 	res := RetireResult{Workdir: st.Workdir, Branch: st.Branch, BranchDeleted: st.Branch != ""}
 	if agent == "amp" {
-		res.AmpThread = st.AmpThread
+		res.AmpThreads = st.AmpThreads
 	}
 	if agent == "opencode" {
 		res.OpencodeSessions = st.OpencodeSessions
@@ -90,7 +90,7 @@ func newFakeEnv(t *testing.T) *fakeEnv {
 			"web":    {"AGENTMUX_AGENT": "claude-code", "AGENTMUX_WORKDIR": "/w/web"},
 		},
 		state: State{Workdir: "/w/task-1", Branch: "task/1", Repo: "/repo",
-			AmpThread: "T-00000000-0000-4000-8000-000000000001"},
+			AmpThreads: []string{"T-00000000-0000-4000-8000-000000000001"}},
 	}
 }
 
@@ -153,8 +153,8 @@ func TestRetireWritesRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Retire: %v", err)
 	}
-	if res.AmpThread != "T-00000000-0000-4000-8000-000000000001" {
-		t.Errorf("AmpThread = %q", res.AmpThread)
+	if len(res.AmpThreads) != 1 || res.AmpThreads[0] != "T-00000000-0000-4000-8000-000000000001" {
+		t.Errorf("AmpThreads = %q", res.AmpThreads)
 	}
 	if !res.BranchDeleted || res.Branch != "task/1" {
 		t.Errorf("branch = %+v", res)
@@ -324,7 +324,7 @@ func TestGCEmptyState(t *testing.T) {
 
 func TestPlan(t *testing.T) {
 	st := State{Workdir: "/w/t", Branch: "task/9", BranchOK: true, BranchUpstream: "origin/main",
-		AmpThread: "T-00000000-0000-4000-8000-000000000001"}
+		AmpThreads: []string{"T-00000000-0000-4000-8000-000000000001"}}
 	plan := st.Plan("amp")
 	joined := strings.Join(plan, "\n")
 	for _, want := range []string{"archive amp thread", "stop session", "remove units", "remove worktree",

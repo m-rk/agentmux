@@ -68,8 +68,8 @@ type Record struct {
 type RetireResult struct {
 	Instance string `json:"instance"`
 	Agent    string `json:"agent"`
-	// AmpThread is the archived amp thread id; amp only.
-	AmpThread string `json:"amp_thread,omitempty"`
+	// AmpThreads are the archived amp thread ids; amp only.
+	AmpThreads []string `json:"amp_threads,omitempty"`
 	// OpencodeSessions lists the stored sessions gc will delete; opencode only.
 	OpencodeSessions []string `json:"opencode_sessions,omitempty"`
 	// BranchDeleted reports the branch was deleted because main
@@ -274,7 +274,7 @@ func Retire(ctx context.Context, env Env, instance string, dryRun bool) (RetireR
 	plan := st.Plan(agent)
 	if dryRun {
 		return RetireResult{Instance: instance, Agent: agent, Workdir: workdir,
-			AmpThread: st.AmpThread, OpencodeSessions: st.OpencodeSessions,
+			AmpThreads: st.AmpThreads, OpencodeSessions: st.OpencodeSessions,
 			Branch: st.Branch, DryRun: true, Plan: plan}, nil
 	}
 	res, err := env.Apply(ctx, instance, agent, fields, st)
@@ -286,19 +286,12 @@ func Retire(ctx context.Context, env Env, instance string, dryRun bool) (RetireR
 	res.RetiredAt = now.Format(time.RFC3339)
 	if err := saveRecord(home, Record{
 		Instance: instance, Agent: agent, RetiredAt: now,
-		AmpThreads: nonEmpty(st.AmpThread), OpencodeSessions: st.OpencodeSessions,
+		AmpThreads: st.AmpThreads, OpencodeSessions: st.OpencodeSessions,
 		Workdir: workdir, Branch: branchName(res),
 	}); err != nil {
 		return RetireResult{}, err
 	}
 	return res, nil
-}
-
-func nonEmpty(s string) []string {
-	if s == "" {
-		return nil
-	}
-	return []string{s}
 }
 
 func branchName(res RetireResult) string {

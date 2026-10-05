@@ -58,8 +58,8 @@ type State struct {
 	// BranchUpstream is the origin ref the check ran against, e.g.
 	// "origin/main".
 	BranchUpstream string
-	// AmpThread is the instance's amp thread id; amp only.
-	AmpThread string
+	// AmpThreads are the instance's amp thread ids; amp only.
+	AmpThreads []string
 	// OpencodeSessions are the stored opencode session ids whose
 	// directory is the workdir; opencode only.
 	OpencodeSessions []string
@@ -70,8 +70,8 @@ func (s State) Plan(agent string) []string {
 	var plan []string
 	switch agent {
 	case "amp":
-		if s.AmpThread != "" {
-			plan = append(plan, "archive amp thread "+s.AmpThread)
+		for _, thread := range s.AmpThreads {
+			plan = append(plan, "archive amp thread "+thread)
 		}
 		plan = append(plan, "stop session", "remove units and registry entry")
 	case "claude-code":
@@ -166,11 +166,11 @@ func (LiveEnv) Inspect(ctx context.Context, instance string, fields map[string]s
 	}
 	switch agent {
 	case "amp":
-		thread, err := liveAmpThread(ctx, instance, fields)
+		threads, err := liveAmpThread(ctx, instance, fields)
 		if err != nil {
 			return st, err
 		}
-		st.AmpThread = thread
+		st.AmpThreads = threads
 	case "opencode":
 		sessions, err := liveOpencodeSessions(ctx, instance, fields)
 		if err != nil {
@@ -193,13 +193,15 @@ func (e LiveEnv) Apply(ctx context.Context, instance, agent string, fields map[s
 	res.Workdir = st.Workdir
 	switch agent {
 	case "amp":
-		if st.AmpThread == "" {
+		if len(st.AmpThreads) == 0 {
 			return res, errorf(safesend.ReasonNotFound, "no amp thread found for %s", instance)
 		}
-		if err := ampArchive(ctx, instance, fields, st.AmpThread); err != nil {
-			return res, err
+		for _, thread := range st.AmpThreads {
+			if err := ampArchive(ctx, instance, fields, thread); err != nil {
+				return res, err
+			}
 		}
-		res.AmpThread = st.AmpThread
+		res.AmpThreads = st.AmpThreads
 	case "opencode":
 		res.OpencodeSessions = st.OpencodeSessions
 	}
