@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"testing"
 
 	"github.com/m-rk/agentmux/daemon/internal/hostsconfig"
@@ -48,5 +49,35 @@ func TestDeployOwnedServicesNeverTouchInstances(t *testing.T) {
 		} else if s.unit != "agentmuxd.service" {
 			t.Errorf("service %q is outside the agentmux namespace", s.unit)
 		}
+	}
+	for _, s := range deployOwnedUserServices() {
+		if s.unit == "" || s.label == "" {
+			t.Errorf("user service = %+v, want unit and label", s)
+		}
+		if s.unit != "agentmux-asks-serve.service" {
+			t.Errorf("user service %q is not a known owned user service", s.unit)
+		}
+	}
+}
+
+func TestDeployRunUserPrefersSudoUser(t *testing.T) {
+	t.Setenv("SUDO_USER", "mark")
+	if got := deployRunUser(); got != "mark" {
+		t.Errorf("deployRunUser = %q, want mark", got)
+	}
+}
+
+func TestDeployRunUserNeverRoot(t *testing.T) {
+	os.Unsetenv("SUDO_USER")
+	if got := deployRunUser(); got == "root" {
+		t.Errorf("deployRunUser = root, want never root")
+	}
+}
+
+func TestDeployHostsPathExplicitFlagWins(t *testing.T) {
+	t.Setenv("SUDO_USER", "somebody")
+	got, source := deployHostsPath("/tmp/custom-hosts.yaml")
+	if got != "/tmp/custom-hosts.yaml" || source != "flag -hosts" {
+		t.Errorf("deployHostsPath = %q (%s), want /tmp/custom-hosts.yaml (flag -hosts)", got, source)
 	}
 }

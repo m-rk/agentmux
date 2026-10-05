@@ -16,8 +16,11 @@ sudo agentmux deploy -template agentmux-amp -base main
    the installed doctor timer's time unless `-doctor-time HH:MM` is given.
 3. **Restart** the daemon plus every installed agentmux-owned user service
    (the gateway, `asks serve`, thread watch when their units exist) and
-   wait for each to become active. Timers are left alone — they run the
-   pinned binary on their next tick. Instance units (`agentmux-<name>`)
+   every installed agentmux-owned user unit in the invoking user's
+   (`SUDO_USER`) manager — `agentmux-asks-serve.service` when it exists —
+   via `systemctl --user -M <user>@`, and wait for each to become active.
+   Timers are left alone — they run the pinned binary on their next tick.
+   Instance units (`agentmux-<name>`)
    are never touched: deploy does not interrupt running agents.
 4. **Verify** each restarted service's `/proc/<pid>/exe` hashes to the
    pinned binary. A service still on the old binary fails the deploy.
@@ -26,9 +29,14 @@ sudo agentmux deploy -template agentmux-amp -base main
    test's fetch runs as the template's run user even when deploy runs as
    root, so this check should always pass — it fails the deploy if it
    doesn't.
-6. **Smoke test** every host in `hosts.yaml` (plus the local host): a
-   dry-run `sessions create -base <base>` and a dry-run `sessions run`
-   that starts no amp thread, and print the per-host result. A stale
+6. **Smoke test** every host in the run user's `hosts.yaml` (plus the
+   local host): a dry-run `sessions create -base <base>` and a dry-run
+   `sessions run`
+   that starts no amp thread, and print the per-host result. Deploy runs
+   as root under sudo, so it resolves the hosts file from `SUDO_USER`'s
+   home, not root's; it prints which file was used
+   (`deploy: hosts file /home/alice/.config/agentmux/hosts.yaml (from SUDO_USER alice)`).
+   A stale
    gateway that predates `dry_run` refuses with `unknown field "dry_run"`,
    which fails the deploy and names the host — deploy the new binary
    there and re-run.

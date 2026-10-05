@@ -27,6 +27,15 @@ func deployOwnedServices() []deployService {
 	}
 }
 
+// deployOwnedUserServices lists the agentmux-owned systemd user units
+// deploy restarts in the run user's manager: the asks serve unit the
+// operator runs under their own manager (see docs/discord-asks.md).
+func deployOwnedUserServices() []deployService {
+	return []deployService{
+		{unit: "agentmux-asks-serve.service", label: "asks serve"},
+	}
+}
+
 // systemctlRun runs systemctl, capturing combined output for errors.
 func systemctlRun(ctx context.Context, args ...string) error {
 	cmd := exec.CommandContext(ctx, "systemctl", args...)
@@ -87,6 +96,115 @@ func deployRestartServices(ctx context.Context, services []deployService) error 
 		}
 	}
 	return nil
+}
+
+// deployUserSystemctl runs systemctl against the run user's user manager
+// from root: `systemctl --user -M <user>@` talks to that user's manager
+// over its bus without needing their password or a login session.
+func deployUserSystemctl(ctx context.Context, runUser string, args ...string) error {
+	full := append([]string{"--user", "-M", runUser + "@"}, args...)
+	cmd := exec.CommandContext(ctx, "systemctl", full...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("systemctl %s: %v: %s", strings.Join(full, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// deployUserSystemctlShow returns selected user-unit properties for one
+// unit in the run user's manager (LoadState, ActiveState, SubState,
+// MainPID), used to detect installed units and to wait for restarts.
+func deployUserSystemctlShow(ctx context.Context, runUser, unit string) (map[string]string, error) {
+	full := []string{"--user", "-M", runUser + "@", "show", unit,
+		"--property=LoadState,ActiveState,SubState,MainPID"}
+	cmd := exec.CommandContext(ctx, "systemctl", full...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("systemctl %s: %v: %s", strings.Join(full, " "), err, strings.TrimSpace(string(out)))
+	}
+	props := map[string]string{}
+	for _, line := range strings.Split(string(out), "\n") {
+		if k, v, ok := strings.Cut(line, "="); ok {
+			props[k] = v
+		}
+	}
+	return props, nil
+}
+
+// deployInstalledUserServices returns the owned user units installed in
+// the run user's manager, so deploy restarts exactly the user services
+// the operator set up. Empty when deploy can't resolve a run user (e.g.
+// run directly as root outside sudo) — nothing to restart is not an
+// error.
+func deployInstalledUserServices(ctx context.Context, runUser string) []deployService {
+	if runUser == "" {
+		return nil
+	}
+	var out []deployService
+	for _, s := range deployOwnedUserServices() {
+		props, err := deployUserSystemctlShow(ctx, runUser, s.unit)
+		if err != nil {
+			continue
+		}
+		if props["LoadState"] == "loaded" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// deployRestartUserServices restarts the installed owned user units in the
+// run user's manager, waiting for each to become active. Missing units
+// were filtered by deployInstalledUserServices; only an actual restart
+// failure fails the deploy.
+func deployRestartUserServices(ctx context.Context, runUser string, services []deployService) error {
+	for _, s := range services {
+		if err := deployUserSystemctl(ctx, runUser, "restart", s.unit); err != nil {
+			return fmt.Errorf("restarting user unit %s: %w", s.unit, err)
+		}
+		if err := deployWaitUserActive(ctx, runUser, s.unit, 30*time.Second); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// deployWaitUserActive polls until the user unit reports active (or sub
+// failed), so a restart that immediately crashes fails the deploy instead
+// of passing the version check against the old process.
+func deployWaitUserActive(ctx context.Context, runUser, unit string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		props, err := deployUserSystemctlShow(ctx, runUser, unit)
+		if err == nil {
+			switch props["ActiveState"] {
+			case "active":
+				return nil
+			case "failed", "inactive":
+				return fmt.Errorf("%s (user) is %s after restart (sub=%s)", unit, props["ActiveState"], props["SubState"])
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%s (user) did not become active within %s", unit, timeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
+// deployUserServiceMainPID returns the user unit's main PID, or 0 when it
+// has none (oneshot, or not actually running).
+func deployUserServiceMainPID(ctx context.Context, runUser, unit string) uint32 {
+	props, err := deployUserSystemctlShow(ctx, runUser, unit)
+	if err != nil {
+		return 0
+	}
+	var pid uint32
+	fmt.Sscanf(strings.TrimSpace(props["MainPID"]), "%d", &pid)
+	return pid
 }
 
 // deployWaitActive polls until unit reports active (or sub failed), so a

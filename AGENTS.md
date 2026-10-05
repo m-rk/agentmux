@@ -204,6 +204,10 @@ names so no local or private details can reach a public artifact.
   system `protoc` (even a 2017-era 3.5.0) is fine, only the version comment
   in the generated header differs.
 - Build/test from `daemon/`: `go build ./...`, `go test ./...`.
+  Before merge also run the cross-platform checks that catch
+  OS-specific breaks (e.g. a symbol declared only in a
+  `//go:build linux` file): `GOOS=darwin go build ./...` and
+  `GOOS=linux go vet ./...`.
 - Deploying a locally built binary. `agentmux daemon install` does most
   of the work: it copies itself (atomically, via temp+rename — which is
   what sidesteps macOS's codesign SIGKILL when overwriting a running

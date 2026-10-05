@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
@@ -84,12 +85,24 @@ func runDeployCmd(args []string) {
 	for _, s := range services {
 		names = append(names, s.unit+" ("+s.label+")")
 	}
+	userServices := deployInstalledUserServices(ctx, deployRunUser())
+	for _, s := range userServices {
+		names = append(names, s.unit+" ("+s.label+", user)")
+	}
+	if runUser := deployRunUser(); runUser != "" && len(userServices) == 0 {
+		fmt.Printf("deploy: no installed user units for %s\n", runUser)
+	}
 	fmt.Printf("deploy: restarting %s\n", strings.Join(names, ", "))
 	if err := deployRestartServices(ctx, services); err != nil {
 		log.Fatalf("deploy: %v", err)
 	}
+	if len(userServices) > 0 {
+		if err := deployRestartUserServices(ctx, deployRunUser(), userServices); err != nil {
+			log.Fatalf("deploy: %v", err)
+		}
+	}
 
-	if err := deployCheckVersions(ctx, want, services); err != nil {
+	if err := deployCheckVersions(ctx, want, services, userServices); err != nil {
 		log.Fatalf("deploy: %v", err)
 	}
 	fmt.Printf("deploy: every service runs %s\n", want.sha[:12])
@@ -168,7 +181,7 @@ func deployPinBinary() (deployPinned, error) {
 // the pinned binary, by comparing /proc/<pid>/exe against it. A service
 // still on the old binary — the MERG-21 gateway incident — fails the
 // deploy instead of silently serving stale logic.
-func deployCheckVersions(ctx context.Context, want deployPinned, services []deployService) error {
+func deployCheckVersions(ctx context.Context, want deployPinned, services, userServices []deployService) error {
 	units := []string{"agentmuxd.service"}
 	for _, s := range services {
 		units = append(units, s.unit)
@@ -194,10 +207,62 @@ func deployCheckVersions(ctx context.Context, want deployPinned, services []depl
 		}
 		fmt.Printf("deploy: %-32s pid %-7d %s\n", unit, pid, mark)
 	}
+	for _, s := range userServices {
+		pid := deployUserServiceMainPID(ctx, deployRunUser(), s.unit)
+		if pid == 0 {
+			return fmt.Errorf("%s (user) has no main PID after restart", s.unit)
+		}
+		exe, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+		if err != nil {
+			return fmt.Errorf("%s (user, pid %d): reading exe: %w", s.unit, pid, err)
+		}
+		sum, err := deployHashFile(exe)
+		if err != nil {
+			return fmt.Errorf("%s (user, pid %d): hashing %s: %w", s.unit, pid, exe, err)
+		}
+		mark := "ok " + sum[:12]
+		if sum != want.sha {
+			mark = "STALE " + sum[:12]
+			stale = append(stale, s.unit+" (user)")
+		}
+		fmt.Printf("deploy: %-32s pid %-7d %s\n", s.unit+" (user)", pid, mark)
+	}
 	if len(stale) > 0 {
 		return fmt.Errorf("still running the old binary: %s (want %s)", strings.Join(stale, ", "), want.sha[:12])
 	}
 	return nil
+}
+
+// deployRunUser is the unprivileged user whose user units and config
+// deploy operates on: SUDO_USER when running under sudo, else the current
+// user. Empty when no user can be resolved — user units are then skipped.
+func deployRunUser() string {
+	if u := os.Getenv("SUDO_USER"); u != "" && u != "root" {
+		return u
+	}
+	if u, err := user.Current(); err == nil && u.Username != "" && u.Username != "root" {
+		return u.Username
+	}
+	return ""
+}
+
+// deployHostsPath resolves the hosts.yaml deploy smoke-tests: the explicit
+// -hosts flag wins, then SUDO_USER's config (sudo runs deploy as root, so
+// os.UserHomeDir would point at /root), then the current user's default.
+func deployHostsPath(flag string) (path, source string) {
+	if flag != "" && flag != hostsconfig.DefaultPath() {
+		return flag, "flag -hosts"
+	}
+	if runUser := deployRunUser(); runUser != "" {
+		if u, err := user.Lookup(runUser); err == nil && u.HomeDir != "" {
+			p := filepath.Join(u.HomeDir, ".config", "agentmux", "hosts.yaml")
+			if _, err := os.Stat(p); err == nil {
+				return p, "SUDO_USER " + runUser
+			}
+			return p, "SUDO_USER " + runUser + " (missing)"
+		}
+	}
+	return hostsconfig.DefaultPath(), "default"
 }
 
 // deployInstalledServices returns the owned services whose unit exists on
@@ -301,6 +366,8 @@ func deployDefaultTemplate(ctx context.Context, socketPath string) string {
 // or threads would spam the fleet on every deploy; the dry runs exercise
 // the same code paths short of the spawn.
 func deploySmokeTest(ctx context.Context, socketPath, hostsPath, template, base string) error {
+	hostsPath, source := deployHostsPath(hostsPath)
+	fmt.Printf("deploy: hosts file %s (from %s)\n", hostsPath, source)
 	hosts, err := loadHosts(hostsPath, socketPath)
 	if err != nil {
 		return fmt.Errorf("loading hosts: %w", err)
