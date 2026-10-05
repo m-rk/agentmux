@@ -25,6 +25,14 @@ import (
 	"github.com/m-rk/agentmux/daemon/internal/safesend"
 )
 
+// deployService is one agentmux-owned user service `agentmux deploy`
+// restarts after pinning the new binary. unit is the systemd unit name;
+// an absent unit is skipped, never an error.
+type deployService struct {
+	unit  string
+	label string
+}
+
 // runDeployCmd is `agentmux deploy`: pin the current binary, rewrite the
 // daemon unit, restart the daemon and every installed agentmux-owned user
 // service, verify each runs the new binary, check no privileged step left
