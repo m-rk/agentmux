@@ -47,6 +47,7 @@ type CreateResult struct {
 type Daemon interface {
 	ListInstances(ctx context.Context) ([]*pb.Instance, error)
 	CreateInstance(ctx context.Context, req *pb.CreateInstanceRequest) (*pb.CreateInstanceResponse, error)
+	RetireInstance(ctx context.Context, req *pb.RetireInstanceRequest) (*pb.RetireInstanceResponse, error)
 	Close() error
 }
 
@@ -225,6 +226,14 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 	inst := existing
 	if inst == nil { // not discovered yet
 		inst = &pb.Instance{Name: req.Instance, Agent: agent, Provider: fields["AGENTMUX_PROVIDER"], Model: fields["AGENTMUX_MODEL"], Workdir: wtPath, Status: pb.Status_STATUS_DEAD}
+	}
+	// Record the branch the worktree was made on: retire uses it (plus
+	// the worktree's own branch and the task family) to decide which
+	// branches to delete-or-keep. SetRegistryField appends when absent
+	// and rewrites in place when present, so reusing an instance for a
+	// new branch updates the record instead of going stale.
+	if err := session.SetRegistryField(req.Instance, "AGENTMUX_BRANCH", req.Branch); err != nil {
+		return CreateResult{}, Refuse(safesend.ReasonFailed, "recording branch for %s: %v", req.Instance, err)
 	}
 	sess := SessionFrom(tmpl.Host, inst)
 	sess.Project = ProjectOf(inst.Name, inst.Workdir, ProjectKeys())

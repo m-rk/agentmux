@@ -1442,6 +1442,102 @@ func (x *RenameInstanceResponse) GetMessage() string {
 	return ""
 }
 
+type RetireInstanceRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Instance      string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RetireInstanceRequest) Reset() {
+	*x = RetireInstanceRequest{}
+	mi := &file_agentmuxd_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RetireInstanceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RetireInstanceRequest) ProtoMessage() {}
+
+func (x *RetireInstanceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agentmuxd_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RetireInstanceRequest.ProtoReflect.Descriptor instead.
+func (*RetireInstanceRequest) Descriptor() ([]byte, []int) {
+	return file_agentmuxd_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *RetireInstanceRequest) GetInstance() string {
+	if x != nil {
+		return x.Instance
+	}
+	return ""
+}
+
+type RetireInstanceResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RetireInstanceResponse) Reset() {
+	*x = RetireInstanceResponse{}
+	mi := &file_agentmuxd_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RetireInstanceResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RetireInstanceResponse) ProtoMessage() {}
+
+func (x *RetireInstanceResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_agentmuxd_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RetireInstanceResponse.ProtoReflect.Descriptor instead.
+func (*RetireInstanceResponse) Descriptor() ([]byte, []int) {
+	return file_agentmuxd_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *RetireInstanceResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+func (x *RetireInstanceResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 type ViewPaneRequest struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Instance string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
@@ -1458,7 +1554,7 @@ type ViewPaneRequest struct {
 
 func (x *ViewPaneRequest) Reset() {
 	*x = ViewPaneRequest{}
-	mi := &file_agentmuxd_proto_msgTypes[20]
+	mi := &file_agentmuxd_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1470,7 +1566,7 @@ func (x *ViewPaneRequest) String() string {
 func (*ViewPaneRequest) ProtoMessage() {}
 
 func (x *ViewPaneRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agentmuxd_proto_msgTypes[20]
+	mi := &file_agentmuxd_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1483,7 +1579,7 @@ func (x *ViewPaneRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ViewPaneRequest.ProtoReflect.Descriptor instead.
 func (*ViewPaneRequest) Descriptor() ([]byte, []int) {
-	return file_agentmuxd_proto_rawDescGZIP(), []int{20}
+	return file_agentmuxd_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ViewPaneRequest) GetInstance() string {
@@ -1516,7 +1612,7 @@ type ViewPaneResponse struct {
 
 func (x *ViewPaneResponse) Reset() {
 	*x = ViewPaneResponse{}
-	mi := &file_agentmuxd_proto_msgTypes[21]
+	mi := &file_agentmuxd_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1528,7 +1624,7 @@ func (x *ViewPaneResponse) String() string {
 func (*ViewPaneResponse) ProtoMessage() {}
 
 func (x *ViewPaneResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agentmuxd_proto_msgTypes[21]
+	mi := &file_agentmuxd_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1541,7 +1637,7 @@ func (x *ViewPaneResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ViewPaneResponse.ProtoReflect.Descriptor instead.
 func (*ViewPaneResponse) Descriptor() ([]byte, []int) {
-	return file_agentmuxd_proto_rawDescGZIP(), []int{21}
+	return file_agentmuxd_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *ViewPaneResponse) GetContent() string {
@@ -1564,7 +1660,7 @@ type SendKeysRequest struct {
 
 func (x *SendKeysRequest) Reset() {
 	*x = SendKeysRequest{}
-	mi := &file_agentmuxd_proto_msgTypes[22]
+	mi := &file_agentmuxd_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1576,7 +1672,7 @@ func (x *SendKeysRequest) String() string {
 func (*SendKeysRequest) ProtoMessage() {}
 
 func (x *SendKeysRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agentmuxd_proto_msgTypes[22]
+	mi := &file_agentmuxd_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1589,7 +1685,7 @@ func (x *SendKeysRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendKeysRequest.ProtoReflect.Descriptor instead.
 func (*SendKeysRequest) Descriptor() ([]byte, []int) {
-	return file_agentmuxd_proto_rawDescGZIP(), []int{22}
+	return file_agentmuxd_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *SendKeysRequest) GetInstance() string {
@@ -1616,7 +1712,7 @@ type SendKeysResponse struct {
 
 func (x *SendKeysResponse) Reset() {
 	*x = SendKeysResponse{}
-	mi := &file_agentmuxd_proto_msgTypes[23]
+	mi := &file_agentmuxd_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1628,7 +1724,7 @@ func (x *SendKeysResponse) String() string {
 func (*SendKeysResponse) ProtoMessage() {}
 
 func (x *SendKeysResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agentmuxd_proto_msgTypes[23]
+	mi := &file_agentmuxd_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1641,7 +1737,7 @@ func (x *SendKeysResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendKeysResponse.ProtoReflect.Descriptor instead.
 func (*SendKeysResponse) Descriptor() ([]byte, []int) {
-	return file_agentmuxd_proto_rawDescGZIP(), []int{23}
+	return file_agentmuxd_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *SendKeysResponse) GetOk() bool {
@@ -1670,7 +1766,7 @@ type SendTextRequest struct {
 
 func (x *SendTextRequest) Reset() {
 	*x = SendTextRequest{}
-	mi := &file_agentmuxd_proto_msgTypes[24]
+	mi := &file_agentmuxd_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1682,7 +1778,7 @@ func (x *SendTextRequest) String() string {
 func (*SendTextRequest) ProtoMessage() {}
 
 func (x *SendTextRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agentmuxd_proto_msgTypes[24]
+	mi := &file_agentmuxd_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1695,7 +1791,7 @@ func (x *SendTextRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendTextRequest.ProtoReflect.Descriptor instead.
 func (*SendTextRequest) Descriptor() ([]byte, []int) {
-	return file_agentmuxd_proto_rawDescGZIP(), []int{24}
+	return file_agentmuxd_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *SendTextRequest) GetInstance() string {
@@ -1729,7 +1825,7 @@ type SendTextResponse struct {
 
 func (x *SendTextResponse) Reset() {
 	*x = SendTextResponse{}
-	mi := &file_agentmuxd_proto_msgTypes[25]
+	mi := &file_agentmuxd_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1741,7 +1837,7 @@ func (x *SendTextResponse) String() string {
 func (*SendTextResponse) ProtoMessage() {}
 
 func (x *SendTextResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agentmuxd_proto_msgTypes[25]
+	mi := &file_agentmuxd_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1754,7 +1850,7 @@ func (x *SendTextResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendTextResponse.ProtoReflect.Descriptor instead.
 func (*SendTextResponse) Descriptor() ([]byte, []int) {
-	return file_agentmuxd_proto_rawDescGZIP(), []int{25}
+	return file_agentmuxd_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *SendTextResponse) GetOk() bool {
@@ -1856,6 +1952,11 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\fdisplay_name\x18\x03 \x01(\tR\vdisplayName\"B\n" +
 	"\x16RenameInstanceResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"3\n" +
+	"\x15RetireInstanceRequest\x12\x1a\n" +
+	"\binstance\x18\x01 \x01(\tR\binstance\"B\n" +
+	"\x16RetireInstanceResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"r\n" +
 	"\x0fViewPaneRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12)\n" +
@@ -1889,7 +1990,7 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\x0fCONTROL_UNKNOWN\x10\x00\x12\x11\n" +
 	"\rCONTROL_START\x10\x01\x12\x10\n" +
 	"\fCONTROL_STOP\x10\x02\x12\x13\n" +
-	"\x0fCONTROL_RESTART\x10\x032\xbc\a\n" +
+	"\x0fCONTROL_RESTART\x10\x032\x99\b\n" +
 	"\x0eAgentmuxDaemon\x12X\n" +
 	"\rListInstances\x12\".agentmuxd.v1.ListInstancesRequest\x1a#.agentmuxd.v1.ListInstancesResponse\x12P\n" +
 	"\fStreamEvents\x12!.agentmuxd.v1.StreamEventsRequest\x1a\x1b.agentmuxd.v1.InstanceEvent0\x01\x12F\n" +
@@ -1898,7 +1999,8 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\x0eCreateInstance\x12#.agentmuxd.v1.CreateInstanceRequest\x1a$.agentmuxd.v1.CreateInstanceResponse\x12a\n" +
 	"\x10GetCreateOptions\x12%.agentmuxd.v1.GetCreateOptionsRequest\x1a&.agentmuxd.v1.GetCreateOptionsResponse\x12p\n" +
 	"\x15ListResumableSessions\x12*.agentmuxd.v1.ListResumableSessionsRequest\x1a+.agentmuxd.v1.ListResumableSessionsResponse\x12[\n" +
-	"\x0eRenameInstance\x12#.agentmuxd.v1.RenameInstanceRequest\x1a$.agentmuxd.v1.RenameInstanceResponse\x12I\n" +
+	"\x0eRenameInstance\x12#.agentmuxd.v1.RenameInstanceRequest\x1a$.agentmuxd.v1.RenameInstanceResponse\x12[\n" +
+	"\x0eRetireInstance\x12#.agentmuxd.v1.RetireInstanceRequest\x1a$.agentmuxd.v1.RetireInstanceResponse\x12I\n" +
 	"\bViewPane\x12\x1d.agentmuxd.v1.ViewPaneRequest\x1a\x1e.agentmuxd.v1.ViewPaneResponse\x12I\n" +
 	"\bSendKeys\x12\x1d.agentmuxd.v1.SendKeysRequest\x1a\x1e.agentmuxd.v1.SendKeysResponse\x12I\n" +
 	"\bSendText\x12\x1d.agentmuxd.v1.SendTextRequest\x1a\x1e.agentmuxd.v1.SendTextResponseB-Z+github.com/m-rk/agentmux/daemon/internal/pbb\x06proto3"
@@ -1916,7 +2018,7 @@ func file_agentmuxd_proto_rawDescGZIP() []byte {
 }
 
 var file_agentmuxd_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_agentmuxd_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_agentmuxd_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
 var file_agentmuxd_proto_goTypes = []any{
 	(Status)(0),                           // 0: agentmuxd.v1.Status
 	(EventType)(0),                        // 1: agentmuxd.v1.EventType
@@ -1941,12 +2043,14 @@ var file_agentmuxd_proto_goTypes = []any{
 	(*ListResumableSessionsResponse)(nil), // 20: agentmuxd.v1.ListResumableSessionsResponse
 	(*RenameInstanceRequest)(nil),         // 21: agentmuxd.v1.RenameInstanceRequest
 	(*RenameInstanceResponse)(nil),        // 22: agentmuxd.v1.RenameInstanceResponse
-	(*ViewPaneRequest)(nil),               // 23: agentmuxd.v1.ViewPaneRequest
-	(*ViewPaneResponse)(nil),              // 24: agentmuxd.v1.ViewPaneResponse
-	(*SendKeysRequest)(nil),               // 25: agentmuxd.v1.SendKeysRequest
-	(*SendKeysResponse)(nil),              // 26: agentmuxd.v1.SendKeysResponse
-	(*SendTextRequest)(nil),               // 27: agentmuxd.v1.SendTextRequest
-	(*SendTextResponse)(nil),              // 28: agentmuxd.v1.SendTextResponse
+	(*RetireInstanceRequest)(nil),         // 23: agentmuxd.v1.RetireInstanceRequest
+	(*RetireInstanceResponse)(nil),        // 24: agentmuxd.v1.RetireInstanceResponse
+	(*ViewPaneRequest)(nil),               // 25: agentmuxd.v1.ViewPaneRequest
+	(*ViewPaneResponse)(nil),              // 26: agentmuxd.v1.ViewPaneResponse
+	(*SendKeysRequest)(nil),               // 27: agentmuxd.v1.SendKeysRequest
+	(*SendKeysResponse)(nil),              // 28: agentmuxd.v1.SendKeysResponse
+	(*SendTextRequest)(nil),               // 29: agentmuxd.v1.SendTextRequest
+	(*SendTextResponse)(nil),              // 30: agentmuxd.v1.SendTextResponse
 }
 var file_agentmuxd_proto_depIdxs = []int32{
 	0,  // 0: agentmuxd.v1.Instance.status:type_name -> agentmuxd.v1.Status
@@ -1965,22 +2069,24 @@ var file_agentmuxd_proto_depIdxs = []int32{
 	16, // 13: agentmuxd.v1.AgentmuxDaemon.GetCreateOptions:input_type -> agentmuxd.v1.GetCreateOptionsRequest
 	18, // 14: agentmuxd.v1.AgentmuxDaemon.ListResumableSessions:input_type -> agentmuxd.v1.ListResumableSessionsRequest
 	21, // 15: agentmuxd.v1.AgentmuxDaemon.RenameInstance:input_type -> agentmuxd.v1.RenameInstanceRequest
-	23, // 16: agentmuxd.v1.AgentmuxDaemon.ViewPane:input_type -> agentmuxd.v1.ViewPaneRequest
-	25, // 17: agentmuxd.v1.AgentmuxDaemon.SendKeys:input_type -> agentmuxd.v1.SendKeysRequest
-	27, // 18: agentmuxd.v1.AgentmuxDaemon.SendText:input_type -> agentmuxd.v1.SendTextRequest
-	5,  // 19: agentmuxd.v1.AgentmuxDaemon.ListInstances:output_type -> agentmuxd.v1.ListInstancesResponse
-	7,  // 20: agentmuxd.v1.AgentmuxDaemon.StreamEvents:output_type -> agentmuxd.v1.InstanceEvent
-	11, // 21: agentmuxd.v1.AgentmuxDaemon.Attach:output_type -> agentmuxd.v1.ServerMessage
-	13, // 22: agentmuxd.v1.AgentmuxDaemon.Control:output_type -> agentmuxd.v1.ControlResponse
-	15, // 23: agentmuxd.v1.AgentmuxDaemon.CreateInstance:output_type -> agentmuxd.v1.CreateInstanceResponse
-	17, // 24: agentmuxd.v1.AgentmuxDaemon.GetCreateOptions:output_type -> agentmuxd.v1.GetCreateOptionsResponse
-	20, // 25: agentmuxd.v1.AgentmuxDaemon.ListResumableSessions:output_type -> agentmuxd.v1.ListResumableSessionsResponse
-	22, // 26: agentmuxd.v1.AgentmuxDaemon.RenameInstance:output_type -> agentmuxd.v1.RenameInstanceResponse
-	24, // 27: agentmuxd.v1.AgentmuxDaemon.ViewPane:output_type -> agentmuxd.v1.ViewPaneResponse
-	26, // 28: agentmuxd.v1.AgentmuxDaemon.SendKeys:output_type -> agentmuxd.v1.SendKeysResponse
-	28, // 29: agentmuxd.v1.AgentmuxDaemon.SendText:output_type -> agentmuxd.v1.SendTextResponse
-	19, // [19:30] is the sub-list for method output_type
-	8,  // [8:19] is the sub-list for method input_type
+	23, // 16: agentmuxd.v1.AgentmuxDaemon.RetireInstance:input_type -> agentmuxd.v1.RetireInstanceRequest
+	25, // 17: agentmuxd.v1.AgentmuxDaemon.ViewPane:input_type -> agentmuxd.v1.ViewPaneRequest
+	27, // 18: agentmuxd.v1.AgentmuxDaemon.SendKeys:input_type -> agentmuxd.v1.SendKeysRequest
+	29, // 19: agentmuxd.v1.AgentmuxDaemon.SendText:input_type -> agentmuxd.v1.SendTextRequest
+	5,  // 20: agentmuxd.v1.AgentmuxDaemon.ListInstances:output_type -> agentmuxd.v1.ListInstancesResponse
+	7,  // 21: agentmuxd.v1.AgentmuxDaemon.StreamEvents:output_type -> agentmuxd.v1.InstanceEvent
+	11, // 22: agentmuxd.v1.AgentmuxDaemon.Attach:output_type -> agentmuxd.v1.ServerMessage
+	13, // 23: agentmuxd.v1.AgentmuxDaemon.Control:output_type -> agentmuxd.v1.ControlResponse
+	15, // 24: agentmuxd.v1.AgentmuxDaemon.CreateInstance:output_type -> agentmuxd.v1.CreateInstanceResponse
+	17, // 25: agentmuxd.v1.AgentmuxDaemon.GetCreateOptions:output_type -> agentmuxd.v1.GetCreateOptionsResponse
+	20, // 26: agentmuxd.v1.AgentmuxDaemon.ListResumableSessions:output_type -> agentmuxd.v1.ListResumableSessionsResponse
+	22, // 27: agentmuxd.v1.AgentmuxDaemon.RenameInstance:output_type -> agentmuxd.v1.RenameInstanceResponse
+	24, // 28: agentmuxd.v1.AgentmuxDaemon.RetireInstance:output_type -> agentmuxd.v1.RetireInstanceResponse
+	26, // 29: agentmuxd.v1.AgentmuxDaemon.ViewPane:output_type -> agentmuxd.v1.ViewPaneResponse
+	28, // 30: agentmuxd.v1.AgentmuxDaemon.SendKeys:output_type -> agentmuxd.v1.SendKeysResponse
+	30, // 31: agentmuxd.v1.AgentmuxDaemon.SendText:output_type -> agentmuxd.v1.SendTextResponse
+	20, // [20:32] is the sub-list for method output_type
+	8,  // [8:20] is the sub-list for method input_type
 	8,  // [8:8] is the sub-list for extension type_name
 	8,  // [8:8] is the sub-list for extension extendee
 	0,  // [0:8] is the sub-list for field type_name
@@ -2006,7 +2112,7 @@ func file_agentmuxd_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agentmuxd_proto_rawDesc), len(file_agentmuxd_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   26,
+			NumMessages:   28,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

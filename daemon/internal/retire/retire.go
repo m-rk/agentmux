@@ -12,15 +12,18 @@
 //
 // Only task-* instances created by `sessions create` are ever touched.
 // Long-lived agents (mergentic, orchestrator, *-amp templates, …) are
-// refused. Retire refuses when the worktree has uncommitted changes;
-// the branch is deleted only on positive proof of safety, otherwise the
-// branch is kept and a real retire is refused so the caller can raise an
-// ask. A dry run reports the branch check truthfully instead of claiming
-// "main contains it" unchecked.
+// refused. Retire refuses when the worktree has uncommitted changes or a
+// detached HEAD holds commits no branch points at; unmerged branches are
+// kept with their reason and reported, never a refusal — the dry run and
+// the real retire agree. Only -require-merged restores the old
+// refuse-the-whole-retire behavior for unmerged branches.
 //
-// Every external effect (amp CLI, sqlite3, systemctl/launchctl, git,
-// tmux) goes through a package-level var so tests substitute fakes;
-// production assigns the real runners in rm.go's init-adjacent vars.
+// The privileged half (stop, units, registry) runs through the daemon,
+// which owns those paths; git and worktree operations run as the
+// instance's run user, never as root. Every external effect (amp CLI,
+// sqlite3, systemctl/launchctl, git, tmux) goes through a package-level
+// var so tests substitute fakes; production assigns the real runners in
+// rm.go's init-adjacent vars.
 package retire
 
 import (
@@ -28,7 +31,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -62,6 +67,10 @@ type Record struct {
 	Workdir string `json:"workdir,omitempty"`
 	// Branch is the deleted branch, kept for the report.
 	Branch string `json:"branch,omitempty"`
+	// RunUser is the instance's run user (AGENTMUX_RUN_USER): gc-time
+	// deletions run as this user. Records written before the field
+	// existed fall back to the current user.
+	RunUser string `json:"run_user,omitempty"`
 }
 
 // RetireResult is what retire did, for the CLI and the agent log.
@@ -72,13 +81,18 @@ type RetireResult struct {
 	AmpThreads []string `json:"amp_threads,omitempty"`
 	// OpencodeSessions lists the stored sessions gc will delete; opencode only.
 	OpencodeSessions []string `json:"opencode_sessions,omitempty"`
-	// BranchDeleted reports the branch was deleted because main
-	// contained it; empty BranchKept explains why not.
-	Branch        string `json:"branch,omitempty"`
-	BranchDeleted bool   `json:"branch_deleted,omitempty"`
-	BranchKept    string `json:"branch_kept,omitempty"`
-	Workdir       string `json:"workdir,omitempty"`
-	RetiredAt     string `json:"retired_at,omitempty"`
+	// Branch is the worktree's branch (the first fate); BranchDeleted
+	// reports at least one branch was deleted because origin contained
+	// it, and BranchKept explains the first kept branch. Branches holds
+	// every branch's own verdict.
+	Branch        string       `json:"branch,omitempty"`
+	BranchDeleted bool         `json:"branch_deleted,omitempty"`
+	BranchKept    string       `json:"branch_kept,omitempty"`
+	Branches      []BranchFate `json:"branches,omitempty"`
+	Workdir       string       `json:"workdir,omitempty"`
+	// WorktreeKept says why the worktree stays, when it does.
+	WorktreeKept string `json:"worktree_kept,omitempty"`
+	RetiredAt    string `json:"retired_at,omitempty"`
 	// DryRun is set when nothing was changed.
 	DryRun bool `json:"dry_run,omitempty"`
 	// Plan lists what would happen, dry-run only.
@@ -211,6 +225,45 @@ func saveRecord(home string, rec Record) error {
 	return nil
 }
 
+// saveRecordAs writes one retired-session record like saveRecord, then
+// hands ownership to runUser when the caller is root: `sessions retire`
+// under sudo must not leave root-owned files in the run user's state
+// dir — the same root-owns-user-files shape as the git issue, one
+// directory over (confirmed live: a sudo retire left retired/ itself
+// root-owned, blocking every later unprivileged record write).
+func saveRecordAs(home, runUser string, rec Record) error {
+	if err := saveRecord(home, rec); err != nil {
+		return err
+	}
+	if os.Geteuid() != 0 || runUser == "" {
+		return nil
+	}
+	u, err := lookupUser(runUser)
+	if err != nil {
+		return nil // record is written; ownership healing is best-effort
+	}
+	uid, gid, uerr := atoiUIDGID(u)
+	if uerr != nil {
+		return nil
+	}
+	// The directory first: saveRecord's MkdirAll may have created it
+	// root-owned, and an older sudo retire may have left it that way.
+	_ = os.Chown(stateDir(home), uid, gid)
+	_ = os.Chown(recordPath(home, rec.Instance), uid, gid)
+	return nil
+}
+
+// atoiUIDGID parses a looked-up user's numeric ids for chown.
+func atoiUIDGID(u *user.User) (uid, gid int, err error) {
+	if uid, err = strconv.Atoi(u.Uid); err != nil {
+		return 0, 0, err
+	}
+	if gid, err = strconv.Atoi(u.Gid); err != nil {
+		return 0, 0, err
+	}
+	return uid, gid, nil
+}
+
 // listRecords returns every retired-session record under home.
 func listRecords(home string) ([]Record, error) {
 	entries, err := os.ReadDir(stateDir(home))
@@ -251,8 +304,11 @@ func retentionDays(path string) int {
 }
 
 // Retire ends one finished task session. See the package doc comment for
-// the per-agent behavior. ctx bounds the whole operation.
-func Retire(ctx context.Context, env Env, instance string, dryRun bool) (RetireResult, error) {
+// the per-agent behavior. ctx bounds the whole operation. A real retire
+// retires the agent and worktree and keeps unmerged branches with their
+// reason — the dry run already said so. Only RequireMerged refuses the
+// whole retire for unmerged branches, so the caller can raise an ask.
+func Retire(ctx context.Context, env Env, instance string, opts Options) (RetireResult, error) {
 	if err := guardTask(instance); err != nil {
 		return RetireResult{}, err
 	}
@@ -272,10 +328,22 @@ func Retire(ctx context.Context, env Env, instance string, dryRun bool) (RetireR
 		return RetireResult{}, err
 	}
 	plan := st.Plan(agent)
-	if dryRun {
+	if opts.DryRun {
 		return RetireResult{Instance: instance, Agent: agent, Workdir: workdir,
 			AmpThreads: st.AmpThreads, OpencodeSessions: st.OpencodeSessions,
-			Branch: st.Branch, DryRun: true, Plan: plan}, nil
+			Branch: st.Branch, Branches: inspectFates(st),
+			DryRun: true, Plan: plan}, nil
+	}
+	if opts.RequireMerged {
+		for _, f := range st.Branches {
+			if !f.Deleted {
+				why := f.Kept
+				if why == "" {
+					why = fmt.Sprintf("branch %s was not verified safe to delete; merge it before retiring", f.Branch)
+				}
+				return RetireResult{}, errorf(safesend.ReasonInvalid, "%s", why)
+			}
+		}
 	}
 	res, err := env.Apply(ctx, instance, agent, fields, st)
 	if err != nil {
@@ -284,14 +352,23 @@ func Retire(ctx context.Context, env Env, instance string, dryRun bool) (RetireR
 	res.Instance, res.Agent = instance, agent
 	now := env.Now().UTC()
 	res.RetiredAt = now.Format(time.RFC3339)
-	if err := saveRecord(home, Record{
+	if err := saveRecordAs(home, fields["AGENTMUX_RUN_USER"], Record{
 		Instance: instance, Agent: agent, RetiredAt: now,
 		AmpThreads: st.AmpThreads, OpencodeSessions: st.OpencodeSessions,
 		Workdir: workdir, Branch: branchName(res),
+		RunUser: fields["AGENTMUX_RUN_USER"],
 	}); err != nil {
 		return RetireResult{}, err
 	}
 	return res, nil
+}
+
+// inspectFates copies Inspect's per-branch verdicts into the dry-run
+// result: verified-safe branches read deleted (they would be),
+// otherwise kept with their reason — the same lines the plan reports.
+func inspectFates(st State) []BranchFate {
+	fates := make([]BranchFate, 0, len(st.Branches))
+	return append(fates, st.Branches...)
 }
 
 func branchName(res RetireResult) string {

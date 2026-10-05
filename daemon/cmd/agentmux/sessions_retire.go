@@ -24,14 +24,15 @@ func runSessionsRetire(args []string) {
 	fs := flag.NewFlagSet("sessions retire", flag.ExitOnError)
 	jsonOut := fs.Bool("json", false, "print machine-readable JSON (also on refusal)")
 	dryRun := fs.Bool("dry-run", false, "list what would go without changing anything")
+	requireMerged := fs.Bool("require-merged", false, "refuse the retire when a branch isn't provably merged, instead of retiring with the branch kept")
 	socketPath := fs.String("socket", daemoninstall.SocketPath(), "Unix socket of the local agentmuxd")
 	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml with the gateway URL of other hosts")
 	fs.Parse(args)
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: agentmux sessions retire [-json] [-dry-run] [-socket PATH] [-hosts PATH] <instance>@<host>")
+		fmt.Fprintln(os.Stderr, "usage: agentmux sessions retire [-json] [-dry-run] [-require-merged] [-socket PATH] [-hosts PATH] <instance>@<host>")
 		os.Exit(2)
 	}
-	req := ops.RetireRequest{Address: fs.Arg(0), DryRun: *dryRun}
+	req := ops.RetireRequest{Address: fs.Arg(0), DryRun: *dryRun, RequireMerged: *requireMerged}
 	var res ops.RetireResult
 	route, rerr := resolveRoute(req.Address, *hostsPath, address.LocalHostName())
 	switch {
@@ -42,7 +43,7 @@ func runSessionsRetire(args []string) {
 		ctx, cancel := context.WithTimeout(context.Background(), gatewayclient.QueryTimeout+time.Minute)
 		defer cancel()
 		var rerr error
-		res, rerr = route.Remote.Retire(ctx, gatewayapi.RetireRequest{Address: req.Address, DryRun: req.DryRun})
+		res, rerr = route.Remote.Retire(ctx, gatewayapi.RetireRequest{Address: req.Address, DryRun: req.DryRun, RequireMerged: req.RequireMerged})
 		if rerr != nil {
 			e := ops.AsError(rerr)
 			failRetire(*jsonOut, req.Address, e.Reason, e.Detail)
@@ -75,10 +76,22 @@ func runSessionsRetire(args []string) {
 	if len(res.OpencodeSessions) > 0 {
 		fmt.Printf("%d stored opencode sessions recorded for gc\n", len(res.OpencodeSessions))
 	}
-	if res.Workdir != "" {
+	if res.WorktreeKept != "" {
+		fmt.Printf("kept worktree %s: %s\n", res.Workdir, res.WorktreeKept)
+	} else if res.Workdir != "" {
 		fmt.Printf("removed worktree %s\n", res.Workdir)
 	}
-	if res.BranchDeleted {
+	if len(res.Branches) > 0 {
+		for _, f := range res.Branches {
+			if f.Deleted {
+				fmt.Printf("deleted branch %s (upstream contains it)\n", f.Branch)
+			} else if f.Kept != "" {
+				fmt.Printf("kept branch %s: %s\n", f.Branch, f.Kept)
+			} else {
+				fmt.Printf("kept branch %s\n", f.Branch)
+			}
+		}
+	} else if res.BranchDeleted {
 		fmt.Printf("deleted branch %s (upstream contains it)\n", res.Branch)
 	} else if res.BranchKept != "" {
 		fmt.Printf("kept branch %s: %s\n", res.Branch, res.BranchKept)

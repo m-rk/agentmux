@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/m-rk/agentmux/daemon/internal/runas"
 	"github.com/m-rk/agentmux/daemon/internal/safesend"
 	"github.com/m-rk/agentmux/daemon/internal/transcript"
 )
@@ -207,7 +208,7 @@ func liveOpencodeSessions(ctx context.Context, instance string, fields map[strin
 		return nil, nil
 	}
 	workdir := fields["AGENTMUX_WORKDIR"]
-	out, err := sqliteQuery(ctx, db, `SELECT id FROM session WHERE directory = `+sqlQuote(workdir))
+	out, err := sqliteQuery(ctx, fields["AGENTMUX_RUN_USER"], db, `SELECT id FROM session WHERE directory = `+sqlQuote(workdir))
 	if err != nil {
 		return nil, errorf(safesend.ReasonFailed, "listing opencode sessions for %s: %v", instance, err)
 	}
@@ -228,14 +229,23 @@ func liveOpencodeSessions(ctx context.Context, instance string, fields map[strin
 
 // opencodeDeleteSessions deletes stored opencode sessions by id: the
 // session row plus its messages and parts. Scoped to the exact ids the
-// retire recorded, never the whole database.
+// retire recorded, never the whole database. Runs as the record's run
+// user — records predate the field, and those fall back to current-user,
+// the only behavior that ever existed for them.
 func opencodeDeleteSessions(rec Record) error {
 	if len(rec.OpencodeSessions) == 0 {
 		return nil
 	}
 	home := ""
-	if u, err := user.Current(); err == nil {
-		home = u.HomeDir
+	if rec.RunUser != "" {
+		if u, err := lookupUser(rec.RunUser); err == nil {
+			home = u.HomeDir
+		}
+	}
+	if home == "" {
+		if u, err := user.Current(); err == nil {
+			home = u.HomeDir
+		}
 	}
 	db := filepath.Join(home, ".local", "share", "opencode", "opencode.db")
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -247,7 +257,7 @@ func opencodeDeleteSessions(rec Record) error {
 			`DELETE FROM message WHERE session_id = ` + q,
 			`DELETE FROM session WHERE id = ` + q,
 		} {
-			if err := sqliteExec(ctx, db, sql); err != nil {
+			if err := sqliteExec(ctx, rec.RunUser, db, sql); err != nil {
 				return errorf(safesend.ReasonFailed, "deleting opencode session %s: %v", id, err)
 			}
 		}
@@ -255,10 +265,10 @@ func opencodeDeleteSessions(rec Record) error {
 	return nil
 }
 
-// sqliteQuery runs sql against db and returns stdout. A var so tests
-// substitute a fake without touching a real database or PATH.
-var sqliteQuery = func(ctx context.Context, db, sql string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "sqlite3", "-readonly", "-json", db, sql)
+// sqliteQuery runs sql against db as runUser and returns stdout. A var
+// so tests substitute a fake without touching a real database or PATH.
+var sqliteQuery = func(ctx context.Context, runUser, db, sql string) ([]byte, error) {
+	cmd := sqliteCommand(ctx, runUser, "sqlite3", "-readonly", "-json", db, sql)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
@@ -267,15 +277,27 @@ var sqliteQuery = func(ctx context.Context, db, sql string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
-// sqliteExec runs a write against db. A var so tests substitute a fake.
-var sqliteExec = func(ctx context.Context, db, sql string) error {
-	cmd := exec.CommandContext(ctx, "sqlite3", db, sql)
+// sqliteExec runs a write against db as runUser. A var so tests
+// substitute a fake.
+var sqliteExec = func(ctx context.Context, runUser, db, sql string) error {
+	cmd := sqliteCommand(ctx, runUser, "sqlite3", db, sql)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("sqlite3: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	return nil
+}
+
+// sqliteCommand builds the sqlite3 invocation as runUser: same-user
+// direct, root dropping via runas, anything else a clear refusal. Root
+// must never open the run user's database itself — even a read can
+// create root-owned -wal/-shm sidecars that lock the run user out.
+func sqliteCommand(ctx context.Context, runUser, name string, args ...string) *exec.Cmd {
+	if runUser == "" {
+		return runas.CurrentUserCommandContext(ctx, name, args...)
+	}
+	return runas.CommandContext(ctx, runUser, name, args...)
 }
 
 func sqlQuote(s string) string {

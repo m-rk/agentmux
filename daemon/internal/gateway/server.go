@@ -226,7 +226,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, a *access) {
 		}
 		a.target = clip(req.Address)
 		s.perSession(w, a, id, op, req.Address, func(ctx context.Context) (any, error) {
-			return s.backend.Retire(ctx, ops.RetireRequest{Address: req.Address, DryRun: req.DryRun})
+			return s.backend.Retire(ctx, ops.RetireRequest{Address: req.Address, DryRun: req.DryRun, RequireMerged: req.RequireMerged})
 		}, r)
 	case gatewayapi.OpGC:
 		var req gatewayapi.GCRequest

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/m-rk/agentmux/daemon/internal/discovery"
+	"github.com/m-rk/agentmux/daemon/internal/session"
 	"github.com/m-rk/agentmux/daemon/internal/transcript"
 )
 
@@ -188,7 +189,7 @@ func TestAmpDeleteRunsTheDocumentedCommand(t *testing.T) {
 func TestLiveOpencodeSessionsListsWorkdirSessions(t *testing.T) {
 	var queries []string
 	old := sqliteQuery
-	sqliteQuery = func(_ context.Context, db, sql string) ([]byte, error) {
+	sqliteQuery = func(_ context.Context, _ string, db, sql string) ([]byte, error) {
 		queries = append(queries, sql)
 		if !strings.Contains(sql, "FROM session") || !strings.Contains(sql, "/w/task-2") {
 			t.Errorf("query = %q, want a session-directory lookup for the workdir", sql)
@@ -247,7 +248,7 @@ func TestLiveOpencodeSessionsMissingDBIsEmpty(t *testing.T) {
 func TestOpencodeDeleteSessionsDeletesScopedRows(t *testing.T) {
 	var execs []string
 	old := sqliteExec
-	sqliteExec = func(_ context.Context, _ string, sql string) error {
+	sqliteExec = func(_ context.Context, _ string, _ string, sql string) error {
 		execs = append(execs, sql)
 		return nil
 	}
@@ -288,11 +289,11 @@ func TestRemoveUnitsAndRegistry(t *testing.T) {
 	// and the registry entry is removed). /etc/systemd/system is not
 	// writable in test, so removal errors for present-but-unwritable
 	// files would surface — missing files are the expected case.
-	if err := removeUnits("task-9-definitely-not-a-real-instance"); err != nil {
-		t.Fatalf("removeUnits missing units: %v", err)
+	if err := session.RemoveUnits("task-9-definitely-not-a-real-instance"); err != nil {
+		t.Fatalf("RemoveUnits missing units: %v", err)
 	}
-	if err := removeRegistry("task-9"); err != nil {
-		t.Fatalf("removeRegistry: %v", err)
+	if err := session.RemoveRegistry("task-9"); err != nil {
+		t.Fatalf("RemoveRegistry: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "task-9.env")); !os.IsNotExist(err) {
 		t.Error("registry entry still present")

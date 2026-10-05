@@ -114,6 +114,13 @@ func (c *Client) RenameInstance(ctx context.Context, req *pb.RenameInstanceReque
 	return c.api.RenameInstance(ctx, req)
 }
 
+// RetireInstance ends a finished task session's managed half (stop, remove
+// units and registry) through the daemon, which owns those privileged
+// paths; the caller keeps the git/worktree half.
+func (c *Client) RetireInstance(ctx context.Context, req *pb.RetireInstanceRequest) (*pb.RetireInstanceResponse, error) {
+	return c.api.RetireInstance(ctx, req)
+}
+
 func (c *Client) SendKeys(ctx context.Context, req *pb.SendKeysRequest) (*pb.SendKeysResponse, error) {
 	return c.api.SendKeys(ctx, req)
 }

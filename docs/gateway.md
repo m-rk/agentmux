@@ -181,16 +181,25 @@ served its purpose. `retire` ends it: for an amp instance it archives
 the thread with `amp threads archive` (the thread stays readable on
 ampcode.com); for every agent it stops the session, removes the
 instance's units and registry entry, and removes the worktree. The
-branch is deleted only when origin's default branch provably contains
-every commit (directly, or as a squash/cherry-pick equivalent);
-otherwise the branch is kept and a real retire is refused. Claude Code
+worktree's branch — plus the recorded and sibling `task/<ID>-*` branches
+— is deleted only when origin's default branch provably contains every
+commit (directly, or as a squash/cherry-pick equivalent); otherwise the
+branch is kept and reported (`keep branch …: <reason>`) while the retire
+still goes through — the dry run and the real retire agree. Pass
+`require_merged: true` (CLI `-require-merged`) for the old stricter mode,
+which refuses the whole retire (`invalid`) when any branch is unmerged.
+Claude Code
 transcripts are kept; an opencode session's stored rows are recorded so
 `gc` can delete them later. Only `task-*` instances are ever touched —
-anything else is refused (`forbidden`) — and a dirty worktree or an
-unverified branch is refused (`invalid`) so the caller
+anything else is refused (`forbidden`) — and a dirty worktree or a
+detached HEAD holding commits no branch points at is refused (`invalid`)
+so the caller
 can raise an ask instead. A dry run reports the branch check
 truthfully: it names "keep branch …" with the reason rather than
-claiming containment it never verified.
+claiming containment it never verified. On Linux the privileged half
+(stop, units, registry) runs through the daemon, so `sessions retire`
+works unprivileged; git and worktree operations always run as the
+instance's run user, never as root.
 
 ```json
 POST /v1/retire
@@ -201,6 +210,7 @@ POST /v1/retire
 |-----------|---------|
 | `address` | `<instance>@<host>` (no `#thread`); the grant is checked against it |
 | `dry_run` | optional; list what would go without changing anything |
+| `require_merged` | optional; refuse the whole retire when any branch is unmerged instead of keeping it |
 
 From a shell, routed by the instance's host:
 

@@ -27,6 +27,7 @@ const (
 	AgentmuxDaemon_GetCreateOptions_FullMethodName      = "/agentmuxd.v1.AgentmuxDaemon/GetCreateOptions"
 	AgentmuxDaemon_ListResumableSessions_FullMethodName = "/agentmuxd.v1.AgentmuxDaemon/ListResumableSessions"
 	AgentmuxDaemon_RenameInstance_FullMethodName        = "/agentmuxd.v1.AgentmuxDaemon/RenameInstance"
+	AgentmuxDaemon_RetireInstance_FullMethodName        = "/agentmuxd.v1.AgentmuxDaemon/RetireInstance"
 	AgentmuxDaemon_ViewPane_FullMethodName              = "/agentmuxd.v1.AgentmuxDaemon/ViewPane"
 	AgentmuxDaemon_SendKeys_FullMethodName              = "/agentmuxd.v1.AgentmuxDaemon/SendKeys"
 	AgentmuxDaemon_SendText_FullMethodName              = "/agentmuxd.v1.AgentmuxDaemon/SendText"
@@ -64,6 +65,13 @@ type AgentmuxDaemonClient interface {
 	// itself, not the caller — see daemonserver's implementation for why that
 	// distinction matters for an instance renaming its own hosting session.
 	RenameInstance(ctx context.Context, in *RenameInstanceRequest, opts ...grpc.CallOption) (*RenameInstanceResponse, error)
+	// Ends a finished task session's managed half: stops the session (so the
+	// unit's own ExecStop runs the agent shutdown as the unit user), then
+	// removes the instance's units and registry entry. The retire half the
+	// CLI owns — archiving threads, git/worktree/branch work as the run
+	// user, writing the retired record — happens around this call, never
+	// inside it. Refuses anything that isn't task-* shaped, like retire.
+	RetireInstance(ctx context.Context, in *RetireInstanceRequest, opts ...grpc.CallOption) (*RetireInstanceResponse, error)
 	// Headless snapshot of an instance's tmux pane — what Attach would show
 	// if you attached and looked, without opening an interactive session.
 	// Read-only; safe to call at any time.
@@ -182,6 +190,16 @@ func (c *agentmuxDaemonClient) RenameInstance(ctx context.Context, in *RenameIns
 	return out, nil
 }
 
+func (c *agentmuxDaemonClient) RetireInstance(ctx context.Context, in *RetireInstanceRequest, opts ...grpc.CallOption) (*RetireInstanceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RetireInstanceResponse)
+	err := c.cc.Invoke(ctx, AgentmuxDaemon_RetireInstance_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *agentmuxDaemonClient) ViewPane(ctx context.Context, in *ViewPaneRequest, opts ...grpc.CallOption) (*ViewPaneResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ViewPaneResponse)
@@ -244,6 +262,13 @@ type AgentmuxDaemonServer interface {
 	// itself, not the caller — see daemonserver's implementation for why that
 	// distinction matters for an instance renaming its own hosting session.
 	RenameInstance(context.Context, *RenameInstanceRequest) (*RenameInstanceResponse, error)
+	// Ends a finished task session's managed half: stops the session (so the
+	// unit's own ExecStop runs the agent shutdown as the unit user), then
+	// removes the instance's units and registry entry. The retire half the
+	// CLI owns — archiving threads, git/worktree/branch work as the run
+	// user, writing the retired record — happens around this call, never
+	// inside it. Refuses anything that isn't task-* shaped, like retire.
+	RetireInstance(context.Context, *RetireInstanceRequest) (*RetireInstanceResponse, error)
 	// Headless snapshot of an instance's tmux pane — what Attach would show
 	// if you attached and looked, without opening an interactive session.
 	// Read-only; safe to call at any time.
@@ -293,6 +318,9 @@ func (UnimplementedAgentmuxDaemonServer) ListResumableSessions(context.Context, 
 }
 func (UnimplementedAgentmuxDaemonServer) RenameInstance(context.Context, *RenameInstanceRequest) (*RenameInstanceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RenameInstance not implemented")
+}
+func (UnimplementedAgentmuxDaemonServer) RetireInstance(context.Context, *RetireInstanceRequest) (*RetireInstanceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RetireInstance not implemented")
 }
 func (UnimplementedAgentmuxDaemonServer) ViewPane(context.Context, *ViewPaneRequest) (*ViewPaneResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ViewPane not implemented")
@@ -450,6 +478,24 @@ func _AgentmuxDaemon_RenameInstance_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AgentmuxDaemon_RetireInstance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RetireInstanceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentmuxDaemonServer).RetireInstance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentmuxDaemon_RetireInstance_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentmuxDaemonServer).RetireInstance(ctx, req.(*RetireInstanceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _AgentmuxDaemon_ViewPane_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ViewPaneRequest)
 	if err := dec(in); err != nil {
@@ -534,6 +580,10 @@ var AgentmuxDaemon_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RenameInstance",
 			Handler:    _AgentmuxDaemon_RenameInstance_Handler,
+		},
+		{
+			MethodName: "RetireInstance",
+			Handler:    _AgentmuxDaemon_RetireInstance_Handler,
 		},
 		{
 			MethodName: "ViewPane",

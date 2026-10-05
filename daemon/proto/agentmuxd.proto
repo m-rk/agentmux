@@ -41,6 +41,14 @@ service AgentmuxDaemon {
   // distinction matters for an instance renaming its own hosting session.
   rpc RenameInstance(RenameInstanceRequest) returns (RenameInstanceResponse);
 
+  // Ends a finished task session's managed half: stops the session (so the
+  // unit's own ExecStop runs the agent shutdown as the unit user), then
+  // removes the instance's units and registry entry. The retire half the
+  // CLI owns — archiving threads, git/worktree/branch work as the run
+  // user, writing the retired record — happens around this call, never
+  // inside it. Refuses anything that isn't task-* shaped, like retire.
+  rpc RetireInstance(RetireInstanceRequest) returns (RetireInstanceResponse);
+
   // Headless snapshot of an instance's tmux pane — what Attach would show
   // if you attached and looked, without opening an interactive session.
   // Read-only; safe to call at any time.
@@ -240,6 +248,15 @@ message RenameInstanceRequest {
 }
 
 message RenameInstanceResponse {
+  bool ok = 1;
+  string message = 2;
+}
+
+message RetireInstanceRequest {
+  string instance = 1;
+}
+
+message RetireInstanceResponse {
   bool ok = 1;
   string message = 2;
 }

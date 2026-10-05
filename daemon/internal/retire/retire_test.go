@@ -22,6 +22,8 @@ type fakeEnv struct {
 	state    State
 	inspect  error
 	applied  []string
+	managed  []string
+	managedErr error
 	deleted  []Record
 	delErr   error
 }
@@ -54,7 +56,14 @@ func (f *fakeEnv) Inspect(context.Context, string, map[string]string) (State, er
 
 func (f *fakeEnv) Apply(_ context.Context, instance, agent string, _ map[string]string, st State) (RetireResult, error) {
 	f.applied = append(f.applied, instance+"/"+agent)
-	res := RetireResult{Workdir: st.Workdir, Branch: st.Branch, BranchDeleted: st.Branch != ""}
+	res := RetireResult{Workdir: st.Workdir, Branch: st.Branch, Branches: st.Branches}
+	for _, b := range st.Branches {
+		if b.Deleted {
+			res.BranchDeleted = true
+		} else if b.Kept != "" && res.BranchKept == "" {
+			res.BranchKept = b.Kept
+		}
+	}
 	if agent == "amp" {
 		res.AmpThreads = st.AmpThreads
 	}
@@ -62,6 +71,14 @@ func (f *fakeEnv) Apply(_ context.Context, instance, agent string, _ map[string]
 		res.OpencodeSessions = st.OpencodeSessions
 	}
 	return res, nil
+}
+
+func (f *fakeEnv) RemoveManaged(_ context.Context, instance string) (string, error) {
+	f.managed = append(f.managed, instance)
+	if f.managedErr != nil {
+		return "", f.managedErr
+	}
+	return "stopped session, removed units and registry entry", nil
 }
 
 func (f *fakeEnv) GCHome() string { return f.home }
@@ -90,6 +107,7 @@ func newFakeEnv(t *testing.T) *fakeEnv {
 			"web":    {"AGENTMUX_AGENT": "claude-code", "AGENTMUX_WORKDIR": "/w/web"},
 		},
 		state: State{Workdir: "/w/task-1", Branch: "task/1", Repo: "/repo",
+			Branches:   []BranchFate{{Branch: "task/1", Deleted: true, Upstream: "origin/main"}},
 			AmpThreads: []string{"T-00000000-0000-4000-8000-000000000001"}},
 	}
 }
@@ -97,7 +115,7 @@ func newFakeEnv(t *testing.T) *fakeEnv {
 func TestRetireRefusesNonTask(t *testing.T) {
 	env := newFakeEnv(t)
 	for _, name := range []string{"web", "mergentic", "agentmux", "task", "mytask-1"} {
-		if _, err := Retire(context.Background(), env, name, false); err == nil {
+		if _, err := Retire(context.Background(), env, name, Options{}); err == nil {
 			t.Errorf("Retire(%q) = nil, want a refusal", name)
 		} else if ReasonOf(err) != safesend.ReasonForbidden {
 			t.Errorf("Retire(%q) reason = %s, want forbidden", name, ReasonOf(err))
@@ -110,7 +128,7 @@ func TestRetireRefusesNonTask(t *testing.T) {
 
 func TestRetireRefusesUnknownInstance(t *testing.T) {
 	env := newFakeEnv(t)
-	if _, err := Retire(context.Background(), env, "task-nope", false); ReasonOf(err) != safesend.ReasonNotFound {
+	if _, err := Retire(context.Background(), env, "task-nope", Options{}); ReasonOf(err) != safesend.ReasonNotFound {
 		t.Errorf("reason = %s, want not_found", ReasonOf(err))
 	}
 }
@@ -118,7 +136,7 @@ func TestRetireRefusesUnknownInstance(t *testing.T) {
 func TestRetirePropagatesInspectError(t *testing.T) {
 	env := newFakeEnv(t)
 	env.inspect = errorf(safesend.ReasonInvalid, "worktree /w/task-1 has uncommitted changes; commit or stash them before retiring")
-	_, err := Retire(context.Background(), env, "task-1", false)
+	_, err := Retire(context.Background(), env, "task-1", Options{})
 	if ReasonOf(err) != safesend.ReasonInvalid {
 		t.Fatalf("reason = %s, want invalid", ReasonOf(err))
 	}
@@ -132,7 +150,7 @@ func TestRetirePropagatesInspectError(t *testing.T) {
 
 func TestRetireDryRunChangesNothing(t *testing.T) {
 	env := newFakeEnv(t)
-	res, err := Retire(context.Background(), env, "task-1", true)
+	res, err := Retire(context.Background(), env, "task-1", Options{DryRun: true})
 	if err != nil {
 		t.Fatalf("Retire dry-run: %v", err)
 	}
@@ -149,7 +167,7 @@ func TestRetireDryRunChangesNothing(t *testing.T) {
 
 func TestRetireWritesRecord(t *testing.T) {
 	env := newFakeEnv(t)
-	res, err := Retire(context.Background(), env, "task-1", false)
+	res, err := Retire(context.Background(), env, "task-1", Options{})
 	if err != nil {
 		t.Fatalf("Retire: %v", err)
 	}
@@ -180,8 +198,8 @@ func TestRetireWritesRecord(t *testing.T) {
 
 func TestRetireLegacyAgentDefaultsToClaudeCode(t *testing.T) {
 	env := newFakeEnv(t)
-	env.state = State{Workdir: "/w/task-3", Branch: "task/3", Repo: "/repo"}
-	res, err := Retire(context.Background(), env, "task-3", false)
+	env.state = State{Workdir: "/w/task-3", Branch: "task/3", Repo: "/repo", Branches: []BranchFate{{Branch: "task/3", Deleted: true}}}
+	res, err := Retire(context.Background(), env, "task-3", Options{})
 	if err != nil {
 		t.Fatalf("Retire: %v", err)
 	}
@@ -196,8 +214,9 @@ func TestRetireLegacyAgentDefaultsToClaudeCode(t *testing.T) {
 func TestRetireOpencodeRecordsSessions(t *testing.T) {
 	env := newFakeEnv(t)
 	env.state = State{Workdir: "/w/task-2", Branch: "task/2", Repo: "/repo",
+		Branches:         []BranchFate{{Branch: "task/2", Deleted: true}},
 		OpencodeSessions: []string{"ses-aaa", "ses-bbb"}}
-	res, err := Retire(context.Background(), env, "task-2", false)
+	res, err := Retire(context.Background(), env, "task-2", Options{})
 	if err != nil {
 		t.Fatalf("Retire: %v", err)
 	}
@@ -323,7 +342,8 @@ func TestGCEmptyState(t *testing.T) {
 }
 
 func TestPlan(t *testing.T) {
-	st := State{Workdir: "/w/t", Branch: "task/9", BranchOK: true, BranchUpstream: "origin/main",
+	st := State{Workdir: "/w/t", Branch: "task/9",
+		Branches:   []BranchFate{{Branch: "task/9", Deleted: true, Upstream: "origin/main"}},
 		AmpThreads: []string{"T-00000000-0000-4000-8000-000000000001"}}
 	plan := st.Plan("amp")
 	joined := strings.Join(plan, "\n")
@@ -336,7 +356,9 @@ func TestPlan(t *testing.T) {
 	// An unverified branch is kept with its reason — the AMUX-20
 	// regression: the dry run must never claim "contains it" unchecked.
 	kept := State{Workdir: "/w/t", Branch: "task/9",
-		BranchWhy: "branch task/9 has commits not on origin/main; merge it before retiring"}.Plan("amp")
+		Branches: []BranchFate{{Branch: "task/9",
+			Kept:     "branch task/9 has commits not on origin/main; merge it before retiring",
+			Upstream: "origin/main"}}}.Plan("amp")
 	if joined := strings.Join(kept, "\n"); !strings.Contains(joined, "keep branch task/9: branch task/9 has commits not on origin/main") {
 		t.Errorf("unverified plan should keep the branch with a reason: %v", kept)
 	}
@@ -350,5 +372,13 @@ func TestPlan(t *testing.T) {
 	op := State{Workdir: "/w/t", Branch: "task/9", OpencodeSessions: []string{"a", "b"}}.Plan("opencode")
 	if !strings.Contains(strings.Join(op, "\n"), "2 stored opencode sessions") {
 		t.Errorf("opencode plan should count stored sessions: %v", op)
+	}
+	// A kept worktree is planned as kept with its reason.
+	wt := State{Workdir: "/w/t", Branch: "task/9", WorktreeKept: "detached HEAD abc1234 is not on origin"}.Plan("amp")
+	if joined := strings.Join(wt, "\n"); !strings.Contains(joined, "keep worktree /w/t: detached HEAD abc1234 is not on origin") {
+		t.Errorf("plan should keep the worktree with a reason: %v", wt)
+	}
+	if strings.Contains(strings.Join(wt, "\n"), "remove worktree") {
+		t.Errorf("plan claims the worktree would go: %v", wt)
 	}
 }

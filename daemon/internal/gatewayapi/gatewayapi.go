@@ -136,6 +136,9 @@ type RunResponse = ops.RunResult
 type RetireRequest struct {
 	Address string `json:"address"`
 	DryRun  bool   `json:"dry_run,omitempty"`
+	// RequireMerged refuses the retire when a branch isn't provably
+	// merged, instead of retiring with the branch kept.
+	RequireMerged bool `json:"require_merged,omitempty"`
 }
 
 // RetireResponse is the retire outcome; a refusal is a non-2xx

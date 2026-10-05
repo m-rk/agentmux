@@ -78,65 +78,105 @@ func originRepo(t *testing.T) string {
 	return clone
 }
 
-func TestDeleteBranchWhenMerged(t *testing.T) {
+func TestVerifyAndDeleteMergedBranch(t *testing.T) {
 	repo := originRepo(t)
 	ctx := context.Background()
+	git := gitRunner("")
 	gitRun(t, repo, "checkout", "-q", "-b", "task/merged")
 	gitRun(t, repo, "commit", "-q", "--allow-empty", "-m", "work")
 	gitRun(t, repo, "checkout", "-q", "main")
 	gitRun(t, repo, "merge", "-q", "--ff-only", "task/merged")
 	gitRun(t, repo, "push", "-q", "origin", "main")
-	got, err := deleteBranchWhenMerged(ctx, State{Repo: repo, Branch: "task/merged", BranchOK: true})
+	st := State{Repo: repo, Branch: "task/merged",
+		Branches: []BranchFate{{Branch: "task/merged", Deleted: true}}}
+	verified, err := verifyBranches(ctx, git, st)
 	if err != nil {
-		t.Fatalf("merged branch: %v", err)
+		t.Fatalf("verifyBranches: %v", err)
 	}
-	if !got.deleted {
-		t.Error("merged branch was not marked for deletion")
+	if len(verified) != 1 {
+		t.Fatalf("verified = %v, want the merged branch", verified)
+	}
+	fates, err := deleteVerifiedBranches(ctx, git, st, mainOf(t, ctx, st), verified)
+	if err != nil {
+		t.Fatalf("deleteVerifiedBranches: %v", err)
+	}
+	if len(fates) != 1 || !fates[0].Deleted {
+		t.Errorf("fates = %+v, want one deletion", fates)
 	}
 }
 
-// TestDeleteBranchRefusesUnverified is the AMUX-20 regression: a branch
-// whose safety was never verified (BranchOK false — e.g. a plan built
-// before the check ran, or by an older binary) must be refused, never
-// deleted on the strength of local refs alone.
-func TestDeleteBranchRefusesUnverified(t *testing.T) {
+// TestUnverifiedBranchIsKept is the AMUX-20 regression: a branch whose
+// safety was never verified must be kept with its reason, never deleted
+// on the strength of local refs alone — and the retire completes.
+func TestUnverifiedBranchIsKept(t *testing.T) {
 	repo := originRepo(t)
 	ctx := context.Background()
+	git := gitRunner("")
 	gitRun(t, repo, "checkout", "-q", "-b", "task/never-checked")
 	gitRun(t, repo, "commit", "-q", "--allow-empty", "-m", "work")
 	gitRun(t, repo, "checkout", "-q", "main")
-	if _, err := deleteBranchWhenMerged(ctx, State{Repo: repo, Branch: "task/never-checked"}); err == nil {
-		t.Fatal("unverified branch: nil error, want a refusal")
-	} else if ReasonOf(err) != "invalid" {
-		t.Errorf("reason = %s, want invalid", ReasonOf(err))
-	}
-}
-
-func TestDeleteBranchWhenMergedRefusesUnmerged(t *testing.T) {
-	repo := gitRepo(t)
-	ctx := context.Background()
-	_, err := deleteBranchWhenMerged(ctx, State{Repo: repo, Branch: "task/unmerged", BranchOK: false,
-		BranchWhy: "branch task/unmerged has commits not on origin/main; merge it before retiring"})
-	if err == nil {
-		t.Fatal("unmerged branch: nil error, want a refusal")
-	}
-	if ReasonOf(err) != "invalid" {
-		t.Errorf("reason = %s, want invalid", ReasonOf(err))
-	}
-	if !strings.Contains(DetailOf(err), "task/unmerged") || !strings.Contains(DetailOf(err), "origin/main") {
-		t.Errorf("detail = %q, want branch and upstream named", DetailOf(err))
-	}
-}
-
-func TestDeleteBranchWhenMergedKeepsMain(t *testing.T) {
-	repo := gitRepo(t)
-	ctx := context.Background()
-	got, err := deleteBranchWhenMerged(ctx, State{Repo: repo, Branch: "main"})
+	st := State{Repo: repo, Branch: "task/never-checked",
+		Branches: []BranchFate{{Branch: "task/never-checked", Kept: "not verified"}}}
+	verified, err := verifyBranches(ctx, git, st)
 	if err != nil {
-		t.Fatalf("main: %v", err)
+		t.Fatalf("verifyBranches: %v", err)
 	}
-	if got.deleted || got.kept == "" {
-		t.Errorf("main: deleted=%v kept=%q", got.deleted, got.kept)
+	if len(verified) != 0 {
+		t.Fatalf("verified = %v, want none", verified)
+	}
+	fates, err := deleteVerifiedBranches(ctx, git, st, mainOf(t, ctx, st), verified)
+	if err != nil {
+		t.Fatalf("deleteVerifiedBranches: %v", err)
+	}
+	if len(fates) != 1 || fates[0].Deleted || fates[0].Kept == "" {
+		t.Errorf("fates = %+v, want one keep with a reason", fates)
+	}
+}
+
+func TestVerifyKeepsUnmergedBranch(t *testing.T) {
+	repo := gitRepo(t)
+	ctx := context.Background()
+	git := gitRunner("")
+	st := State{Repo: repo, Branch: "task/unmerged",
+		Branches: []BranchFate{{Branch: "task/unmerged",
+			Kept: "branch task/unmerged has commits not on origin/main; merge it before retiring"}}}
+	verified, err := verifyBranches(ctx, git, st)
+	if err != nil {
+		t.Fatalf("verifyBranches: %v", err)
+	}
+	if len(verified) != 0 {
+		t.Errorf("verified = %v, want none for an unmerged branch", verified)
+	}
+	fates, err := deleteVerifiedBranches(ctx, git, st, mainOf(t, ctx, st), verified)
+	if err != nil {
+		t.Fatalf("deleteVerifiedBranches: %v", err)
+	}
+	if len(fates) != 1 || fates[0].Deleted {
+		t.Errorf("fates = %+v, want the branch kept", fates)
+	}
+	if !strings.Contains(fates[0].Kept, "task/unmerged") || !strings.Contains(fates[0].Kept, "origin/main") {
+		t.Errorf("kept = %q, want branch and upstream named", fates[0].Kept)
+	}
+}
+
+func TestVerifyKeepsMain(t *testing.T) {
+	repo := gitRepo(t)
+	ctx := context.Background()
+	git := gitRunner("")
+	st := State{Repo: repo, Branches: []BranchFate{{Branch: "main", Kept: "not a task branch"}}}
+	verified, err := verifyBranches(ctx, git, st)
+	if err != nil {
+		t.Fatalf("verifyBranches: %v", err)
+	}
+	if len(verified) != 0 {
+		t.Errorf("verified = %v, want none for main", verified)
+	}
+	fates, err := deleteVerifiedBranches(ctx, git, st, mainOf(t, ctx, st), verified)
+	if err != nil {
+		t.Fatalf("deleteVerifiedBranches: %v", err)
+	}
+	if len(fates) != 1 || fates[0].Deleted || fates[0].Kept == "" {
+		t.Errorf("fates = %+v, want main kept", fates)
 	}
 }
 
@@ -150,7 +190,7 @@ func TestCheckBranchSafeRefusesUnpushedWork(t *testing.T) {
 	ctx := context.Background()
 	gitRun(t, repo, "checkout", "-q", "-b", "task/unpushed")
 	gitRun(t, repo, "commit", "-q", "--allow-empty", "-m", "unique work")
-	ok, why, upstream := checkBranchSafe(ctx, repo, "task/unpushed")
+	ok, why, upstream := checkBranchSafe(ctx, gitRunner(""), repo, "task/unpushed")
 	if ok {
 		t.Fatal("unpushed branch reported safe, want keep")
 	}
@@ -172,7 +212,7 @@ func TestCheckBranchSafeAcceptsMergedTip(t *testing.T) {
 	gitRun(t, repo, "checkout", "-q", "main")
 	gitRun(t, repo, "merge", "-q", "--ff-only", "task/done")
 	gitRun(t, repo, "push", "-q", "origin", "main")
-	ok, why, upstream := checkBranchSafe(ctx, repo, "task/done")
+	ok, why, upstream := checkBranchSafe(ctx, gitRunner(""), repo, "task/done")
 	if !ok {
 		t.Fatalf("merged branch not safe: %q", why)
 	}
@@ -201,7 +241,7 @@ func TestCheckBranchSafeAcceptsSquashMerge(t *testing.T) {
 		"task/squashed", "origin/main").Run(); err == nil {
 		t.Fatal("test setup: squash tip unexpectedly an ancestor of origin/main")
 	}
-	ok, why, _ := checkBranchSafe(ctx, repo, "task/squashed")
+	ok, why, _ := checkBranchSafe(ctx, gitRunner(""), repo, "task/squashed")
 	if !ok {
 		t.Fatalf("squash-merged branch not safe: %q", why)
 	}
@@ -221,7 +261,7 @@ func TestCheckBranchSafeAcceptsCherryPick(t *testing.T) {
 	gitRun(t, repo, "checkout", "-q", "main")
 	gitRun(t, repo, "cherry-pick", "task/picked")
 	gitRun(t, repo, "push", "-q", "origin", "main")
-	ok, why, _ := checkBranchSafe(ctx, repo, "task/picked")
+	ok, why, _ := checkBranchSafe(ctx, gitRunner(""), repo, "task/picked")
 	if !ok {
 		t.Fatalf("cherry-picked branch not safe: %q", why)
 	}
@@ -238,7 +278,7 @@ func TestCheckBranchSafeRefusesStaleLocalMain(t *testing.T) {
 	gitRun(t, repo, "checkout", "-q", "main")
 	gitRun(t, repo, "merge", "-q", "--ff-only", "task/local-only")
 	// Deliberately not pushed: origin/main lacks the work.
-	ok, why, _ := checkBranchSafe(ctx, repo, "task/local-only")
+	ok, why, _ := checkBranchSafe(ctx, gitRunner(""), repo, "task/local-only")
 	if ok {
 		t.Fatalf("branch only on local main reported safe: %q", why)
 	}
@@ -262,27 +302,29 @@ func TestCheckBranchSafeFetchesBeforeChecking(t *testing.T) {
 	// repo's origin/main is now stale, and the branch exists locally as a
 	// worktree branch would; the check must fetch past the stale ref.
 	gitRun(t, repo, "fetch", "-q", "origin", "task/done-elsewhere:refs/heads/task/done-elsewhere")
-	ok, why, _ := checkBranchSafe(ctx, repo, "task/done-elsewhere")
+	ok, why, _ := checkBranchSafe(ctx, gitRunner(""), repo, "task/done-elsewhere")
 	if !ok {
 		t.Fatalf("branch merged upstream not safe without manual fetch: %q", why)
 	}
 }
 
-func TestRemoveWorktreeRemovesAndDeletesBranch(t *testing.T) {
+func TestRemoveWorktreeRemoves(t *testing.T) {
 	repo := gitRepo(t)
 	ctx := context.Background()
 	wtPath := filepath.Join(filepath.Dir(repo), "app-worktrees", "wt-1")
 	gitRun(t, repo, "worktree", "add", wtPath, "task/AMUX-19-x")
-	if err := removeWorktree(ctx, State{Repo: repo, Workdir: wtPath, Branch: "task/AMUX-19-x"}, true); err != nil {
+	if err := removeWorktree(ctx, gitRunner(""), State{Repo: repo, Workdir: wtPath, Branch: "task/AMUX-19-x"}); err != nil {
 		t.Fatalf("removeWorktree: %v", err)
 	}
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Error("worktree still on disk")
 	}
+	// Branch deletion is a separate step now (deleteVerifiedBranches):
+	// the worktree remove leaves refs alone.
 	cmd := exec.Command("git", "-C", repo, "show-ref", "--verify", "--quiet", "refs/heads/task/AMUX-19-x")
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	if err := cmd.Run(); err == nil {
-		t.Error("branch still exists after removeWorktree")
+	if err := cmd.Run(); err != nil {
+		t.Error("worktree remove deleted the branch ref; branch deletion is deleteVerifiedBranches' job")
 	}
 }
 
@@ -293,7 +335,7 @@ func TestRemoveWorktreeKeepsBranch(t *testing.T) {
 	ctx := context.Background()
 	wtPath := filepath.Join(filepath.Dir(repo), "app-worktrees", "wt-kept")
 	gitRun(t, repo, "worktree", "add", wtPath, "task/unmerged")
-	if err := removeWorktree(ctx, State{Repo: repo, Workdir: wtPath, Branch: "task/unmerged"}, false); err != nil {
+	if err := removeWorktree(ctx, gitRunner(""), State{Repo: repo, Workdir: wtPath, Branch: "task/unmerged"}); err != nil {
 		t.Fatalf("removeWorktree: %v", err)
 	}
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
@@ -353,11 +395,9 @@ func TestLiveEnvInspectMarksUnmergedBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Inspect: %v", err)
 	}
-	if st.BranchOK {
-		t.Error("BranchOK = true for an unpushed branch")
-	}
-	if st.BranchWhy == "" {
-		t.Error("BranchWhy is empty for an unpushed branch")
+	kept := fateOf(st, "task/unpushed")
+	if kept == nil || kept.Deleted || kept.Kept == "" {
+		t.Errorf("Branches = %+v, want task/unpushed kept with a reason", st.Branches)
 	}
 	joined := strings.Join(st.Plan("claude-code"), "\n")
 	if strings.Contains(joined, "delete branch") {
@@ -386,10 +426,31 @@ func TestLiveEnvInspectMarksMergedBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Inspect: %v", err)
 	}
-	if !st.BranchOK || st.BranchUpstream != "origin/main" {
-		t.Errorf("BranchOK=%v upstream=%q why=%q", st.BranchOK, st.BranchUpstream, st.BranchWhy)
+	done := fateOf(st, "task/done")
+	if done == nil || !done.Deleted || done.Upstream != "origin/main" {
+		t.Errorf("Branches = %+v, want task/done verified for deletion against origin/main", st.Branches)
 	}
 	if joined := strings.Join(st.Plan("claude-code"), "\n"); !strings.Contains(joined, "delete branch task/done (origin/main contains it)") {
 		t.Errorf("plan = %v", st.Plan("claude-code"))
 	}
+}
+
+// mainOf resolves the main checkout for deleteVerifiedBranches tests.
+func mainOf(t *testing.T, ctx context.Context, st State) string {
+	t.Helper()
+	main, err := mainWorktree(ctx, gitRunner(""), st.Repo)
+	if err != nil {
+		t.Fatalf("mainWorktree: %v", err)
+	}
+	return main
+}
+
+// fateOf returns the fate for branch, or nil when Inspect found none.
+func fateOf(st State, branch string) *BranchFate {
+	for i := range st.Branches {
+		if st.Branches[i].Branch == branch {
+			return &st.Branches[i]
+		}
+	}
+	return nil
 }

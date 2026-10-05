@@ -13,6 +13,7 @@ import (
 	"github.com/m-rk/agentmux/daemon/internal/discovery"
 	"github.com/m-rk/agentmux/daemon/internal/pb"
 	"github.com/m-rk/agentmux/daemon/internal/safesend"
+	"github.com/m-rk/agentmux/daemon/internal/session"
 )
 
 type fakeDaemon struct {
@@ -29,7 +30,17 @@ func (f *fakeDaemon) CreateInstance(_ context.Context, req *pb.CreateInstanceReq
 	}
 	f.created = append(f.created, req)
 	f.instances = append(f.instances, &pb.Instance{Name: req.InstanceName, Agent: req.Agent, Provider: req.Provider, Model: req.Model, Workdir: req.Workdir, Status: pb.Status_STATUS_RUNNING})
+	// Mirror the daemon: a created instance registers, so later
+	// registry writes (AGENTMUX_BRANCH) have a file to update.
+	reg := "AGENTMUX_INSTANCE_NAME=" + req.InstanceName + "\nAGENTMUX_AGENT=" + req.Agent + "\nAGENTMUX_WORKDIR=" + req.Workdir + "\n"
+	if err := os.WriteFile(filepath.Join(discovery.EnvDir, req.InstanceName+".env"), []byte(reg), 0o644); err != nil {
+		return &pb.CreateInstanceResponse{Message: err.Error()}, nil
+	}
 	return &pb.CreateInstanceResponse{Ok: true, Message: "created"}, nil
+}
+
+func (f *fakeDaemon) RetireInstance(_ context.Context, req *pb.RetireInstanceRequest) (*pb.RetireInstanceResponse, error) {
+	return &pb.RetireInstanceResponse{Ok: true, Message: "retired " + req.Instance}, nil
 }
 
 func git(t *testing.T, dir string, args ...string) string {
@@ -124,6 +135,15 @@ func TestCreateMakesWorktreeAndInstance(t *testing.T) {
 	if r.InstanceName != "task-1" || r.Agent != "opencode" || r.Provider != "ollama" || r.Model != "m1" ||
 		r.ProviderBaseUrl != "http://localhost:1/v1" || r.ProviderApiKeyEnv != "KEY_VAR" || r.Workdir != wt {
 		t.Fatalf("CreateInstanceRequest = %+v", r)
+	}
+	// The branch the worktree was made on is recorded for retire's
+	// delete-or-keep decision.
+	fields, err := session.ReadRegistry("task-1")
+	if err != nil {
+		t.Fatalf("reading new registry: %v", err)
+	}
+	if fields["AGENTMUX_BRANCH"] != "feature/task-1" {
+		t.Errorf("AGENTMUX_BRANCH = %q, want the created branch", fields["AGENTMUX_BRANCH"])
 	}
 }
 
