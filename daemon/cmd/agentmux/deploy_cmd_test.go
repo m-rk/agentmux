@@ -2,9 +2,12 @@ package main
 
 import (
 	"os"
+	"path"
 	"testing"
 
 	"github.com/m-rk/agentmux/daemon/internal/hostsconfig"
+	"github.com/m-rk/agentmux/daemon/internal/ops"
+	"github.com/m-rk/agentmux/daemon/internal/safesend"
 )
 
 func TestDeployTargetsDedupesAndAddsLocal(t *testing.T) {
@@ -79,5 +82,36 @@ func TestDeployHostsPathExplicitFlagWins(t *testing.T) {
 	got, source := deployHostsPath("/tmp/custom-hosts.yaml")
 	if got != "/tmp/custom-hosts.yaml" || source != "flag -hosts" {
 		t.Errorf("deployHostsPath = %q (%s), want /tmp/custom-hosts.yaml (flag -hosts)", got, source)
+	}
+}
+
+func TestDefaultSmokeNameFitsTaskGrants(t *testing.T) {
+	if defaultSmokeName != "task-smoke-deploy" {
+		t.Errorf("defaultSmokeName = %q, want task-smoke-deploy", defaultSmokeName)
+	}
+	// The fleet's create grants look like task-*@<host> (docs/gateway.md):
+	// the default smoke name must match that pattern, or deploy's
+	// dry-run create is refused as forbidden (AMUX-26).
+	for _, pattern := range []string{"task-*@*", "task-*@laptop"} {
+		ok, err := path.Match(pattern, defaultSmokeName+"@laptop")
+		if err != nil || !ok {
+			t.Errorf("path.Match(%q, %q) = %v, %v; want a match", pattern, defaultSmokeName+"@laptop", ok, err)
+		}
+	}
+}
+
+func TestSmokeCreateSkippableOnlyForbidden(t *testing.T) {
+	for _, reason := range []safesend.Reason{safesend.ReasonForbidden} {
+		if !smokeCreateSkippable(ops.Refuse(reason, "nope")) {
+			t.Errorf("reason %q: want skippable", reason)
+		}
+	}
+	for _, reason := range []safesend.Reason{
+		safesend.ReasonFailed, safesend.ReasonNotFound, safesend.ReasonInvalid,
+		safesend.ReasonNotLocal, safesend.ReasonRateLimited,
+	} {
+		if smokeCreateSkippable(ops.Refuse(reason, "nope")) {
+			t.Errorf("reason %q: want failing, not skippable", reason)
+		}
 	}
 }

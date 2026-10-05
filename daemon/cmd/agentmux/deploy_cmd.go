@@ -47,11 +47,12 @@ func runDeployCmd(args []string) {
 	doctorTime := fs.String("doctor-time", "", "daily doctor time in HH:MM (default: keep the installed timer's time)")
 	template := fs.String("template", "", "instance to copy for the smoke test's dry-run create (default: first amp instance on each host)")
 	base := fs.String("base", "main", "origin branch the smoke test's dry-run create fetches (default: main)")
+	smokeName := fs.String("smoke-name", defaultSmokeName, "instance name the smoke test's dry-run create uses (default: "+defaultSmokeName+")")
 	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml listing the fleet (every host is smoke-tested)")
 	socketPath := fs.String("socket", daemoninstall.SocketPath(), "Unix socket of the local agentmuxd")
 	fs.Parse(args)
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: agentmux deploy [-doctor-time HH:MM] [-template INSTANCE] [-base BRANCH] [-hosts PATH] [-socket PATH]")
+		fmt.Fprintln(os.Stderr, "usage: agentmux deploy [-doctor-time HH:MM] [-template INSTANCE] [-base BRANCH] [-smoke-name NAME] [-hosts PATH] [-socket PATH]")
 		os.Exit(2)
 	}
 
@@ -113,7 +114,7 @@ func runDeployCmd(args []string) {
 		}
 	}
 
-	if err := deploySmokeTest(ctx, *socketPath, *hostsPath, *template, *base); err != nil {
+	if err := deploySmokeTest(ctx, *socketPath, *hostsPath, *template, *base, *smokeName); err != nil {
 		log.Fatalf("deploy: %v", err)
 	}
 	fmt.Println("deploy: smoke test passed on every host")
@@ -359,13 +360,26 @@ func deployDefaultTemplate(ctx context.Context, socketPath string) string {
 	return sessions[0].Name
 }
 
+// defaultSmokeName is the instance the smoke test's dry-run create names.
+// It starts with task- so it fits the gateway create grants the fleet
+// hands out (task-*@<host>): the old smoke-deploy name was refused as
+// forbidden on any host whose grant only allows task sessions, and the
+// grant is deliberately narrow — see AMUX-26.
+const defaultSmokeName = "task-smoke-deploy"
+
 // deploySmokeTest runs the cross-host dispatch check on every host in
 // hosts.yaml plus the local host: a dry-run `sessions create -base` (the
 // MERG-20/AMUX-12 sha-versus-branch failure) and a dry-run `sessions
 // run` that starts no amp thread (see AMUX-22). Creating real sessions
 // or threads would spam the fleet on every deploy; the dry runs exercise
 // the same code paths short of the spawn.
-func deploySmokeTest(ctx context.Context, socketPath, hostsPath, template, base string) error {
+//
+// A host whose gateway refuses the create as forbidden gets the create
+// skipped, not failed: its grant grants this host no create pattern that
+// fits the smoke name, and widening the grant is not deploy's call. The
+// run check still runs there. The skip names the fix: add a grant for a
+// name deploy may use, or pick one with -smoke-name.
+func deploySmokeTest(ctx context.Context, socketPath, hostsPath, template, base, smokeName string) error {
 	hostsPath, source := deployHostsPath(hostsPath)
 	fmt.Printf("deploy: hosts file %s (from %s)\n", hostsPath, source)
 	hosts, err := loadHosts(hostsPath, socketPath)
@@ -378,48 +392,82 @@ func deploySmokeTest(ctx context.Context, socketPath, hostsPath, template, base 
 			return fmt.Errorf("bad -template %q: %w", template, err)
 		}
 	}
+	if smokeName == "" {
+		smokeName = defaultSmokeName
+	}
+	if _, err := address.Parse(smokeName + "@" + local); err != nil {
+		return fmt.Errorf("bad -smoke-name %q: %w", smokeName, err)
+	}
 
 	for _, t := range deployTargets(hosts) {
-		tmpl := template
-		if tmpl == "" {
-			var err error
-			tmpl, err = deployHostTemplate(ctx, socketPath, t, local)
-			if err != nil {
-				return fmt.Errorf("smoke %s: %v", t.name, err)
-			}
+		if err := deploySmokeHost(ctx, socketPath, t, local, template, base, smokeName); err != nil {
+			return err
 		}
-		if tmpl == "" {
-			fmt.Printf("deploy: smoke %-12s skipped (no instances)\n", t.name)
-			continue
-		}
-		tmplAddr := tmpl + "@" + t.name
-		if _, err := address.Parse(tmplAddr); err != nil {
-			return fmt.Errorf("bad template %q: %w", tmplAddr, err)
-		}
-		branch := "smoke/deploy-" + time.Now().Format("20060102-150405")
-		creq := ops.CreateRequest{
-			Template: tmplAddr, Instance: "smoke-deploy",
-			Branch: branch, Base: base, DryRun: true,
-		}
-		cres, err := deployCreateOn(ctx, socketPath, t, local, creq)
-		if err != nil {
-			e := ops.AsError(err)
-			return fmt.Errorf("smoke %s: dry-run create -base %s: %s: %s", t.name, base, e.Reason, e.Detail)
-		}
-		rreq := ops.RunRequest{
-			Address: tmplAddr,
-			Text:    "deploy smoke test: reply with exactly: ok",
-			DryRun:  true,
-		}
-		rres, err := deployRunOn(ctx, socketPath, t, local, rreq)
-		if err != nil {
-			e := ops.AsError(err)
-			return fmt.Errorf("smoke %s: dry-run run: %s: %s", t.name, e.Reason, e.Detail)
-		}
-		fmt.Printf("deploy: smoke %-12s create ok (origin/%s @ %.12s) run ok (%s)\n",
-			t.name, cres.Base, cres.BaseCommit, strings.Join(rres.Plan, "; "))
 	}
 	return nil
+}
+
+// deploySmokeHost runs the smoke check on one host: a dry-run create of
+// the smoke instance, then a dry-run run on the template. A forbidden
+// create is skipped, not failed (see deploySmokeTest); anything else that
+// fails fails the deploy.
+func deploySmokeHost(ctx context.Context, socketPath string, t deployTarget, local, template, base, smokeName string) error {
+	tmpl := template
+	if tmpl == "" {
+		var err error
+		tmpl, err = deployHostTemplate(ctx, socketPath, t, local)
+		if err != nil {
+			return fmt.Errorf("smoke %s: %v", t.name, err)
+		}
+	}
+	if tmpl == "" {
+		fmt.Printf("deploy: smoke %-12s skipped (no instances)\n", t.name)
+		return nil
+	}
+	tmplAddr := tmpl + "@" + t.name
+	if _, err := address.Parse(tmplAddr); err != nil {
+		return fmt.Errorf("bad template %q: %w", tmplAddr, err)
+	}
+	branch := "smoke/deploy-" + time.Now().Format("20060102-150405")
+	creq := ops.CreateRequest{
+		Template: tmplAddr, Instance: smokeName,
+		Branch: branch, Base: base, DryRun: true,
+	}
+	cres, cerr := deployCreateOn(ctx, socketPath, t, local, creq)
+	if cerr != nil && !smokeCreateSkippable(cerr) {
+		e := ops.AsError(cerr)
+		return fmt.Errorf("smoke %s: dry-run create -base %s: %s: %s", t.name, base, e.Reason, e.Detail)
+	}
+	if cerr != nil {
+		e := ops.AsError(cerr)
+		fmt.Printf("deploy: smoke %-12s skipped (no create grant for a smoke name: %s; grant a task-* create or rerun with -smoke-name NAME)\n", t.name, e.Detail)
+	}
+	rreq := ops.RunRequest{
+		Address: tmplAddr,
+		Text:    "deploy smoke test: reply with exactly: ok",
+		DryRun:  true,
+	}
+	rres, err := deployRunOn(ctx, socketPath, t, local, rreq)
+	if err != nil {
+		e := ops.AsError(err)
+		return fmt.Errorf("smoke %s: dry-run run: %s: %s", t.name, e.Reason, e.Detail)
+	}
+	if cerr != nil {
+		fmt.Printf("deploy: smoke %-12s create skipped (no grant) run ok (%s)\n",
+			t.name, strings.Join(rres.Plan, "; "))
+		return nil
+	}
+	fmt.Printf("deploy: smoke %-12s create ok (origin/%s @ %.12s) run ok (%s)\n",
+		t.name, cres.Base, cres.BaseCommit, strings.Join(rres.Plan, "; "))
+	return nil
+}
+
+// smokeCreateSkippable reports whether a failed smoke create is a skip,
+// not a deploy failure: the remote gateway refused it as forbidden, so no
+// create pattern granted to this host fits the smoke name. The grant is
+// deliberately narrow (task sessions); widening it is not deploy's call.
+func smokeCreateSkippable(err error) bool {
+	return ops.AsError(err).Reason == safesend.ReasonForbidden
 }
 
 // deployHostTemplate resolves the smoke template for one host: that host's

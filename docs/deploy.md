@@ -47,6 +47,15 @@ each host (default: that host's first amp instance, else its first
 instance); hosts with no instances are skipped, and a host with no gateway
 fails with `not_local`.
 
+The dry-run create names the `task-smoke-deploy` instance, so it fits the
+fleet's gateway create grants (`task-*@<host>`); the grant stays narrow by
+design (AMUX-26). `-smoke-name NAME` picks another name when a host grants
+a different pattern. A host whose gateway still refuses the create as
+forbidden is reported as skipped — `deploy: smoke <host> skipped (no
+create grant for a smoke name: ...; grant a task-* create or rerun with
+-smoke-name NAME)` — and its run check still runs, rather than failing the
+deploy.
+
 ```text
 deploy: pinned /usr/local/bin/agentmux (5b7072e48fe8)
 deploy: keeping doctor time 03:30

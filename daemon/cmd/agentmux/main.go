@@ -75,7 +75,7 @@ Usage:
   agentmux daemon uninstall   remove the daemon
   agentmux daemon status      check whether the daemon is installed/running
   agentmux daemon run         run the daemon in the foreground (used by the installed unit)
-  agentmux deploy [-template INSTANCE] [-base BRANCH]
+  agentmux deploy [-template INSTANCE] [-base BRANCH] [-smoke-name NAME]
                                pin the binary, restart the daemon and every agentmux-owned
                                service, verify versions, and run the cross-host smoke test
   agentmux new                 interactive wizard to create a new instance
