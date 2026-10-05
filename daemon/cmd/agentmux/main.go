@@ -84,7 +84,7 @@ Usage:
                                list a local session's threads, or page through its transcript
   agentmux sessions send -by PRINCIPAL [-json] INSTANCE@HOST[#THREAD] TEXT
                                deliver one message with readiness checks, provenance and audit
-  agentmux sessions create -template ADDR -instance NAME -branch B [-base REF] [-worktree NAME] [-allow-file PATH ...]
+  agentmux sessions create -template ADDR -instance NAME -branch B [-base BRANCH] [-worktree NAME] [-allow-file PATH ...]
                                start a task session in a new Git worktree on that host (local or through its gateway)
   agentmux control ...         start/stop/restart an instance without an attached terminal
   agentmux view -instance NAME        headless read-only snapshot of an instance's tmux pane

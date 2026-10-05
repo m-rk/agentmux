@@ -184,21 +184,90 @@ func TestCreateUsesExistingBranch(t *testing.T) {
 	wantReason(t, err, safesend.ReasonInvalid)
 }
 
-func TestCreateBase(t *testing.T) {
+// originFor adds a bare "origin" with a main branch holding the repo's
+// current commit, and returns a second clone used to push new commits to it.
+func originFor(t *testing.T, c *createEnv) (origin, pusher string) {
+	t.Helper()
+	root := filepath.Dir(c.repo)
+	origin = filepath.Join(root, "origin.git")
+	git(t, root, "clone", "-q", "--bare", c.repo, origin)
+	git(t, c.repo, "remote", "add", "origin", origin)
+	git(t, c.repo, "fetch", "-q", "origin")
+	pusher = filepath.Join(root, "pusher")
+	git(t, root, "clone", "-q", origin, pusher)
+	return origin, pusher
+}
+
+func TestCreateBaseFetchesOriginBranch(t *testing.T) {
 	c := newCreateEnv(t)
-	git(t, c.repo, "tag", "v1")
-	git(t, c.repo, "commit", "-q", "--allow-empty", "-m", "second")
+	_, pusher := originFor(t, c)
+	// origin/release is new and origin/main moves on; neither is known locally yet.
+	git(t, pusher, "checkout", "-q", "-b", "release")
+	git(t, pusher, "commit", "-q", "--allow-empty", "-m", "release work")
+	git(t, pusher, "push", "-q", "origin", "release")
+	want := git(t, pusher, "rev-parse", "HEAD")
+	// A stale local ref of the same name must not be used.
+	git(t, c.repo, "branch", "release", "HEAD")
+
 	r := c.req()
-	r.Base = "v1"
-	if _, err := c.env.Create(context.Background(), r); err != nil {
+	r.Base = "release"
+	res, err := c.env.Create(context.Background(), r)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := git(t, filepath.Join(c.wtRoot, "task-1"), "rev-parse", "HEAD"), git(t, c.repo, "rev-parse", "v1"); got != want {
-		t.Fatalf("worktree at %s, want v1 %s", got, want)
+	if res.Base != "release" || res.BaseCommit != want {
+		t.Fatalf("base = %q @ %q, want release @ %s", res.Base, res.BaseCommit, want)
 	}
-	r.Instance, r.Branch, r.Base = "task-2", "feature/two", "no-such-ref"
+	if got := git(t, filepath.Join(c.wtRoot, "task-1"), "rev-parse", "HEAD"); got != want {
+		t.Fatalf("worktree at %s, want origin/release %s", got, want)
+	}
+
+	// An origin/ prefix is accepted.
+	git(t, pusher, "commit", "-q", "--allow-empty", "-m", "more")
+	git(t, pusher, "push", "-q", "origin", "release")
+	want = git(t, pusher, "rev-parse", "HEAD")
+	r.Instance, r.Branch, r.Base = "task-2", "feature/two", "origin/release"
+	res, err = c.env.Create(context.Background(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Base != "release" || res.BaseCommit != want {
+		t.Fatalf("base = %q @ %q, want release @ %s", res.Base, res.BaseCommit, want)
+	}
+}
+
+func TestCreateBaseRefusesWithoutFallback(t *testing.T) {
+	c := newCreateEnv(t)
+	r := c.req()
+	r.Base = "main" // local main exists, but there is no origin to fetch from
 	_, err := c.env.Create(context.Background(), r)
-	wantReason(t, err, safesend.ReasonInvalid)
+	wantReason(t, err, safesend.ReasonFailed)
+	if !strings.Contains(AsError(err).Detail, "main") {
+		t.Fatalf("detail = %q", AsError(err).Detail)
+	}
+
+	originFor(t, c)
+	r.Base = "no-such-branch"
+	_, err = c.env.Create(context.Background(), r)
+	wantReason(t, err, safesend.ReasonFailed)
+
+	if _, statErr := os.Stat(filepath.Join(c.wtRoot, "task-1")); statErr == nil {
+		t.Fatal("a refused request made a worktree")
+	}
+	if len(c.d.created) != 0 {
+		t.Fatal("a refused request created an instance")
+	}
+}
+
+func TestCreateWithoutBaseReportsNoBase(t *testing.T) {
+	c := newCreateEnv(t)
+	res, err := c.env.Create(context.Background(), c.req())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Base != "" || res.BaseCommit != "" {
+		t.Fatalf("base = %q @ %q, want none", res.Base, res.BaseCommit)
+	}
 }
 
 func TestCreateDefaultBaseIsOriginHEAD(t *testing.T) {
@@ -227,6 +296,7 @@ func TestCreateValidation(t *testing.T) {
 		"dash branch":    func(r *CreateRequest) { r.Branch = "-x" },
 		"bad ref branch": func(r *CreateRequest) { r.Branch = "a..b" },
 		"dash base":      func(r *CreateRequest) { r.Base = "--foo" },
+		"bad ref base":   func(r *CreateRequest) { r.Base = "a..b" },
 		"relative allow": func(r *CreateRequest) { r.AllowFiles = []string{"rel.txt"} },
 		"missing allow":  func(r *CreateRequest) { r.AllowFiles = []string{"/no/such/file"} },
 		"other host":     func(r *CreateRequest) { r.Template = "tmpl@elsewhere" },
