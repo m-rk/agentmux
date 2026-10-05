@@ -3,6 +3,8 @@ package provision
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -72,7 +74,8 @@ func TestAmpRunnerIDDerivation(t *testing.T) {
 		{"site-kilo", "amp", "site-kilo", "site-kilo"},
 	}
 	for _, tc := range cases {
-		got, err := AmpRunnerID(strings.TrimSuffix(tc.instance, "-"+tc.agent))
+		// An empty host keeps the historical unsuffixed derivation.
+		got, err := AmpRunnerIDForInstance(tc.instance, tc.agent, "")
 		if err != nil {
 			t.Errorf("derive(name=%q agent=%q) = error %v, want %q", tc.instance, tc.agent, err, tc.want)
 			continue
@@ -80,6 +83,63 @@ func TestAmpRunnerIDDerivation(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("derive(name=%q agent=%q) = %q, want %q", tc.instance, tc.agent, got, tc.want)
 		}
+	}
+}
+
+// TestAmpRunnerIDForInstanceHostSuffix guards the cross-host uniqueness
+// rule: two hosts creating same-named amp instances must register different
+// runner IDs, or the second runner exits shortly after starting (live
+// incident: a duplicate `mergentic` runner exited with code 130).
+func TestAmpRunnerIDForInstanceHostSuffix(t *testing.T) {
+	cases := []struct {
+		name, agent, host, want string
+	}{
+		// The motivating case: same instance on two hosts, different IDs.
+		{"mergentic-amp", "amp", "host-a", "mergentic-host-a"},
+		{"mergentic-amp", "amp", "host-b", "mergentic-host-b"},
+		// The agent suffix is still trimmed before the host is added.
+		{"site-kilo", "kilo", "box1", "site-box1"},
+		// An instance without the agent suffix: host appended directly.
+		{"myproj", "amp", "box1", "myproj-box1"},
+		// The host is sanitized like an instance name (dots, case).
+		{"myproj-amp", "amp", "Box.One", "myproj-box-one"},
+	}
+	for _, tc := range cases {
+		got, err := AmpRunnerIDForInstance(tc.name, tc.agent, tc.host)
+		if err != nil {
+			t.Errorf("derive(name=%q agent=%q host=%q) = error %v, want %q", tc.name, tc.agent, tc.host, err, tc.want)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("derive(name=%q agent=%q host=%q) = %q, want %q", tc.name, tc.agent, tc.host, got, tc.want)
+		}
+	}
+
+	// Same instance on different hosts must differ.
+	a, err := AmpRunnerIDForInstance("site-amp", "amp", "host-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := AmpRunnerIDForInstance("site-amp", "amp", "host-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a == b {
+		t.Errorf("same instance on different hosts gave the same runner ID %q", a)
+	}
+
+	// A host with no usable characters is an error, not a silent fallback
+	// to the unsuffixed ID.
+	if _, err := AmpRunnerIDForInstance("site-amp", "amp", "..."); err == nil {
+		t.Error("derive with an unsanitizable host = nil error, want an error")
+	}
+	// An overlong join still fits the single-label limit.
+	long, err := AmpRunnerIDForInstance(strings.Repeat("a", 60)+"-amp", "amp", "host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(long) > 63 {
+		t.Errorf("overlong runner ID = %d chars %q, want at most 63", len(long), long)
 	}
 }
 
@@ -282,6 +342,70 @@ func TestAmpAuthProblemVia(t *testing.T) {
 	}
 	if strings.Contains(problem, "\n") {
 		t.Errorf("ampAuthProblemVia result spans multiple lines: %q", problem)
+	}
+}
+
+// TestAmpOpAuthCmdEnvFileProbe checks the shared env-file probe builder
+// both platforms' ampOpAuthProbe delegate to: with an env-file and a
+// service account token present, it builds `op run --env-file=... --
+// /usr/bin/env -u OP_SERVICE_ACCOUNT_TOKEN amp usage` with the token on
+// the environment (never argv), mirroring the session launcher's
+// opRunArgs shape; without an env-file it reports nil (fall back to the
+// stored login); without a token it names both paths.
+func TestAmpOpAuthCmdEnvFileProbe(t *testing.T) {
+	home := t.TempDir()
+	envDir := filepath.Join(home, ".agentmux", "env")
+	if err := os.MkdirAll(envDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envDir, "probe.env"), []byte("AMP_API_KEY=op://vault/item/field\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokDir := filepath.Join(home, ".config", "op")
+	if err := os.MkdirAll(tokDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tokDir, "service_account_token"), []byte("fake-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	build := func(name string, args ...string) *exec.Cmd {
+		return exec.Command("echo", append([]string{name}, args...)...)
+	}
+
+	cmd, err := ampOpAuthCmd(home, "probe", build)
+	if err != nil {
+		t.Fatalf("ampOpAuthCmd with env-file and token = error %v", err)
+	}
+	want := []string{"echo", "op", "run", "--env-file=" + filepath.Join(envDir, "probe.env"),
+		"--", "/usr/bin/env", "-u", "OP_SERVICE_ACCOUNT_TOKEN", "amp", "usage"}
+	if strings.Join(cmd.Args, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("probe argv = %v, want %v", cmd.Args, want)
+	}
+	if !slices.Contains(cmd.Env, "OP_SERVICE_ACCOUNT_TOKEN=fake-token") {
+		t.Errorf("probe env is missing the service account token; env = %v", cmd.Env)
+	}
+	for _, arg := range cmd.Args {
+		if strings.Contains(arg, "fake-token") {
+			t.Errorf("probe argv leaks the token: %v", cmd.Args)
+			break
+		}
+	}
+
+	// No env-file: nil probe, so the caller falls back to the stored login.
+	if cmd, err := ampOpAuthCmd(home, "other", build); err != nil || cmd != nil {
+		t.Errorf("ampOpAuthCmd without an env-file = (%v, %v), want (nil, nil)", cmd, err)
+	}
+
+	// Env-file without a token: an error naming both paths.
+	if err := os.Remove(filepath.Join(tokDir, "service_account_token")); err != nil {
+		t.Fatal(err)
+	}
+	_, err = ampOpAuthCmd(home, "probe", build)
+	if err == nil {
+		t.Fatal("ampOpAuthCmd with an env-file but no token = nil error, want an error")
+	}
+	if !strings.Contains(err.Error(), "service_account_token") || !strings.Contains(err.Error(), "probe.env") {
+		t.Errorf("missing-token error = %q, want it to name the token and env-file paths", err)
 	}
 }
 

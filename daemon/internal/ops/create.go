@@ -186,6 +186,9 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 			RunUser:           fields["AGENTMUX_RUN_USER"],
 			ProviderBaseUrl:   fields["AGENTMUX_PROVIDER_BASE_URL"],
 			ProviderApiKeyEnv: fields["AGENTMUX_PROVIDER_API_KEY_ENV"],
+			AmpDirs:           fields["AGENTMUX_AMP_DIRS"],
+			AmpDiscoverDirs:   fields["AGENTMUX_AMP_DISCOVER_DIRS"] == "1",
+			AmpUpdate:         fields["AGENTMUX_AMP_UPDATE"],
 			AmpMode:           fields["AGENTMUX_AMP_MODE"],
 			AllowFiles:        allow,
 		})
@@ -194,6 +197,20 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 		}
 		if !resp.Ok {
 			return CreateResult{}, Refuse(safesend.ReasonFailed, "creating instance %s: %s", req.Instance, resp.Message)
+		}
+		// An amp template authenticated by an op env-file passes that auth
+		// to the new instance: copy the file (references only — it never
+		// holds secret values, see session/openv.go) so the task instance
+		// launches through `op run` exactly like its template instead of
+		// falling back to the stored `amp login`. Non-amp templates have no
+		// env-file concept, and a template without one leaves the new
+		// instance exactly as before. Copying into place after
+		// CreateInstance succeeds keeps a failed creation from leaving a
+		// stray env-file behind for an instance that was never made.
+		if agent == "amp" {
+			if err := copyOpEnvFile(tmpl.Instance, req.Instance); err != nil {
+				return CreateResult{}, err
+			}
 		}
 		if instances, err = d.ListInstances(ctx); err != nil {
 			return CreateResult{}, err
@@ -216,6 +233,54 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 		res.Base, res.BaseCommit = req.Base, baseCommit
 	}
 	return res, nil
+}
+
+// copyOpEnvFile copies the template's op env-file
+// (~/.agentmux/env/<template>.env) to the new instance's own file, so an
+// amp task instance inherits its template's 1Password-backed auth. The
+// home is runas.CurrentUserHome — the same directory the instance's
+// runner will read its env-file from at launch (see session.opEnvFilePath)
+// — which is the run user's home because the gateway runs as the run user
+// (see the matching check in Create).
+//
+// A template without an env-file is a no-op (nil), leaving the new instance
+// exactly as before. The copy holds references (op://...), never secret
+// values, and is written mode 600 like a hand-made env-file. It never
+// overwrites an existing file: with a reused instance name Create reuses
+// the instance, and an env-file already there belongs to whoever put it
+// there — silently replacing it could revoke auth someone set up by hand.
+//
+// Removal is manual, by design: there is no instance-removal RPC (see
+// docs/amp-secrets.md), so deleting the worktree's instance means removing
+// its units/registrations by hand, and the env-file goes with them.
+func copyOpEnvFile(template, instance string) error {
+	dir := filepath.Join(runas.CurrentUserHome(), ".agentmux", "env")
+	src := filepath.Join(dir, template+".env")
+	data, err := os.ReadFile(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return Refuse(safesend.ReasonFailed, "reading template op env-file %s: %v", src, err)
+	}
+	dst := filepath.Join(dir, instance+".env")
+	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		if os.IsExist(err) {
+			return nil
+		}
+		return Refuse(safesend.ReasonFailed, "creating instance op env-file %s: %v", dst, err)
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(dst) // don't leave a partial file a retry would keep
+		return Refuse(safesend.ReasonFailed, "writing instance op env-file %s: %v", dst, err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(dst)
+		return Refuse(safesend.ReasonFailed, "writing instance op env-file %s: %v", dst, err)
+	}
+	return nil
 }
 
 // ensureWorktree makes wtPath a worktree on branch, or accepts one that

@@ -845,8 +845,9 @@ type CreateInstanceRequest struct {
 	// of the provider/model/resume/compact fields below: its headless runner
 	// (`amp --no-tui --runner-id <id> --remote-control-terminal`) gets its
 	// account and model from the signed-in Amp account, and its runner id is
-	// derived from instance_name. Passing any of them is rejected rather than
-	// ignored.
+	// derived from instance_name and the host name (host-suffixed so runner
+	// IDs stay unique across hosts). Passing any of them is rejected rather
+	// than ignored.
 	Agent           string `protobuf:"bytes,2,opt,name=agent,proto3" json:"agent,omitempty"`
 	Provider        string `protobuf:"bytes,3,opt,name=provider,proto3" json:"provider,omitempty"`                                        // zero/opencode/kilo only; "ollama", or a custom provider id
 	Model           string `protobuf:"bytes,4,opt,name=model,proto3" json:"model,omitempty"`                                              // zero/opencode/kilo only

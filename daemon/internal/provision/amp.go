@@ -2,7 +2,9 @@ package provision
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -15,6 +17,42 @@ const defaultAmpInstance = "amp"
 // only validates server-side once authenticated, so the limit that a
 // "valid hostname" implies is applied here rather than discovered.
 const maxAmpRunnerIDLen = 63
+
+// AmpRunnerIDForInstance derives the --runner-id for an instance: the
+// instance name with any trailing -<agent> suffix stripped (so the runner
+// on ampcode.com is the clean project name, not the agentmux-suffixed
+// instance name), plus the host name.
+//
+// The host suffix keeps runner IDs unique across hosts. amp's runner
+// registry is shared, so two hosts creating instances with the same name
+// would otherwise register the same runner ID and the second runner exits
+// shortly after starting (confirmed live: a duplicate `mergentic` runner on
+// a second host exited with code 130 about a second after starting, with
+// nothing logged — fixed by hand-suffixing the registry to
+// `mergentic-host-a`). Runner IDs already stored in existing
+// registries keep working unchanged: the session layer prefers the recorded
+// value and only derives for registries that predate the field, and that
+// fallback deliberately does not add a host suffix (those old instances
+// registered their plain IDs).
+//
+// An empty host means "no suffix" (the historical derivation); a host with
+// no usable characters is an error rather than a silently unsuffixed ID.
+func AmpRunnerIDForInstance(instance, agent, host string) (string, error) {
+	base, err := AmpRunnerID(strings.TrimSuffix(instance, "-"+agent))
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(host) == "" {
+		return base, nil
+	}
+	hostID, err := AmpRunnerID(host)
+	if err != nil {
+		return "", fmt.Errorf("host name %q contains no characters usable in an amp runner ID: %w", host, err)
+	}
+	// Re-sanitize the join rather than concatenating blindly: the result
+	// must still fit the single-label length limit.
+	return AmpRunnerID(base + "-" + hostID)
+}
 
 // AmpRunnerID converts an agentmux instance name into the value passed to
 // `amp --runner-id`. agentmux's own validateIdentifier accepts dots and
@@ -63,6 +101,34 @@ func AmpRunnerID(instance string) (string, error) {
 		return "", fmt.Errorf("instance name %q contains no characters usable in an amp runner ID (which must be a valid hostname)", instance)
 	}
 	return id, nil
+}
+
+// opTokenFileName is the service account token file both the provisioner's
+// auth probes and the session launcher read, relative to the run user's
+// home.
+const opTokenFileName = ".config/op/service_account_token"
+
+// ampOpAuthCmd builds `amp usage` run the way an amp instance's runner
+// will run (see session.ExecAmp): through `op run` with the instance's
+// op env-file, so an instance authenticated by an injected AMP_API_KEY is
+// checked against that key and not the stored login. It returns nil when
+// the instance has no env-file under home. buildCmd constructs the
+// privilege-dropped (Linux) or current-user (macOS) command; the token is
+// appended to its environment so the probe authenticates to 1Password
+// without the value ever touching argv.
+func ampOpAuthCmd(home, name string, buildCmd func(name string, args ...string) *exec.Cmd) (*exec.Cmd, error) {
+	envFile := filepath.Join(home, ".agentmux", "env", name+".env")
+	if info, err := os.Stat(envFile); err != nil || !info.Mode().IsRegular() {
+		return nil, nil
+	}
+	tokPath := filepath.Join(home, opTokenFileName)
+	tok, err := os.ReadFile(tokPath)
+	if err != nil || strings.TrimSpace(string(tok)) == "" {
+		return nil, fmt.Errorf("1Password service account token %s is missing or empty; needed by %s", tokPath, envFile)
+	}
+	cmd := buildCmd("op", "run", "--env-file="+envFile, "--", "/usr/bin/env", "-u", "OP_SERVICE_ACCOUNT_TOKEN", "amp", "usage")
+	cmd.Env = append(cmd.Environ(), "OP_SERVICE_ACCOUNT_TOKEN="+strings.TrimSpace(string(tok)))
+	return cmd, nil
 }
 
 // AmpSplitDirs splits a comma-separated --dir list into trimmed non-empty

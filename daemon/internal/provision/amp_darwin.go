@@ -102,11 +102,6 @@ func createAmp(opts Options) (string, error) {
 		return "", err
 	}
 
-	runnerID, err := AmpRunnerID(strings.TrimSuffix(name, "-"+opts.Agent))
-	if err != nil {
-		return "", err
-	}
-
 	// Explicit extra --dir entries must be absolute: a relative path would
 	// resolve against the daemon's own working directory, never the
 	// operator's intent. Callers expand ~ themselves (an unquoted ~
@@ -132,6 +127,20 @@ func createAmp(opts Options) (string, error) {
 		workdir = filepath.Join(u.HomeDir, ".agentmux", name)
 	}
 	hostName, err := resolveHostName(opts.HostName)
+	if err != nil {
+		return "", err
+	}
+
+	// The runner ID carries the host name so runner IDs stay unique across
+	// hosts; computed and stored once here (see AmpRunnerIDForInstance).
+	// The registry keeps the unresolved hostName (possibly "") so display
+	// names keep deriving as before; only the runner ID falls back to the
+	// machine-derived name when no explicit or remembered host exists.
+	runnerHost := hostName
+	if runnerHost == "" {
+		runnerHost = DefaultHostName()
+	}
+	runnerID, err := AmpRunnerIDForInstance(name, opts.Agent, runnerHost)
 	if err != nil {
 		return "", err
 	}
@@ -226,19 +235,7 @@ func ampAuthProblem(name string) string {
 // an instance authenticated by an injected AMP_API_KEY is checked against
 // that key and not the stored login. nil means the instance has no env-file.
 func ampOpAuthProbe(name string) (*exec.Cmd, error) {
-	home := runas.CurrentUserHome()
-	envFile := filepath.Join(home, ".agentmux", "env", name+".env")
-	if info, err := os.Stat(envFile); err != nil || !info.Mode().IsRegular() {
-		return nil, nil
-	}
-	tokPath := filepath.Join(home, ".config", "op", "service_account_token")
-	tok, err := os.ReadFile(tokPath)
-	if err != nil || strings.TrimSpace(string(tok)) == "" {
-		return nil, fmt.Errorf("1Password service account token %s is missing or empty; needed by %s", tokPath, envFile)
-	}
-	cmd := runas.CurrentUserCommand("op", "run", "--env-file="+envFile, "--", "/usr/bin/env", "-u", "OP_SERVICE_ACCOUNT_TOKEN", "amp", "usage")
-	cmd.Env = append(cmd.Environ(), "OP_SERVICE_ACCOUNT_TOKEN="+strings.TrimSpace(string(tok)))
-	return cmd, nil
+	return ampOpAuthCmd(runas.CurrentUserHome(), name, runas.CurrentUserCommand)
 }
 
 // ampInstallPackageProblem checks the npm-global install as the current

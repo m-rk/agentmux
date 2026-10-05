@@ -369,6 +369,114 @@ func TestCreateTemplateErrors(t *testing.T) {
 	wantReason(t, err, safesend.ReasonUnsupported)
 }
 
+// TestCreateCopiesAmpTemplateEnvFile checks the AMUX-14 inheritance: a task
+// instance created from an amp template with an op env-file gets its own
+// copy (references only, mode 600), so it launches through `op run` like
+// its template instead of falling back to the stored `amp login`. The
+// template's amp serving knobs (dirs, discover, update, mode) are carried
+// over to the new instance too. A template without an env-file leaves no
+// file behind.
+func TestCreateCopiesAmpTemplateEnvFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	envHome := filepath.Join(home, ".agentmux", "env")
+	if err := os.MkdirAll(envHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ref := "AMP_API_KEY=op://vault/item/field\n"
+	if err := os.WriteFile(filepath.Join(envHome, "tmpl.env"), []byte(ref), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	c := newCreateEnv(t)
+	// A real amp template registry carries no provider fields (the
+	// provisioner rejects them for amp), so rewrite the fixture's opencode
+	// defaults into a coherent amp template.
+	ampReg := "AGENTMUX_AGENT=amp\nAGENTMUX_WORKDIR=" + c.repo + "\n" +
+		"AGENTMUX_AMP_DIRS=/srv/a,/srv/b\nAGENTMUX_AMP_DISCOVER_DIRS=1\n" +
+		"AGENTMUX_AMP_UPDATE=off\nAGENTMUX_AMP_MODE=high\n"
+	if err := os.WriteFile(filepath.Join(discovery.EnvDir, "tmpl.env"), []byte(ampReg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := c.env.Create(context.Background(), c.req())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Created {
+		t.Fatal("expected a created instance")
+	}
+	if len(c.d.created) != 1 {
+		t.Fatalf("created = %d instances", len(c.d.created))
+	}
+	r := c.d.created[0]
+	if r.Agent != "amp" || r.AmpDirs != "/srv/a,/srv/b" || !r.AmpDiscoverDirs || r.AmpUpdate != "off" || r.AmpMode != "high" {
+		t.Fatalf("amp fields not carried over: %+v", r)
+	}
+	if r.Provider != "" || r.Model != "" || r.ProviderBaseUrl != "" || r.ProviderApiKeyEnv != "" {
+		t.Fatalf("provider fields should stay empty for amp: %+v", r)
+	}
+
+	got, err := os.ReadFile(filepath.Join(envHome, "task-1.env"))
+	if err != nil {
+		t.Fatalf("reading inherited env-file: %v", err)
+	}
+	if string(got) != ref {
+		t.Errorf("inherited env-file = %q, want the template's references %q", got, ref)
+	}
+	if fi, err := os.Stat(filepath.Join(envHome, "task-1.env")); err != nil {
+		t.Fatal(err)
+	} else if fi.Mode().Perm() != 0o600 {
+		t.Errorf("inherited env-file mode = %o, want 600", fi.Mode().Perm())
+	}
+
+	// A second create with the same arguments reuses the instance and must
+	// not touch the env-file.
+	sentinel := "AMP_API_KEY=op://other/ref\n"
+	if err := os.WriteFile(filepath.Join(envHome, "task-1.env"), []byte(sentinel), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err = c.env.Create(context.Background(), c.req())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Created {
+		t.Error("second create should reuse the instance")
+	}
+	if got, _ := os.ReadFile(filepath.Join(envHome, "task-1.env")); string(got) != sentinel {
+		t.Errorf("reuse overwrote the env-file = %q, want it left alone", got)
+	}
+}
+
+// TestCreateWithoutTemplateEnvFileLeavesNone checks the other side: an amp
+// template with no op env-file creates an instance with no env-file, and a
+// non-amp template never gains one either.
+func TestCreateWithoutTemplateEnvFileLeavesNone(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	c := newCreateEnv(t)
+	ampReg := "AGENTMUX_AGENT=amp\nAGENTMUX_WORKDIR=" + c.repo + "\n"
+	if err := os.WriteFile(filepath.Join(discovery.EnvDir, "tmpl.env"), []byte(ampReg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.env.Create(context.Background(), c.req()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".agentmux", "env", "task-1.env")); !os.IsNotExist(err) {
+		t.Errorf("amp create without a template env-file left task-1.env behind (err=%v)", err)
+	}
+
+	c2 := newCreateEnv(t) // default opencode template, no env-file
+	req := c2.req()
+	req.Instance, req.Branch = "task-2", "feature/task-2"
+	if _, err := c2.env.Create(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".agentmux", "env", "task-2.env")); !os.IsNotExist(err) {
+		t.Errorf("non-amp create left task-2.env behind (err=%v)", err)
+	}
+}
+
 func TestCreateDaemonFailure(t *testing.T) {
 	c := newCreateEnv(t)
 	c.d.failWith = "boom"

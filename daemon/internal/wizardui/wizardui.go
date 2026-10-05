@@ -30,7 +30,8 @@ func CapabilitiesForAgent(agent string) Capabilities {
 		// headless runner takes its account and model from the signed-in Amp
 		// account, has no provider or API key to configure, and no
 		// resume/compact concept. Its --runner-id is derived from the
-		// instance name (provision.AmpRunnerID), not asked for separately.
+		// instance name and host (provision.AmpRunnerIDForInstance), not
+		// asked for separately.
 		// Multi-dir serving (--discover-dirs/--dir) and the updater opt-out
 		// are -y-only flags, not form fields.
 		return Capabilities{}

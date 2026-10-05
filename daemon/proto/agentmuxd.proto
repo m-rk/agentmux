@@ -147,8 +147,9 @@ message CreateInstanceRequest {
   // of the provider/model/resume/compact fields below: its headless runner
   // (`amp --no-tui --runner-id <id> --remote-control-terminal`) gets its
   // account and model from the signed-in Amp account, and its runner id is
-  // derived from instance_name. Passing any of them is rejected rather than
-  // ignored.
+  // derived from instance_name and the host name (host-suffixed so runner
+  // IDs stay unique across hosts). Passing any of them is rejected rather
+  // than ignored.
   string agent = 2;
   string provider = 3;           // zero/opencode/kilo only; "ollama", or a custom provider id
   string model = 4;               // zero/opencode/kilo only

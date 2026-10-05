@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/m-rk/agentmux/daemon/internal/allowfiles"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strings"
@@ -131,17 +132,6 @@ func createAmp(opts Options) (string, error) {
 		return "", err
 	}
 
-	// The runner ID is the instance name with any trailing -<agent> suffix
-	// stripped (so the runner on ampcode.com is the clean project name, not
-	// the agentmux-suffixed instance name), sanitized into a valid hostname.
-	// Computed (and stored) once here rather than re-derived on every
-	// session run so a future change to the sanitizer can never silently
-	// re-register a long-lived instance under a different runner ID.
-	runnerID, err := AmpRunnerID(strings.TrimSuffix(name, "-"+opts.Agent))
-	if err != nil {
-		return "", err
-	}
-
 	// Explicit extra --dir entries must be absolute: a relative path would
 	// resolve against the daemon's own working directory, never the
 	// operator's intent. Callers expand ~ themselves (an unquoted ~
@@ -179,6 +169,24 @@ func createAmp(opts Options) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// The runner ID is the instance name with any trailing -<agent> suffix
+	// stripped (so the runner on ampcode.com is the clean project name, not
+	// the agentmux-suffixed instance name), plus the host name so runner
+	// IDs stay unique across hosts (see AmpRunnerIDForInstance). Computed
+	// (and stored) once here rather than re-derived on every session run so
+	// a future change to the derivation can never silently re-register a
+	// long-lived instance under a different runner ID. The registry keeps
+	// the unresolved hostName (possibly "") so display names keep deriving
+	// as before; only the runner ID falls back to the machine-derived name
+	// when no explicit or remembered host exists.
+	runnerHost := hostName
+	if runnerHost == "" {
+		runnerHost = DefaultHostName()
+	}
+	runnerID, err := AmpRunnerIDForInstance(name, opts.Agent, runnerHost)
+	if err != nil {
+		return "", err
+	}
 
 	if err := checkAgentInstalled("amp", runUser); err != nil {
 		return "", err
@@ -186,8 +194,8 @@ func createAmp(opts Options) (string, error) {
 	if problem := ampInstallPackageProblem(runUser); problem != "" {
 		return "", fmt.Errorf("%s", problem)
 	}
-	if problem := ampAuthProblem(runUser); problem != "" {
-		return "", fmt.Errorf("%s; run 'amp login' as %s, then retry", problem, runUser)
+	if problem := ampAuthProblem(runUser, name); problem != "" {
+		return "", fmt.Errorf("%s; fix the login (run 'amp login' as %s) or the instance's op env-file, then retry", problem, runUser)
 	}
 
 	if err := ensureWorkdirForUser(workdir, u); err != nil {
@@ -259,9 +267,38 @@ func createAmp(opts Options) (string, error) {
 }
 
 // ampAuthProblem checks login by dropping privileges to runUser, since this
-// provisioner runs as root; see ampAuthProblemVia for the shared parsing.
-func ampAuthProblem(runUser string) string {
+// provisioner runs as root, honoring the instance's op env-file when it has
+// one; see ampAuthProblemVia for the shared parsing.
+func ampAuthProblem(runUser, name string) string {
+	probe, err := ampOpAuthProbe(runUser, name)
+	if err != nil {
+		return err.Error()
+	}
+	if probe != nil {
+		return ampAuthProblemVia(probe)
+	}
 	return ampAuthProblemVia(runas.Command(runUser, "amp", "usage"))
+}
+
+// ampOpAuthProbe is `amp usage` run the way the instance's runner will run
+// (see session.ExecAmp): through `op run` with the run user's env-file
+// (~/.agentmux/env/<name>.env), so an instance authenticated by an
+// injected AMP_API_KEY is checked against that key and not the stored
+// login. nil means the instance has no env-file. This ports the macOS
+// probe (amp_darwin.go) to Linux; the only differences are that paths come
+// from the run user's passwd entry (the provisioner runs as root, not as
+// the run user) and the commands are privilege-dropped runas.Command
+// invocations. No extra PATH work is needed: runas builds the target
+// user's PATH itself, including ~/.npm-global/bin where amp lives on
+// hosts that installed it there.
+func ampOpAuthProbe(runUser, name string) (*exec.Cmd, error) {
+	u, err := user.Lookup(runUser)
+	if err != nil {
+		return nil, fmt.Errorf("looking up user %q: %w", runUser, err)
+	}
+	return ampOpAuthCmd(u.HomeDir, name, func(name string, args ...string) *exec.Cmd {
+		return runas.Command(runUser, name, args...)
+	})
 }
 
 // ampInstallPackageProblem checks the npm-global install by dropping

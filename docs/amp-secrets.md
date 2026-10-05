@@ -32,6 +32,46 @@ output, or the runner's own tool environment.
 
 Instances without an env-file launch exactly as before.
 
+Provisioning checks the env-file too: on both Linux and macOS, creating (or
+re-provisioning) an amp instance whose env-file exists probes `amp usage`
+through `op run` with that file, so an instance authenticated by an injected
+`AMP_API_KEY` no longer needs a stored `amp login` at creation time either.
+The probe needs `op` on the run user's PATH (including `~/.npm-global/bin`,
+where `amp` itself lives on hosts that installed it there) and the service
+account token at `~/.config/op/service_account_token`.
+
+## Task instances inherit the template's env-file
+
+`sessions create` (a task instance dispatched from a template, e.g.
+`task-mergentic-merg-13` from `mergentic-amp`) copies the template's env-file
+to `~/.agentmux/env/<new-instance>.env` when the template is an amp instance
+with one. The copy holds the same `op://` references, never secret values,
+and is written mode 600. That way a per-project amp template authenticated
+by 1Password dispatches task instances that authenticate the same way, with
+no `amp login` to babysit. The template's amp serving knobs (`--dir`,
+`--discover-dirs`, update mode, mode override) are carried over as well.
+
+- A template without an env-file leaves the new instance exactly as before.
+- An env-file already present under the new instance's name is never
+  overwritten: with a reused instance name `sessions create` reuses the
+  instance, and a file already there belongs to whoever put it there.
+- Copies are made only when the instance is created, not on reuse.
+- Removing a task instance is manual (there is no instance-removal RPC):
+  alongside its units and registrations, delete its env-file too —
+  `rm ~/.agentmux/env/<instance>.env` as the run user — or the next
+  instance to reuse that name inherits the file on disk (creation never
+  overwrites it).
+
+## Runner IDs carry the host name
+
+The `--runner-id` is the instance name minus any trailing `-amp` suffix,
+plus the host name: `mergentic-amp` on `host-a` registers as
+`mergentic-host-a`. Runner IDs must be unique across hosts because
+amp's runner registry is shared — a second host registering the same ID
+sees its runner exit about a second after starting (code 130, nothing
+logged). The ID is computed and stored once, at creation time; runner IDs
+stored by earlier agentmux versions keep working unchanged.
+
 ## How it works
 
 `agentmux session run` checks for `~/.agentmux/env/<instance>.env`. If present,
