@@ -2,6 +2,8 @@ package collab
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -71,7 +73,7 @@ func (c *Client) ListAsks(ctx context.Context, opts ListAsksOptions) ([]AskThrea
 	var chans []Channel
 	if opts.State == "open" || opts.State == "all" {
 		var active threadList
-		if err := c.botJSON(ctx, http.MethodGet, "/guilds/"+url.PathEscape(forum.GuildID)+"/threads/active", &active); err != nil {
+		if err := c.listJSON(ctx, http.MethodGet, "/guilds/"+url.PathEscape(forum.GuildID)+"/threads/active", &active); err != nil {
 			return nil, fmt.Errorf("listing active Discord threads: %w", err)
 		}
 		for _, th := range active.Threads {
@@ -89,7 +91,7 @@ func (c *Client) ListAsks(ctx context.Context, opts ListAsksOptions) ([]AskThrea
 				path += "&before=" + url.QueryEscape(before)
 			}
 			var page threadList
-			if err := c.botJSON(ctx, http.MethodGet, path, &page); err != nil {
+			if err := c.listJSON(ctx, http.MethodGet, path, &page); err != nil {
 				return nil, fmt.Errorf("listing archived Discord threads: %w", err)
 			}
 			chans = append(chans, page.Threads...)
@@ -168,6 +170,33 @@ func (c *Client) ListAsks(ctx context.Context, opts ListAsksOptions) ([]AskThrea
 	// Newest first by thread id (snowflakes grow with time).
 	sort.Slice(out, func(i, j int) bool { return snowflakeGreater(out[i].ID, out[j].ID) })
 	return out, nil
+}
+
+// listJSON is botJSON with one retry when Discord answers 429: a paged
+// archived-threads walk is exactly the burst a rate limit would cut short.
+func (c *Client) listJSON(ctx context.Context, method, path string, out any) error {
+	err := c.botJSON(ctx, method, path, out)
+	var api *apiError
+	if errors.As(err, &api) && api.Status == http.StatusTooManyRequests {
+		var rl struct {
+			RetryAfter float64 `json:"retry_after"`
+		}
+		_ = json.Unmarshal([]byte(api.Body), &rl)
+		wait := time.Duration(rl.RetryAfter*float64(time.Second)) + 50*time.Millisecond
+		if wait > 5*time.Second {
+			wait = 5 * time.Second
+		}
+		if wait < 0 {
+			wait = 0
+		}
+		select {
+		case <-time.After(wait):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		err = c.botJSON(ctx, method, path, out)
+	}
+	return err
 }
 
 // snowflakeTime renders a Discord snowflake id as an RFC3339 timestamp, or

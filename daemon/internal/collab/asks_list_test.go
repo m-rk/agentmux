@@ -148,3 +148,36 @@ func TestListAsksAllDedupesAndFilters(t *testing.T) {
 		t.Fatal("bad state accepted")
 	}
 }
+
+func TestListAsksRetriesOnceOnRateLimit(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	openID := snowflakeAt(now)
+	var calls int
+	var mu sync.Mutex
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.URL.Path == "/api/channels/forum":
+			writeJSON(t, w, Channel{ID: "forum", GuildID: "guild", AvailableTags: []ForumTag{{"t-ask", "ask"}}})
+		case r.URL.Path == "/api/guilds/guild/threads/active":
+			calls++
+			if calls == 1 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"retry_after": 0}`))
+				return
+			}
+			writeJSON(t, w, threadList{Threads: []Channel{
+				{ID: openID, ParentID: "forum", Name: "ask", AppliedTags: []string{"t-ask"}},
+			}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer s.Close()
+	got, err := asksClientFor(s.URL).ListAsks(context.Background(), ListAsksOptions{State: "open"})
+	if err != nil || len(got) != 1 || got[0].ID != openID || calls != 2 {
+		t.Fatalf("got %v %v calls=%d", got, err, calls)
+	}
+}
