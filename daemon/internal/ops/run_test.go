@@ -132,7 +132,9 @@ func TestRunContinuesThread(t *testing.T) {
 // TestRunTitlesNewThread passes --title plus --no-archive-after-execute
 // for a new thread, opens the prompt with a one-line "<title>" header so
 // the kickoff notification names the task, and re-applies the title once
-// it exists; a continue ignores the title entirely.
+// it exists; a continue re-applies a given title too (see
+// TestRunContinueReappliesTitle), since the worker's own turns overwrite
+// it in between.
 func TestRunTitlesNewThread(t *testing.T) {
 	newRunEnv(t)
 	id := "T-77777777-7777-4777-8777-777777777777"
@@ -151,9 +153,11 @@ func TestRunTitlesNewThread(t *testing.T) {
 	}
 }
 
-// TestRunContinueIgnoresTitle continues without --title and without a
-// rename: the thread already has its name.
-func TestRunContinueIgnoresTitle(t *testing.T) {
+// TestRunContinueReappliesTitle continues without --title (amp names a
+// thread only at creation) but re-applies the rename after the run, since
+// the worker's own turns overwrite it in between. The continued prompt
+// carries no title header.
+func TestRunContinueReappliesTitle(t *testing.T) {
 	newRunEnv(t)
 	id := "T-88888888-8888-4888-8888-888888888888"
 	restore, fake := session.AmpSwapForTest(id, nil)
@@ -168,8 +172,55 @@ func TestRunContinueIgnoresTitle(t *testing.T) {
 	if strings.Contains(fake.Argv[len(fake.Argv)-1], "AMUX-17") {
 		t.Fatalf("continue carries a title header: %q", fake.Argv)
 	}
+	if !fake.RenameSeen || fake.Renamed != "AMUX-17 do the thing" {
+		t.Fatalf("rename = %v %q", fake.RenameSeen, fake.Renamed)
+	}
+}
+
+// TestRunContinueWithoutTitleRenamesNothing continues with no title and
+// no rename: the thread keeps whatever name it had.
+func TestRunContinueWithoutTitleRenamesNothing(t *testing.T) {
+	newRunEnv(t)
+	id := "T-88888888-8888-4888-8888-888888888899"
+	restore, fake := session.AmpSwapForTest(id, nil)
+	defer restore()
+	_, rerr := Env{}.Run(context.Background(), RunRequest{Address: localAddr(id), Text: "again"})
+	if rerr != nil {
+		t.Fatalf("run: %v", rerr)
+	}
 	if fake.RenameSeen {
 		t.Fatalf("continue renamed: %q", fake.Renamed)
+	}
+}
+
+// TestRunLabelsRideBothRuns passes -l on a new thread and on a continue,
+// and names them in the dry-run plan; junk labels are dropped, never a
+// refusal.
+func TestRunLabelsRideBothRuns(t *testing.T) {
+	newRunEnv(t)
+	id := "T-99999999-9999-4999-8999-999999999991"
+	restore, fake := session.AmpSwapForTest(id, nil)
+	defer restore()
+	_, rerr := Env{}.Run(context.Background(), RunRequest{Address: localAddr(""), Text: "hi", Labels: []string{"agentmux-task", "  ", "a\nb"}})
+	if rerr != nil {
+		t.Fatalf("run: %v", rerr)
+	}
+	if flat := strings.Join(fake.Argv, " "); !strings.Contains(flat, "-l agentmux-task --no-archive-after-execute") {
+		t.Fatalf("new run labels: %q", flat)
+	}
+	_, rerr = Env{}.Run(context.Background(), RunRequest{Address: localAddr(id), Text: "again", Labels: []string{"agentmux-task"}})
+	if rerr != nil {
+		t.Fatalf("continue: %v", rerr)
+	}
+	if flat := strings.Join(fake.Argv, " "); !strings.Contains(flat, "threads continue "+id+" --stream-json -l agentmux-task --no-archive-after-execute") {
+		t.Fatalf("continue labels: %q", flat)
+	}
+	res, rerr := Env{}.Run(context.Background(), RunRequest{Address: localAddr(""), Text: "hi", Labels: []string{"agentmux-task"}, DryRun: true})
+	if rerr != nil {
+		t.Fatalf("dry run: %v", rerr)
+	}
+	if flat := strings.Join(res.Plan, "; "); !strings.Contains(flat, "with labels agentmux-task") {
+		t.Fatalf("plan = %q", flat)
 	}
 }
 
@@ -464,7 +515,7 @@ func TestRunTemplateIsDryRunOnly(t *testing.T) {
 	wantReason(t, rerr, safesend.ReasonInvalid)
 	_, rerr = Env{}.Run(context.Background(), RunRequest{
 		Address: localAddr("T-44444444-4444-4444-8444-444444444444"),
-		Text: "again", Template: "probe", DryRun: true,
+		Text:    "again", Template: "probe", DryRun: true,
 	})
 	wantReason(t, rerr, safesend.ReasonInvalid)
 	if len(fake.Argv) != 0 {

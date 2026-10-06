@@ -74,11 +74,15 @@ func ampRunStateDir(home, instance string) string {
 // continued thread vanishes from `threads list` without it), and a
 // continued archived thread then refuses with "This thread is archived and
 // cannot be continued". A title names a new thread only; continuing a
-// thread ignores it.
+// thread ignores it. Every `-l` label rides both new and continued runs:
+// `-l` on `threads continue` adds the label to the existing thread
+// (confirmed live 2026-10-06), so a thread keeps its filter even though
+// amp's own auto-title replaces the `--title` sidebar text while the
+// agent works.
 //
 // Returned as an argv slice, not a shell string, so a mode label or title
 // with spaces needs no quoting.
-func AmpRunArgs(message, mode, threadID, title string) []string {
+func AmpRunArgs(message, mode, threadID, title string, labels []string) []string {
 	var args []string
 	if threadID == "" {
 		args = []string{"--stream-json"}
@@ -90,6 +94,9 @@ func AmpRunArgs(message, mode, threadID, title string) []string {
 	}
 	if threadID == "" && title != "" {
 		args = append(args, "--title", title)
+	}
+	for _, l := range CleanAmpLabels(labels) {
+		args = append(args, "-l", l)
 	}
 	args = append(args, "--no-archive-after-execute")
 	return append(args, "-x", message)
@@ -943,11 +950,39 @@ func CleanAmpTitle(raw string) (string, error) {
 	return title, nil
 }
 
+// maxAmpLabelBytes bounds one run label. amp labels are short filter
+// tokens; 64 leaves headroom without letting a garbage caller value ride
+// along in argv unbounded.
+const maxAmpLabelBytes = 64
+
+// CleanAmpLabels trims run labels and drops what amp can't use: empty,
+// overlong, or carrying line breaks, NUL bytes, or commas (argv rides
+// through a sh double-fork, so a newline could smuggle a second
+// command). Empty in, empty out — not an error — so callers keep one
+// code path for labeled and unlabeled runs.
+func CleanAmpLabels(raw []string) []string {
+	var out []string
+	for _, r := range raw {
+		l := strings.TrimSpace(r)
+		if l == "" || len(l) > maxAmpLabelBytes {
+			continue
+		}
+		if strings.ContainsAny(l, "\x00\r\n,") {
+			continue
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
 // ampRenameCommand builds the bounded rename call that re-applies a run
-// title once the thread exists: amp may retitle the thread itself while
-// the agent works, so `--title` alone doesn't guarantee the sidebar keeps
-// the task's name. Best-effort by design — callers ignore a rename error
-// once the run itself succeeded.
+// title once the thread exists: amp's auto-title replaces `--title` with
+// its own summary while the agent works (confirmed live 2026-10-06 —
+// workers showed "Host mode enforcement", not the task title), so the
+// rename keeps the sidebar on the task's name. Only re-applied while the
+// thread is unarchived: amp refuses to rename an archived thread, and
+// the retire archives after renaming, not before. Best-effort by design
+// — callers ignore a rename error once the run itself succeeded.
 func ampRenameCommand(ctx context.Context, envFile, threadID, title string) (*exec.Cmd, error) {
 	return ampRunCommand(ctx, envFile, []string{"threads", "rename", threadID, title})
 }

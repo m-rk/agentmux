@@ -7,8 +7,8 @@ relaunches it the same way:
 
 ```sh
 agentmux sessions run -file prompt.md site-amp@build-box
-agentmux sessions run -file prompt.md -title "AMUX-17 do the thing" site-amp@build-box
-agentmux sessions run -file followup.md -thread T-11111111-1111-4111-8111-111111111111 site-amp@build-box
+agentmux sessions run -file prompt.md -title "AMUX-17 do the thing" -label agentmux-task site-amp@build-box
+agentmux sessions run -file followup.md -thread T-11111111-1111-4111-8111-111111111111 -title "AMUX-17 do the thing" -label agentmux-task site-amp@build-box
 echo "do the thing" | agentmux sessions run -file - site-amp@build-box
 ```
 
@@ -40,22 +40,33 @@ starts no amp thread; see [Deploy](deploy.md). `-template NAME`
 (dry-run only) validates against an existing amp instance instead of
 the target, for targets that don't exist yet.
 
-## Thread titles
+## Thread titles and labels
 
-`-title "<task id> <task name>"` names a new thread in the amp sidebar
+`-title "<task id> <task name>"` names the thread in the amp sidebar
 (the dispatcher passes the task's id and name, e.g. `-title "AMUX-17 do the
 thing"`), where amp's own summary would otherwise say nothing about which
-task the thread belongs to. It is ignored when continuing a thread. The
-title rides `amp -x --title` with `--no-archive-after-execute`, so a
-finished thread stays unarchived — findable and renamable — instead of
-vanishing into the archive. The prompt itself also opens with the title as
-a one-line header, since the kickoff notification shows the first message
-rather than the sidebar title. Once the thread exists the title is
-re-applied with `amp threads rename`, since amp may retitle the thread
-itself while the agent works; the rename is best-effort and never fails
-the run. amp refuses to rename archived threads, so an archived task
-thread keeps whatever title it had. Archive task threads when the task
-note is archived, not before.
+task the thread belongs to. amp's auto-title replaces `--title` with its
+own summary while the agent works, so the title is re-applied with
+`amp threads rename` after the first assistant turn, on every resume, and
+when the run ends — before any archiving, since amp refuses to rename an
+archived thread. The rename is best-effort and never fails the run. The
+title rides `amp -x --title` on a new thread with
+`--no-archive-after-execute`, so a finished thread stays unarchived —
+findable and renamable — instead of vanishing into the archive. The
+prompt itself also opens with the title as a one-line header, since the
+kickoff notification shows the first message rather than the sidebar
+title. There is no amp setting that stops auto-titling; the re-apply is
+the mechanism. Archive task threads when the task note is archived, not
+before.
+
+`-label X` (repeatable) tags the thread so `amp threads list --label X`
+finds it — labels, not projects, are the filter for local threads, since
+`--project` only applies to orb (cloud) runs. Every `-label` rides
+`amp -l` on the first run and on every `threads continue`, which adds the
+label to the existing thread. Junk labels (empty, overlong, or carrying
+line breaks, NUL bytes, or commas) are dropped, never a refusal. Labels
+are the dispatcher's to set; the example `agentmux-task` above stands in
+for whatever label the dispatcher passes.
 
 ## Threads stay unarchived
 

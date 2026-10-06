@@ -628,7 +628,7 @@ func TestCreateSharesSendBucket(t *testing.T) {
 	}
 }
 
-const runBody = `{"address":"probe@hostA","text":"do the thing","title":"AMUX-17 do the thing"}`
+const runBody = `{"address":"probe@hostA","text":"do the thing","title":"AMUX-17 do the thing","labels":["agentmux-task"]}`
 
 func TestRunGrantAndPassthrough(t *testing.T) {
 	h := newHarness(t,
@@ -646,7 +646,7 @@ func TestRunGrantAndPassthrough(t *testing.T) {
 		t.Errorf("response = %+v", res)
 	}
 	got := h.backend.ran[0]
-	if got.Address != "probe@hostA" || got.Text != "do the thing" || got.Title != "AMUX-17 do the thing" {
+	if got.Address != "probe@hostA" || got.Text != "do the thing" || got.Title != "AMUX-17 do the thing" || len(got.Labels) != 1 || got.Labels[0] != "agentmux-task" {
 		t.Errorf("backend request = %+v", got)
 	}
 	if !strings.Contains(h.logs.String(), `op=run target="probe@hostA"`) {

@@ -28,34 +28,47 @@ func TestAmpRunArgs(t *testing.T) {
 	// Flags before -x, prompt last: -x eats the next argument as its
 	// message even when it names a flag (confirmed live against the amp
 	// CLI 2026-10-05).
-	got := AmpRunArgs("do it", "high", "", "")
+	got := AmpRunArgs("do it", "high", "", "", nil)
 	want := []string{"--stream-json", "-m", "high", "--no-archive-after-execute", "-x", "do it"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("start: %q want %q", got, want)
 	}
-	got = AmpRunArgs("again", "", "T-1", "")
+	got = AmpRunArgs("again", "", "T-1", "", nil)
 	want = []string{"threads", "continue", "T-1", "--stream-json", "--no-archive-after-execute", "-x", "again"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("continue: %q want %q", got, want)
 	}
-	got = AmpRunArgs("do it", "", "", "")
+	got = AmpRunArgs("do it", "", "", "", nil)
 	if len(got) != 4 || got[0] != "--stream-json" || got[1] != "--no-archive-after-execute" {
 		t.Fatalf("no mode: %q", got)
 	}
 	// A title names a new thread and leaves it unarchived so it stays
 	// findable and renamable; a continue ignores it but still stays
 	// unarchived.
-	got = AmpRunArgs("do it", "", "", "AMUX-17 do the thing")
+	got = AmpRunArgs("do it", "", "", "AMUX-17 do the thing", nil)
 	want = []string{"--stream-json", "--title", "AMUX-17 do the thing", "--no-archive-after-execute", "-x", "do it"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("title: %q want %q", got, want)
 	}
-	got = AmpRunArgs("again", "", "T-1", "AMUX-17 do the thing")
+	got = AmpRunArgs("again", "", "T-1", "AMUX-17 do the thing", nil)
 	if strings.Contains(strings.Join(got, " "), "--title") {
 		t.Fatalf("continue takes no title: %q", got)
 	}
 	if !strings.Contains(strings.Join(got, " "), "--no-archive-after-execute") {
 		t.Fatalf("continue is archived: %q", got)
+	}
+	// Labels ride -l on both new and continued runs, before
+	// --no-archive-after-execute; junk entries are dropped, never a
+	// refusal.
+	got = AmpRunArgs("do it", "", "", "", []string{"agentmux-task", "  ", "a\nb"})
+	want = []string{"--stream-json", "-l", "agentmux-task", "--no-archive-after-execute", "-x", "do it"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("labels: %q want %q", got, want)
+	}
+	got = AmpRunArgs("again", "", "T-1", "", []string{"agentmux-task"})
+	want = []string{"threads", "continue", "T-1", "--stream-json", "-l", "agentmux-task", "--no-archive-after-execute", "-x", "again"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("continue labels: %q want %q", got, want)
 	}
 }
 
@@ -78,6 +91,21 @@ func TestCleanAmpTitle(t *testing.T) {
 		if _, err := CleanAmpTitle(raw); err == nil {
 			t.Fatalf("control title %q accepted", raw)
 		}
+	}
+}
+
+// TestCleanAmpLabels trims and drops junk: empty, overlong, or carrying
+// line breaks, NUL bytes, or commas never reach argv — and never refuse.
+func TestCleanAmpLabels(t *testing.T) {
+	got := CleanAmpLabels([]string{"  agentmux-task  ", "", "   ", "a\nb", "a,b", "a\x00b", strings.Repeat("x", 65)})
+	if len(got) != 1 || got[0] != "agentmux-task" {
+		t.Fatalf("labels = %q", got)
+	}
+	if got := CleanAmpLabels(nil); len(got) != 0 {
+		t.Fatalf("nil = %q", got)
+	}
+	if got := CleanAmpLabels([]string{"a", "b"}); len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Fatalf("pair = %q", got)
 	}
 }
 
@@ -332,13 +360,13 @@ func TestAmpRunStateOfStaleDone(t *testing.T) {
 	if _, err := os.Stat(p + ".done"); !os.IsNotExist(err) {
 		t.Fatalf("sentinel not cleared")
 	}
-	}
+}
 
-	// TestAmpRunStateOfWaitingFailedRun covers a failed run that ends at a
-	// pending question: the error_during_execution result (e.g. the operator
-	// killing the stuck process with SIGINT/SIGTERM) reports failed with the
-	// error, not waiting — the question is answered-by-hand.
-	func TestAmpRunStateOfWaitingFailedRun(t *testing.T) {
+// TestAmpRunStateOfWaitingFailedRun covers a failed run that ends at a
+// pending question: the error_during_execution result (e.g. the operator
+// killing the stuck process with SIGINT/SIGTERM) reports failed with the
+// error, not waiting — the question is answered-by-hand.
+func TestAmpRunStateOfWaitingFailedRun(t *testing.T) {
 	init := `{"type":"system","subtype":"init","session_id":"T-s"}`
 	ask := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"TU-1","name":"ask_user_choice","input":{"question":"Tabs or spaces?","options":["Tabs","Spaces"]}}]}}`
 	cancelled, _ := json.Marshal(map[string]any{"type": "result", "subtype": "error_during_execution", "is_error": true, "error": "User cancelled (SIGINT/SIGTERM)"})

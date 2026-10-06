@@ -17,13 +17,18 @@ import (
 // RunRequest starts an amp thread on an instance (Thread "") or continues
 // one (Thread set) by running the prompt through the amp CLI in the
 // instance's workdir. Title names a new thread ("<task id> <task name>"
-// from the dispatcher); a continue ignores it. The CLI runs detached: Run
-// returns as soon as the stream init record arrives, while the agent keeps
-// working.
+// from the dispatcher); a continue ignores it. Labels ride every run as
+// `amp -l` (repeatable): they land on the created thread and re-apply to
+// a continued one, so `amp threads list --label <x>` finds worker
+// threads. The CLI runs detached: Run returns as soon as the stream init
+// record arrives, while the agent keeps working.
 type RunRequest struct {
 	Address string // <instance>@<host>[#<thread>]
 	Text    string // the prompt; read from -file by the CLI
 	Title   string // thread title for a new thread; "" leaves amp's own
+	// Labels ride `amp -l` on every run, new or continued; "" or junk
+	// entries are dropped by session.CleanAmpLabels, never a refusal.
+	Labels []string
 	// Template names an existing amp instance on this host whose
 	// registry, workdir, mode and thread path a dry run validates
 	// against instead of the target's: a dry-run create makes nothing,
@@ -227,6 +232,7 @@ func (e Env) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, Refuse(safesend.ReasonInvalid, "%v", err)
 	}
+	labels := session.CleanAmpLabels(req.Labels)
 	if req.DryRun {
 		// A dry run validated everything a real run would — address,
 		// text, amp instance and runner, workdir, host config, mode
@@ -243,6 +249,9 @@ func (e Env) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		}
 		if mode != "" {
 			step += " with mode " + mode
+		}
+		if len(labels) > 0 {
+			step += " with labels " + strings.Join(labels, ",")
 		}
 		if req.Template != "" && target != addr.Instance {
 			step += " (validated against template " + target + ")"
@@ -275,7 +284,7 @@ func (e Env) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		}
 		session.UnarchiveAmpThread(ctx, src.AmpEnvFile, thread)
 	}
-	id, err := session.StartAmpRun(ctx, addr.Instance, src.AmpEnvFile, session.AmpRunArgs(text, mode, thread, title), workdir, logPath)
+	id, err := session.StartAmpRun(ctx, addr.Instance, src.AmpEnvFile, session.AmpRunArgs(text, mode, thread, title, labels), workdir, logPath)
 	if err != nil {
 		// The real run is also the mode check now: a name amp rejects
 		// dies here before printing its init record, quoting amp's own
@@ -288,11 +297,13 @@ func (e Env) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		}
 		return RunResult{}, Refuse(safesend.ReasonFailed, "amp: %v", err)
 	}
-	// A new thread keeps the task's title even if amp retitles it while
-	// working: best-effort, never a refusal. A continue ignores the
-	// title; the finished thread stays unarchived (see AmpRunArgs), so it
-	// can still be found and renamed.
-	if thread == "" {
+	// A new thread keeps the task's title even though amp's auto-title
+	// replaces `--title` while working: best-effort, never a refusal. A
+	// continue re-applies the title too when one is given, since the
+	// worker's own turns overwrite it in between. The finished thread
+	// stays unarchived (see AmpRunArgs), so it can still be found and
+	// renamed.
+	if title != "" {
 		session.RenameAmpThread(ctx, src.AmpEnvFile, id, title)
 	}
 	full := address.Address{Instance: addr.Instance, Host: addr.Host, Thread: id}

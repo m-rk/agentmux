@@ -163,14 +163,15 @@ threads](amp-run.md).
 
 ```json
 POST /v1/run
-{"address": "site-amp@build-box", "text": "do the thing", "title": "AMUX-17 do the thing"}
+{"address": "site-amp@build-box", "text": "do the thing", "title": "AMUX-17 do the thing", "labels": ["agentmux-task"]}
 ```
 
 | field     | meaning |
 |-----------|---------|
 | `address` | `<instance>@<host>` to start a thread, or with `#<thread>` to continue one; the grant is checked against the session without the thread suffix |
 | `text`    | the prompt |
-| `title`   | names a new thread (`<task id> <task name>`); ignored when continuing |
+| `title`   | names the thread (`<task id> <task name>`); re-applied after every run, since amp's auto-title overwrites it |
+| `labels`  | thread labels; every entry rides `amp -l` on the run so `amp threads list --label X` finds it |
 
 The reply is the thread plus its state (`running` when just launched):
 
@@ -192,8 +193,10 @@ agentmux sessions run -file followup.md -thread T-11111111-1111-4111-8111-111111
 ## Retiring a task session
 
 Once a task is done and its work is on `main`, its runner session has
-served its purpose. `retire` ends it: for an amp instance it archives
-the thread with `amp threads archive` (the thread stays readable on
+served its purpose. `retire` ends it: for an amp instance it re-applies
+the task title (`amp threads rename`, before the archive — amp refuses
+to rename an archived thread) and archives the thread with
+`amp threads archive` (the thread stays readable on
 ampcode.com) and kills any in-flight `amp -x` / `threads continue` runs
 for that instance, so a detached run can't keep working in the worktree
 being removed; for every agent it stops the session, removes the

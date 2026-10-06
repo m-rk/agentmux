@@ -21,6 +21,101 @@ import (
 // lookupUser is user.Lookup as a var so tests don't need real accounts.
 var lookupUser = user.Lookup
 
+// runThreadTitle recovers the task title for an instance's threads from
+// the newest recorded run log: `sessions run` with -title opens the
+// prompt with a one-line "<title>" header naming the task, and the first
+// such line is the title the retire archive re-applies before archiving
+// (amp refuses to rename an archived thread). Empty when no recorded log
+// carries one. Best-effort by design — a missing log just archives.
+func runThreadTitle(instance string, fields map[string]string) string {
+	return runThreadTitleFrom(recordedRunLogs(instance, fields))
+}
+
+// recordedRunLogs lists the instance's recorded run-log paths. Split out
+// so tests feed canned log bodies without touching the host.
+func recordedRunLogs(instance string, fields map[string]string) []string {
+	var home string
+	if runUser := fields["AGENTMUX_RUN_USER"]; runUser != "" {
+		if u, err := lookupUser(runUser); err == nil {
+			home = u.HomeDir
+		}
+	}
+	if home == "" {
+		if u, err := user.Current(); err == nil {
+			home = u.HomeDir
+		}
+	}
+	if home == "" || instance == "" {
+		return nil
+	}
+	dir := filepath.Join(home, ".local", "state", "agentmux", "sessions", instance)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, "amp-run-") || !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		if id := strings.TrimSuffix(strings.TrimPrefix(name, "amp-run-"), ".jsonl"); id == "pending" || !transcript.ValidAmpThreadID(id) {
+			continue
+		}
+		paths = append(paths, filepath.Join(dir, name))
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+// runThreadTitleFrom reads the task title out of recorded run logs: the
+// first line of the "-x" message in the newest log carrying one. The
+// stream log interleaves amp's own records with the spawn's stderr tail,
+// so the message line is found by scanning, not by position: the first
+// line that is not a JSON record and not empty. Logs hold one message
+// each (a continue appends to the thread's own log, whose first message
+// is the continued follow-up, not the title header), so the newest
+// titled log wins by scanning newest first.
+func runThreadTitleFrom(paths []string) string {
+	for i := len(paths) - 1; i >= 0; i-- {
+		if t := runLogTitle(paths[i]); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
+// runLogTitle reads one run log's task title: the first non-empty,
+// non-JSON line — the "<title>" header `sessions run` opens a titled
+// prompt with. Empty when the log holds no such line.
+func runLogTitle(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var js json.RawMessage
+		if json.Unmarshal([]byte(line), &js) == nil {
+			continue
+		}
+		return strings.TrimSpace(line)
+	}
+	return ""
+}
+
+// renameAmpThread re-applies the task title before the archive. A var so
+// tests substitute a fake; production runs `amp threads rename` the way
+// the transcript reader runs amp, and ignores every failure — the
+// archive proceeds either way.
+var renameAmpThread = func(ctx context.Context, src transcript.Source, thread, title string) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	_, _ = ampArchiveRun(ctx, src, "threads", "rename", thread, title)
+}
+
 // --- amp threads ---
 
 // ampSource builds the transcript Source for an amp instance from its
@@ -155,11 +250,16 @@ func recordedAmpThreads(src transcript.Source) []string {
 	return ids
 }
 
-// ampArchive archives one amp thread. The thread stays readable on
-// ampcode.com; gc deletes it after retention.
+// ampArchive archives one amp thread: first re-apply the task title (amp
+// refuses to rename an archived thread, so the rename rides before the
+// archive), then archive. The thread stays readable on ampcode.com; gc
+// deletes it after retention.
 func ampArchive(ctx context.Context, instance string, fields map[string]string, thread string) error {
 	if !transcript.ValidAmpThreadID(thread) {
 		return errorf(safesend.ReasonInvalid, "%q is not an amp thread id", thread)
+	}
+	if title := runThreadTitle(instance, fields); title != "" {
+		renameAmpThread(ctx, ampSource(instance, fields), thread, title)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()

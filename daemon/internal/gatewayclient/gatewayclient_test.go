@@ -244,11 +244,11 @@ func TestCreate(t *testing.T) {
 func TestRun(t *testing.T) {
 	ctx := context.Background()
 	s := &stub{status: 200, body: `{"ok":true,"address":"probe@box#T-11111111-1111-4111-8111-111111111111","agent":"amp","thread":"T-11111111-1111-4111-8111-111111111111","thread_id":"T-11111111-1111-4111-8111-111111111111","thread_url":"https://ampcode.com/threads/T-11111111-1111-4111-8111-111111111111","state":"running"}`}
-	got, err := s.server(t).Run(ctx, gatewayapi.RunRequest{Address: "probe@box", Text: "do the thing", Title: "AMUX-17 do the thing"})
+	got, err := s.server(t).Run(ctx, gatewayapi.RunRequest{Address: "probe@box", Text: "do the thing", Title: "AMUX-17 do the thing", Labels: []string{"agentmux-task"}})
 	if err != nil || got.ThreadID != "T-11111111-1111-4111-8111-111111111111" || got.State != "running" || s.path != "/v1/run" {
 		t.Fatalf("run: %+v %v %s", got, err, s.path)
 	}
-	if string(s.req) != `{"address":"probe@box","text":"do the thing","title":"AMUX-17 do the thing"}` {
+	if string(s.req) != `{"address":"probe@box","text":"do the thing","title":"AMUX-17 do the thing","labels":["agentmux-task"]}` {
 		t.Errorf("request = %s", s.req)
 	}
 

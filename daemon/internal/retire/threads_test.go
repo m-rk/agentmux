@@ -163,6 +163,68 @@ func TestAmpArchiveRunsTheDocumentedCommand(t *testing.T) {
 	}
 }
 
+// TestAmpArchiveRenamesBeforeArchiving covers the title that sticks: with
+// a recorded titled run log, the archive re-applies the task title first
+// (amp refuses to rename an archived thread, so the rename rides before
+// the archive), then archives. A rename failure never stops the archive.
+func TestAmpArchiveRenamesBeforeArchiving(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".local", "state", "agentmux", "sessions", "task-1")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	id := "T-00000000-0000-4000-8000-000000000001"
+	log := "AMUX-43 do the thing\n\nwork the task\n" +
+		`{"type":"system","subtype":"init","session_id":"` + id + `"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "amp-run-"+id+".jsonl"), []byte(log), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldLookup := lookupUser
+	lookupUser = func(name string) (*user.User, error) {
+		return &user.User{HomeDir: home}, nil
+	}
+	t.Cleanup(func() { lookupUser = oldLookup })
+	var calls [][]string
+	old := ampArchiveRun
+	ampArchiveRun = func(_ context.Context, _ transcript.Source, args ...string) ([]byte, error) {
+		calls = append(calls, args)
+		return []byte("{}"), nil
+	}
+	t.Cleanup(func() { ampArchiveRun = old })
+	if err := ampArchive(context.Background(), "task-1", map[string]string{"AGENTMUX_RUN_USER": "taskuser"}, id); err != nil {
+		t.Fatalf("ampArchive: %v", err)
+	}
+	if !reflect.DeepEqual(calls, [][]string{{"threads", "rename", id, "AMUX-43 do the thing"}, {"threads", "archive", id}}) {
+		t.Errorf("calls = %v, want rename-then-archive", calls)
+	}
+}
+
+// TestRunLogTitle reads the title header out of a run log: the first
+// non-empty, non-JSON line. A log with only stream records has none, and
+// a missing log reads empty — both just archive without renaming.
+func TestRunLogTitle(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "run.jsonl")
+	id := "T-00000000-0000-4000-8000-000000000001"
+	body := "AMUX-43 do the thing\n\nwork the task\n" +
+		`{"type":"system","subtype":"init","session_id":"` + id + `"}` + "\n"
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := runLogTitle(p); got != "AMUX-43 do the thing" {
+		t.Errorf("title = %q", got)
+	}
+	if got := runThreadTitleFrom([]string{p, filepath.Join(t.TempDir(), "missing.jsonl")}); got != "AMUX-43 do the thing" {
+		t.Errorf("from = %q", got)
+	}
+	records := filepath.Join(t.TempDir(), "records.jsonl")
+	if err := os.WriteFile(records, []byte(`{"type":"system","subtype":"init","session_id":"`+id+`"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := runLogTitle(records); got != "" {
+		t.Errorf("records-only title = %q", got)
+	}
+}
+
 func TestAmpArchiveRefusesBadID(t *testing.T) {
 	if err := ampArchive(context.Background(), "task-1", map[string]string{}, "nope"); ReasonOf(err) != "invalid" {
 		t.Errorf("reason = %s, want invalid", ReasonOf(err))
