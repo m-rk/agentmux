@@ -3,19 +3,20 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
 
 func TestRenderSelfUpdatePlist(t *testing.T) {
-	if !selfUpdatePlistSupported {
-		t.Skip("plist rendering is darwin-only")
-	}
 	cfg := selfUpdateHostConfig{
 		AgentmuxURL:  "https://example.com/agentmux.git",
 		MergenticURL: "https://example.com/mergentic.git",
 		AgentmuxDir:  "/home/me/src/agentmux",
 		MergenticDir: "/home/me/src/mergentic",
+		AgentmuxBin:  "/home/me/.agentmux/bin/agentmux",
+		MergenticBin: "/home/me/.local/bin/mergentic",
+		AgentsBinDir: "/home/me/.local/bin",
 	}
 	_ = cfg
 	plist := renderSelfUpdatePlistForTest(cfg)
@@ -27,8 +28,17 @@ func TestRenderSelfUpdatePlist(t *testing.T) {
 		"<integer>600</integer>",
 		"AGENTMUX_SELF_UPDATE_AGENTMUX_URL",
 		"https://example.com/agentmux.git",
+		"AGENTMUX_SELF_UPDATE_MERGENTIC_URL",
+		"https://example.com/mergentic.git",
+		"AGENTMUX_SELF_UPDATE_AGENTMUX_DIR",
+		"/home/me/src/agentmux",
 		"AGENTMUX_SELF_UPDATE_MERGENTIC_DIR",
 		"/home/me/src/mergentic",
+		"AGENTMUX_SELF_UPDATE_AGENTMUX_BIN",
+		"AGENTMUX_SELF_UPDATE_MERGENTIC_BIN",
+		"AGENTMUX_SELF_UPDATE_AGENTS_BIN_DIR",
+		"/home/me/.local/bin",
+		"AGENTMUX_SELF_UPDATE_SOCKET",
 		"self-update.err.log",
 	} {
 		if !strings.Contains(plist, want) {
@@ -146,5 +156,173 @@ func TestInstalledDoctorTime(t *testing.T) {
 	}
 	if got := selfUpdateInstalledDoctorTime(home); got != "04:05" {
 		t.Errorf("doctor time = %q, want 04:05", got)
+	}
+}
+
+// selfUpdateFlagEnvCases covers every host-config field: flag value,
+// environment value, and the empty case each parse path must resolve.
+func selfUpdateFlagEnvCases() []struct {
+	name  string
+	flag  string
+	value string
+	env   string
+	envV  string
+	get   func(selfUpdateHostConfig) string
+} {
+	return []struct {
+		name  string
+		flag  string
+		value string
+		env   string
+		envV  string
+		get   func(selfUpdateHostConfig) string
+	}{
+		{"agentmux-url", "-agentmux-url", "https://example.com/a-flag.git", "AGENTMUX_SELF_UPDATE_AGENTMUX_URL", "https://example.com/a-env.git", func(c selfUpdateHostConfig) string { return c.AgentmuxURL }},
+		{"mergentic-url", "-mergentic-url", "https://example.com/m-flag.git", "AGENTMUX_SELF_UPDATE_MERGENTIC_URL", "https://example.com/m-env.git", func(c selfUpdateHostConfig) string { return c.MergenticURL }},
+		{"agentmux-dir", "-agentmux-dir", "/flag/agentmux", "AGENTMUX_SELF_UPDATE_AGENTMUX_DIR", "/env/agentmux", func(c selfUpdateHostConfig) string { return c.AgentmuxDir }},
+		{"mergentic-dir", "-mergentic-dir", "/flag/mergentic", "AGENTMUX_SELF_UPDATE_MERGENTIC_DIR", "/env/mergentic", func(c selfUpdateHostConfig) string { return c.MergenticDir }},
+		{"agentmux-bin", "-agentmux-bin", "/flag/agentmux-bin", "AGENTMUX_SELF_UPDATE_AGENTMUX_BIN", "/env/agentmux-bin", func(c selfUpdateHostConfig) string { return c.AgentmuxBin }},
+		{"mergentic-bin", "-mergentic-bin", "/flag/mergentic-bin", "AGENTMUX_SELF_UPDATE_MERGENTIC_BIN", "/env/mergentic-bin", func(c selfUpdateHostConfig) string { return c.MergenticBin }},
+		{"agents-bin-dir", "-agents-bin-dir", "/flag/agents-bin", "AGENTMUX_SELF_UPDATE_AGENTS_BIN_DIR", "/env/agents-bin", func(c selfUpdateHostConfig) string { return c.AgentsBinDir }},
+		{"socket", "-socket", "/flag/agentmuxd.sock", "AGENTMUX_SELF_UPDATE_SOCKET", "/env/agentmuxd.sock", func(c selfUpdateHostConfig) string { return c.GatewaySocket }},
+	}
+}
+
+func withSelfUpdateEnv(t *testing.T, k, v string) {
+	t.Helper()
+	if v == "" {
+		t.Setenv(k, "")
+		if err := os.Unsetenv(k); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	t.Setenv(k, v)
+}
+
+func clearSelfUpdateEnv(t *testing.T) {
+	t.Helper()
+	for _, c := range selfUpdateFlagEnvCases() {
+		withSelfUpdateEnv(t, c.env, "")
+	}
+}
+
+// TestSelfUpdateInstallFlagEnvDefault checks flag > env > default for
+// `self-update install` on every field: a passed flag wins over the
+// environment, the environment wins when no flag is passed, and the
+// fields with home-based defaults fall back to them.
+func TestSelfUpdateInstallFlagEnvDefault(t *testing.T) {
+	for _, c := range selfUpdateFlagEnvCases() {
+		// Flag beats env.
+		clearSelfUpdateEnv(t)
+		withSelfUpdateEnv(t, c.env, c.envV)
+		_, _, cfg, err := parseSelfUpdateInstallArgs([]string{c.flag, c.value})
+		if err != nil {
+			t.Fatalf("%s: flag parse: %v", c.name, err)
+		}
+		if got := c.get(cfg); got != c.value {
+			t.Errorf("%s: flag over env = %q, want %q", c.name, got, c.value)
+		}
+		// Env fills in when no flag is passed.
+		clearSelfUpdateEnv(t)
+		withSelfUpdateEnv(t, c.env, c.envV)
+		_, _, cfg, err = parseSelfUpdateInstallArgs(nil)
+		if err != nil {
+			t.Fatalf("%s: env parse: %v", c.name, err)
+		}
+		if got := c.get(cfg); got != c.envV {
+			t.Errorf("%s: env = %q, want %q", c.name, got, c.envV)
+		}
+	}
+	// Empty env and no flags: dirs and bins fall back to home-based
+	// defaults, URLs and the agents bin dir stay empty.
+	clearSelfUpdateEnv(t)
+	_, _, cfg, err := parseSelfUpdateInstallArgs(nil)
+	if err != nil {
+		t.Fatalf("defaults parse: %v", err)
+	}
+	home, _ := os.UserHomeDir()
+	want := selfUpdateHostConfig{
+		AgentmuxDir:  filepath.Join(home, "src", "agentmux"),
+		MergenticDir: filepath.Join(home, "src", "mergentic"),
+		AgentmuxBin:  filepath.Join(home, ".agentmux", "bin", "agentmux"),
+		MergenticBin: filepath.Join(home, ".local", "bin", "mergentic"),
+	}
+	got := selfUpdateHostConfig{
+		AgentmuxDir:  cfg.AgentmuxDir,
+		MergenticDir: cfg.MergenticDir,
+		AgentmuxBin:  cfg.AgentmuxBin,
+		MergenticBin: cfg.MergenticBin,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("defaults = %+v, want %+v", got, want)
+	}
+	if cfg.AgentmuxURL != "" || cfg.MergenticURL != "" || cfg.AgentsBinDir != "" {
+		t.Errorf("URL/agents-bin defaults = %+v, want empty", cfg)
+	}
+	if cfg.GatewaySocket == "" {
+		t.Errorf("socket default is empty")
+	}
+}
+
+// TestSelfUpdateRunFlagEnvDefault checks flag > env on every field for
+// `self-update run`, the same precedence `install` bakes into the plist.
+func TestSelfUpdateRunFlagEnvDefault(t *testing.T) {
+	for _, c := range selfUpdateFlagEnvCases() {
+		clearSelfUpdateEnv(t)
+		withSelfUpdateEnv(t, c.env, c.envV)
+		cfg, err := parseSelfUpdateRunArgs([]string{c.flag, c.value})
+		if err != nil {
+			t.Fatalf("%s: flag parse: %v", c.name, err)
+		}
+		if got := c.get(cfg); got != c.value {
+			t.Errorf("%s: flag over env = %q, want %q", c.name, got, c.value)
+		}
+		clearSelfUpdateEnv(t)
+		withSelfUpdateEnv(t, c.env, c.envV)
+		cfg, err = parseSelfUpdateRunArgs(nil)
+		if err != nil {
+			t.Fatalf("%s: env parse: %v", c.name, err)
+		}
+		if got := c.get(cfg); got != c.envV {
+			t.Errorf("%s: env = %q, want %q", c.name, got, c.envV)
+		}
+	}
+}
+
+// TestSelfUpdateInstallFlagsReachPlist replays the reported repro: the
+// docs command's flags must land in the printed plist, including the
+// agents bin dir run uses for the extra mergentic copy.
+func TestSelfUpdateInstallFlagsReachPlist(t *testing.T) {
+	clearSelfUpdateEnv(t)
+	_, print, cfg, err := parseSelfUpdateInstallArgs([]string{
+		"-print",
+		"-agentmux-url", "https://example.com/agentmux.git",
+		"-mergentic-url", "https://example.com/mergentic.git",
+		"-agentmux-dir", "/home/me/src/agentmux",
+		"-mergentic-dir", "/home/me/src/mergentic",
+		"-agents-bin-dir", "/home/me/.local/bin",
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !print {
+		t.Errorf("-print did not parse")
+	}
+	if cfg.AgentmuxURL == "" || cfg.MergenticURL == "" {
+		t.Fatalf("URLs did not survive parsing: %+v", cfg)
+	}
+	plist := renderSelfUpdatePlistForTest(cfg)
+	for _, want := range []string{
+		"https://example.com/agentmux.git",
+		"https://example.com/mergentic.git",
+		"/home/me/src/agentmux",
+		"/home/me/src/mergentic",
+		"AGENTMUX_SELF_UPDATE_AGENTS_BIN_DIR",
+		"/home/me/.local/bin",
+	} {
+		if !strings.Contains(plist, want) {
+			t.Errorf("plist missing %q:\n%s", want, plist)
+		}
 	}
 }

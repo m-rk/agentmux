@@ -66,46 +66,100 @@ func runSelfUpdateCmd(args []string) {
 	}
 }
 
-// selfUpdateConfigFromFlags builds the host config from flags over env
-// over defaults. Defaults are generic (no personal paths, hostnames or
-// usernames): the operator passes the real checkout dirs and URLs once
-// at install time.
-func selfUpdateConfigFromFlags(fs *flag.FlagSet) selfUpdateHostConfig {
+// defineSelfUpdateConfigFlags registers the shared host-config flags on
+// fs, bound to cfg. Flag defaults stay empty so that after parsing, only
+// flags the operator actually passed are set; resolveSelfUpdateConfig
+// then fills everything still empty from the environment, then defaults.
+// Flag beats environment beats default.
+func defineSelfUpdateConfigFlags(fs *flag.FlagSet, cfg *selfUpdateHostConfig) {
+	fs.StringVar(&cfg.AgentmuxURL, "agentmux-url", "", "git URL to fetch agentmux from")
+	fs.StringVar(&cfg.MergenticURL, "mergentic-url", "", "git URL to fetch mergentic from")
+	fs.StringVar(&cfg.AgentmuxDir, "agentmux-dir", "", "checkout dir for agentmux")
+	fs.StringVar(&cfg.MergenticDir, "mergentic-dir", "", "checkout dir for mergentic")
+	fs.StringVar(&cfg.AgentmuxBin, "agentmux-bin", "", "where the built agentmux binary installs")
+	fs.StringVar(&cfg.MergenticBin, "mergentic-bin", "", "where the built mergentic binary installs")
+	fs.StringVar(&cfg.AgentsBinDir, "agents-bin-dir", "", "extra dir receiving the mergentic binary")
+	fs.StringVar(&cfg.GatewaySocket, "socket", "", "daemon socket for the post-install smoke check")
+}
+
+// resolveSelfUpdateConfig fills every still-empty field of cfg, first
+// from the environment, then from generic defaults (no personal paths,
+// hostnames or usernames): the operator passes the real checkout dirs
+// and URLs once at install time.
+func resolveSelfUpdateConfig(cfg selfUpdateHostConfig) selfUpdateHostConfig {
+	if cfg.AgentmuxURL == "" {
+		cfg.AgentmuxURL = os.Getenv("AGENTMUX_SELF_UPDATE_AGENTMUX_URL")
+	}
+	if cfg.MergenticURL == "" {
+		cfg.MergenticURL = os.Getenv("AGENTMUX_SELF_UPDATE_MERGENTIC_URL")
+	}
 	home, _ := os.UserHomeDir()
-	cfg := selfUpdateHostConfig{
-		AgentmuxURL:   os.Getenv("AGENTMUX_SELF_UPDATE_AGENTMUX_URL"),
-		MergenticURL:  os.Getenv("AGENTMUX_SELF_UPDATE_MERGENTIC_URL"),
-		AgentmuxDir:   os.Getenv("AGENTMUX_SELF_UPDATE_AGENTMUX_DIR"),
-		MergenticDir:  os.Getenv("AGENTMUX_SELF_UPDATE_MERGENTIC_DIR"),
-		AgentmuxBin:   os.Getenv("AGENTMUX_SELF_UPDATE_AGENTMUX_BIN"),
-		MergenticBin:  os.Getenv("AGENTMUX_SELF_UPDATE_MERGENTIC_BIN"),
-		AgentsBinDir:  os.Getenv("AGENTMUX_SELF_UPDATE_AGENTS_BIN_DIR"),
-		GatewaySocket: os.Getenv("AGENTMUX_SELF_UPDATE_SOCKET"),
+	if cfg.AgentmuxDir == "" {
+		cfg.AgentmuxDir = os.Getenv("AGENTMUX_SELF_UPDATE_AGENTMUX_DIR")
+		if cfg.AgentmuxDir == "" && home != "" {
+			cfg.AgentmuxDir = filepath.Join(home, "src", "agentmux")
+		}
 	}
-	fs.StringVar(&cfg.AgentmuxURL, "agentmux-url", cfg.AgentmuxURL, "git URL to fetch agentmux from")
-	fs.StringVar(&cfg.MergenticURL, "mergentic-url", cfg.MergenticURL, "git URL to fetch mergentic from")
-	fs.StringVar(&cfg.AgentmuxDir, "agentmux-dir", cfg.AgentmuxDir, "checkout dir for agentmux")
-	fs.StringVar(&cfg.MergenticDir, "mergentic-dir", cfg.MergenticDir, "checkout dir for mergentic")
-	fs.StringVar(&cfg.AgentmuxBin, "agentmux-bin", cfg.AgentmuxBin, "where the built agentmux binary installs")
-	fs.StringVar(&cfg.MergenticBin, "mergentic-bin", cfg.MergenticBin, "where the built mergentic binary installs")
-	fs.StringVar(&cfg.AgentsBinDir, "agents-bin-dir", cfg.AgentsBinDir, "extra dir receiving the mergentic binary")
-	fs.StringVar(&cfg.GatewaySocket, "socket", cfg.GatewaySocket, "daemon socket for the post-install smoke check")
-	if cfg.AgentmuxDir == "" && home != "" {
-		cfg.AgentmuxDir = filepath.Join(home, "src", "agentmux")
+	if cfg.MergenticDir == "" {
+		cfg.MergenticDir = os.Getenv("AGENTMUX_SELF_UPDATE_MERGENTIC_DIR")
+		if cfg.MergenticDir == "" && home != "" {
+			cfg.MergenticDir = filepath.Join(home, "src", "mergentic")
+		}
 	}
-	if cfg.MergenticDir == "" && home != "" {
-		cfg.MergenticDir = filepath.Join(home, "src", "mergentic")
+	if cfg.AgentmuxBin == "" {
+		cfg.AgentmuxBin = os.Getenv("AGENTMUX_SELF_UPDATE_AGENTMUX_BIN")
+		if cfg.AgentmuxBin == "" && home != "" {
+			cfg.AgentmuxBin = filepath.Join(home, ".agentmux", "bin", "agentmux")
+		}
 	}
-	if cfg.AgentmuxBin == "" && home != "" {
-		cfg.AgentmuxBin = filepath.Join(home, ".agentmux", "bin", "agentmux")
+	if cfg.MergenticBin == "" {
+		cfg.MergenticBin = os.Getenv("AGENTMUX_SELF_UPDATE_MERGENTIC_BIN")
+		if cfg.MergenticBin == "" && home != "" {
+			cfg.MergenticBin = filepath.Join(home, ".local", "bin", "mergentic")
+		}
 	}
-	if cfg.MergenticBin == "" && home != "" {
-		cfg.MergenticBin = filepath.Join(home, ".local", "bin", "mergentic")
+	if cfg.AgentsBinDir == "" {
+		cfg.AgentsBinDir = os.Getenv("AGENTMUX_SELF_UPDATE_AGENTS_BIN_DIR")
 	}
 	if cfg.GatewaySocket == "" {
-		cfg.GatewaySocket = daemoninstall.SocketPath()
+		cfg.GatewaySocket = os.Getenv("AGENTMUX_SELF_UPDATE_SOCKET")
+		if cfg.GatewaySocket == "" {
+			cfg.GatewaySocket = daemoninstall.SocketPath()
+		}
 	}
 	return cfg
+}
+
+// parseSelfUpdateInstallArgs parses `self-update install` flags: it
+// defines the flags first, parses, then resolves flag over env over
+// default. A non-nil error means the caller prints usage and exits 2.
+func parseSelfUpdateInstallArgs(args []string) (bin string, print bool, cfg selfUpdateHostConfig, err error) {
+	fs := flag.NewFlagSet("self-update install", flag.ContinueOnError)
+	binFlag := fs.String("bin", "", "agentmux binary path the job execs (default: the daemon's pinned binary)")
+	printFlag := fs.Bool("print", false, "print the plist without installing it")
+	defineSelfUpdateConfigFlags(fs, &cfg)
+	if err := fs.Parse(args); err != nil {
+		return "", false, selfUpdateHostConfig{}, err
+	}
+	if fs.NArg() != 0 {
+		return "", false, selfUpdateHostConfig{}, fmt.Errorf("unexpected arguments: %v", fs.Args())
+	}
+	return *binFlag, *printFlag, resolveSelfUpdateConfig(cfg), nil
+}
+
+// parseSelfUpdateRunArgs parses `self-update run` flags the same way:
+// flags first, parse, then flag over env over default.
+func parseSelfUpdateRunArgs(args []string) (selfUpdateHostConfig, error) {
+	fs := flag.NewFlagSet("self-update run", flag.ContinueOnError)
+	cfg := selfUpdateHostConfig{}
+	defineSelfUpdateConfigFlags(fs, &cfg)
+	if err := fs.Parse(args); err != nil {
+		return selfUpdateHostConfig{}, err
+	}
+	if fs.NArg() != 0 {
+		return selfUpdateHostConfig{}, fmt.Errorf("unexpected arguments: %v", fs.Args())
+	}
+	return resolveSelfUpdateConfig(cfg), nil
 }
 
 // runSelfUpdateInstall is `agentmux self-update install`: write and load
@@ -115,12 +169,8 @@ func runSelfUpdateInstall(args []string) {
 	if err := liveguard.Check(); err != nil {
 		log.Fatalf("self-update install: %v", err)
 	}
-	fs := flag.NewFlagSet("self-update install", flag.ExitOnError)
-	bin := fs.String("bin", "", "agentmux binary path the job execs (default: the daemon's pinned binary)")
-	print := fs.Bool("print", false, "print the plist without installing it")
-	cfg := selfUpdateConfigFromFlags(fs)
-	fs.Parse(args)
-	if fs.NArg() != 0 {
+	binFlag, printFlag, cfg, err := parseSelfUpdateInstallArgs(args)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, selfUpdateUsage)
 		os.Exit(2)
 	}
@@ -131,11 +181,11 @@ func runSelfUpdateInstall(args []string) {
 	if err != nil {
 		log.Fatalf("self-update install: %v", err)
 	}
-	binPath := *bin
+	binPath := binFlag
 	if binPath == "" {
 		binPath = cfg.AgentmuxBin
 	}
-	if err := installSelfUpdateSchedule(home, binPath, cfg, *print); err != nil {
+	if err := installSelfUpdateSchedule(home, binPath, cfg, printFlag); err != nil {
 		log.Fatalf("self-update install: %v", err)
 	}
 }
@@ -152,10 +202,8 @@ type selfUpdateRepo struct {
 // each repo and install up to the shipped commit when it moved. One repo
 // failing never stops the other: each logs its own line.
 func runSelfUpdateRun(args []string) {
-	fs := flag.NewFlagSet("self-update run", flag.ExitOnError)
-	cfg := selfUpdateConfigFromFlags(fs)
-	fs.Parse(args)
-	if fs.NArg() != 0 {
+	cfg, err := parseSelfUpdateRunArgs(args)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, selfUpdateUsage)
 		os.Exit(2)
 	}
