@@ -3,9 +3,11 @@ package retire
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"github.com/m-rk/agentmux/daemon/internal/runas"
 	"github.com/m-rk/agentmux/daemon/internal/safesend"
 	"github.com/m-rk/agentmux/daemon/internal/session"
+	"github.com/m-rk/agentmux/daemon/internal/transcript"
 )
 
 // Options tunes Retire; see the Retire function.
@@ -54,6 +57,15 @@ type Env interface {
 	RetentionPath() string
 	// DeleteLeftovers deletes one due record's threads/sessions.
 	DeleteLeftovers(ctx context.Context, rec Record) (GCDeleted, error)
+	// SweepDelete permanently deletes one swept junk thread whose
+	// retention has expired (see the ampsweep package). The default
+	// (nil) leaves swept records to the sweep's own gc; production
+	// Envs wire the amp CLI delete.
+	SweepDelete(ctx context.Context, thread string) error
+	// SweptGone reports whether a swept thread is already gone from
+	// the account (an export failure means archived-gone, so the
+	// record drops instead of blocking the gc forever).
+	SweptGone(ctx context.Context, thread string) (bool, error)
 }
 
 // BranchFate is what retire decided about one branch: deleted because
@@ -186,12 +198,37 @@ func (DaemonEnv) DeleteLeftovers(ctx context.Context, rec Record) (GCDeleted, er
 	return deleteLeftovers(ctx, rec)
 }
 
+// SweepDelete permanently deletes one swept junk thread whose retention
+// has expired: `amp threads delete`, local and server-side.
+func (DaemonEnv) SweepDelete(ctx context.Context, thread string) error {
+	return sweepDelete(ctx, thread)
+}
+
+// SweptGone reports whether a swept thread is already gone from the
+// account: an export failure means archived-gone (a visible thread
+// exports fine), so the record drops instead of blocking the gc.
+func (DaemonEnv) SweptGone(ctx context.Context, thread string) (bool, error) {
+	return sweptGone(ctx, thread)
+}
+
 // DeleteLeftovers deletes one due record's threads or stored sessions.
 // Claude-code records hold neither — its transcripts are never deleted —
 // so deleting one is just dropping the record, which GC does after this
 // returns.
 func (LiveEnv) DeleteLeftovers(ctx context.Context, rec Record) (GCDeleted, error) {
 	return deleteLeftovers(ctx, rec)
+}
+
+// SweepDelete permanently deletes one swept junk thread; see
+// DaemonEnv.SweepDelete — gc behavior is identical either way.
+func (LiveEnv) SweepDelete(ctx context.Context, thread string) error {
+	return sweepDelete(ctx, thread)
+}
+
+// SweptGone reports whether a swept thread is already gone; see
+// DaemonEnv.SweptGone.
+func (LiveEnv) SweptGone(ctx context.Context, thread string) (bool, error) {
+	return sweptGone(ctx, thread)
 }
 
 // deleteLeftovers is the shared gc-time deletion both Envs run.
@@ -210,6 +247,98 @@ func deleteLeftovers(ctx context.Context, rec Record) (GCDeleted, error) {
 		}
 	}
 	return del, nil
+}
+
+// sweptDirName is the state dir under the run user's home holding one
+// JSON record per swept junk thread, mirroring retired records. The
+// sweep writes them (see the ampsweep package); gc reads them here.
+const sweptDirName = ".local/state/agentmux/swept"
+
+// sweptRecord is one swept thread: the archived thread id, when the
+// sweep archived it (UTC — gc counts retention from here), and the
+// reason, kept for the report.
+type sweptRecord struct {
+	Thread     string    `json:"thread"`
+	Title      string    `json:"title,omitempty"`
+	Reason     string    `json:"reason,omitempty"`
+	ArchivedAt time.Time `json:"archived_at"`
+}
+
+// sweepDelete permanently deletes one swept junk thread whose retention
+// has expired: `amp threads delete`, the same deletion retire's gc runs
+// for archived worker threads (see ampDelete).
+func sweepDelete(ctx context.Context, thread string) error {
+	if !transcript.ValidAmpThreadID(thread) {
+		return errorf(safesend.ReasonInvalid, "%q is not an amp thread id", thread)
+	}
+	src := transcript.Source{Agent: "amp"}
+	if u, err := user.Current(); err == nil {
+		src.Home = u.HomeDir
+	}
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	if _, err := ampArchiveRun(ctx, src, "threads", "delete", thread); err != nil {
+		return errorf(safesend.ReasonFailed, "deleting swept thread %s: %v", thread, ampErr(err))
+	}
+	return nil
+}
+
+// sweptGone reports whether a swept thread is already gone from the
+// account: an export failure means archived-gone (a visible thread
+// exports fine), so the record drops instead of blocking the gc
+// forever. A cancelled context is not "gone" — it aborts the gc.
+func sweptGone(ctx context.Context, thread string) (bool, error) {
+	src := transcript.Source{Agent: "amp"}
+	if u, err := user.Current(); err == nil {
+		src.Home = u.HomeDir
+	}
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	if _, err := ampArchiveRun(ctx, src, "threads", "export", thread); err != nil {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// listSwept returns every swept-thread record under home. A missing dir
+// is nil, not an error; an unreadable record is skipped, never fatal.
+func listSwept(home string) ([]sweptRecord, error) {
+	dir := filepath.Join(home, sweptDirName)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []sweptRecord
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var rec sweptRecord
+		if err := json.Unmarshal(data, &rec); err != nil || rec.Thread == "" {
+			continue
+		}
+		out = append(out, rec)
+	}
+	return out, nil
+}
+
+// removeSwept drops one swept record; a missing record is not an error.
+func removeSwept(home, thread string) error {
+	err := os.Remove(filepath.Join(home, sweptDirName, thread+".json"))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func (DaemonEnv) GCHome() string { return runas.CurrentUserHome() }

@@ -33,6 +33,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -107,6 +108,17 @@ type GCResult struct {
 	Deleted []GCDeleted `json:"deleted,omitempty"`
 	// Kept lists retired instances still inside retention.
 	Kept []GCKept `json:"kept,omitempty"`
+	// SweptDeleted lists swept junk threads deleted after retention
+	// (see the ampsweep package: threads that belonged to no task
+	// instance, archived by the sweep and deleted here). Retired
+	// records can never cover them — no instance means no record.
+	SweptDeleted []string `json:"swept_deleted,omitempty"`
+	// SweptKept lists swept junk threads still inside retention.
+	SweptKept []GCKept `json:"swept_kept,omitempty"`
+	// SweptMissing lists swept records whose thread is already gone
+	// from the account (deleted by hand, or by an earlier gc): the
+	// records are dropped, not kept forever.
+	SweptMissing []string `json:"swept_missing,omitempty"`
 	// DryRun is set when nothing was changed.
 	DryRun bool `json:"dry_run,omitempty"`
 }
@@ -379,7 +391,10 @@ func branchName(res RetireResult) string {
 }
 
 // GC deletes the leftovers of retired sessions older than the host
-// retention. ctx bounds the whole operation.
+// retention, plus the swept junk threads whose own retention has
+// expired (threads that belonged to no task instance, archived by the
+// sweep — no retired record could ever cover them). ctx bounds the
+// whole operation.
 func GC(ctx context.Context, env Env, dryRun bool, now time.Time) (GCResult, error) {
 	days := retentionDays(env.RetentionPath())
 	res := GCResult{RetentionDays: days, DryRun: dryRun}
@@ -409,6 +424,41 @@ func GC(ctx context.Context, env Env, dryRun bool, now time.Time) (GCResult, err
 			return GCResult{}, err
 		}
 		res.Deleted = append(res.Deleted, del)
+	}
+	swept, err := listSwept(env.GCHome())
+	if err != nil {
+		return GCResult{}, err
+	}
+	sort.Slice(swept, func(i, j int) bool { return swept[i].Thread < swept[j].Thread })
+	dueAfter := time.Duration(days) * 24 * time.Hour
+	for _, rec := range swept {
+		if now.Sub(rec.ArchivedAt) < dueAfter {
+			res.SweptKept = append(res.SweptKept, GCKept{Instance: rec.Thread,
+				RetiredAt: rec.ArchivedAt.Format(time.RFC3339),
+				DeleteAt:  rec.ArchivedAt.Add(dueAfter).Format(time.RFC3339)})
+			continue
+		}
+		if dryRun {
+			res.SweptDeleted = append(res.SweptDeleted, rec.Thread)
+			continue
+		}
+		gone, err := env.SweptGone(ctx, rec.Thread)
+		if err != nil {
+			return GCResult{}, err
+		}
+		if !gone {
+			if err := env.SweepDelete(ctx, rec.Thread); err != nil {
+				return GCResult{}, err
+			}
+		}
+		if err := removeSwept(env.GCHome(), rec.Thread); err != nil {
+			return GCResult{}, err
+		}
+		if gone {
+			res.SweptMissing = append(res.SweptMissing, rec.Thread)
+		} else {
+			res.SweptDeleted = append(res.SweptDeleted, rec.Thread)
+		}
 	}
 	return res, nil
 }

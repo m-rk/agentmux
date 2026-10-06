@@ -5,11 +5,28 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // sweptDirName is the state dir under the run user's home holding one
 // JSON record per swept thread, mirroring retire's retired records.
 const sweptDirName = ".local/state/agentmux/swept"
+
+// SweptRecord is one swept thread the sweep recorded for a later gc:
+// the thread id, when it was archived, and the reason. retire.GC reads
+// these (as its own sweptRecord shape) and deletes them after the same
+// retention retired sessions get.
+type SweptRecord struct {
+	// Thread is the archived amp thread id.
+	Thread string `json:"thread"`
+	// Title is the thread's title at sweep time, for the report.
+	Title string `json:"title,omitempty"`
+	// Reason is the sweep's human-readable archive reason.
+	Reason string `json:"reason,omitempty"`
+	// ArchivedAt is when the sweep archived it (UTC); gc counts its
+	// retention from here.
+	ArchivedAt time.Time `json:"archived_at"`
+}
 
 // FileStore persists swept records as one JSON file per thread.
 type FileStore struct {

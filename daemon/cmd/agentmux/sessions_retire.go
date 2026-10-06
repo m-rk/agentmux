@@ -249,7 +249,16 @@ func runGCCmd(args []string) {
 		for _, k := range r.res.Kept {
 			fmt.Printf("  - keeping %s until %s\n", k.Instance, k.DeleteAt)
 		}
-		if len(r.res.Deleted) == 0 && len(r.res.Kept) == 0 {
+		for _, t := range r.res.SweptDeleted {
+			fmt.Printf("  - deleted swept thread %s\n", t)
+		}
+		for _, k := range r.res.SweptKept {
+			fmt.Printf("  - keeping swept thread %s until %s\n", k.Instance, k.DeleteAt)
+		}
+		for _, t := range r.res.SweptMissing {
+			fmt.Printf("  - dropped swept record %s (thread already gone)\n", t)
+		}
+		if len(r.res.Deleted) == 0 && len(r.res.Kept) == 0 && len(r.res.SweptDeleted) == 0 && len(r.res.SweptKept) == 0 && len(r.res.SweptMissing) == 0 {
 			fmt.Println("  nothing retired")
 		}
 	}

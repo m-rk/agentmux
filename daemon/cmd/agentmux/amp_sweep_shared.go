@@ -61,22 +61,3 @@ func runLocalSweep(dryRun bool, runUser string) sweepResult {
 	}
 	return sweepResult{res: res}
 }
-
-// gcSweptPass deletes swept junk threads whose retention has expired.
-// It runs inside the local gc pass (see ops.Env.GC via retire.GC):
-// this wrapper resolves the identity and retention path the same way
-// the sweep does, so both halves agree on whose records they read.
-func gcSweptPass(ctx context.Context, dryRun bool, runUser string, now time.Time) (ampsweep.GCResult, error) {
-	identity, err := doctorIdentity(runUser)
-	if err != nil {
-		return ampsweep.GCResult{}, err
-	}
-	effectiveUser := ""
-	if os.Geteuid() == 0 {
-		effectiveUser = identity.Username
-	}
-	runner := &ampsweep.CLIRunner{RunUser: effectiveUser}
-	store := ampsweep.FileStore{Home: identity.HomeDir}
-	retentionPath := identity.HomeDir + "/.config/agentmux/retention.yaml"
-	return ampsweep.GC(ctx, store, runner, retentionPath, dryRun, now)
-}

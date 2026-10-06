@@ -16,16 +16,20 @@ import (
 // fakeEnv is the test Env: canned registry, inspect state, and recorded
 // effects. It never touches the host.
 type fakeEnv struct {
-	now      time.Time
-	home     string
-	registry map[string]map[string]string
-	state    State
-	inspect  error
-	applied  []string
-	managed  []string
-	managedErr error
-	deleted  []Record
-	delErr   error
+	now          time.Time
+	home         string
+	registry     map[string]map[string]string
+	state        State
+	inspect      error
+	applied      []string
+	managed      []string
+	managedErr   error
+	deleted      []Record
+	delErr       error
+	sweptDeleted []string
+	sweepDelErr  error
+	sweptGone    map[string]bool
+	sweptGoneErr error
 }
 
 func testHome(t *testing.T) string {
@@ -93,6 +97,18 @@ func (f *fakeEnv) DeleteLeftovers(_ context.Context, rec Record) (GCDeleted, err
 	}
 	f.deleted = append(f.deleted, rec)
 	return deletedOf(rec), nil
+}
+
+func (f *fakeEnv) SweepDelete(_ context.Context, thread string) error {
+	f.sweptDeleted = append(f.sweptDeleted, thread)
+	return f.sweepDelErr
+}
+
+func (f *fakeEnv) SweptGone(_ context.Context, thread string) (bool, error) {
+	if f.sweptGoneErr != nil {
+		return false, f.sweptGoneErr
+	}
+	return f.sweptGone[thread], nil
 }
 
 func newFakeEnv(t *testing.T) *fakeEnv {
