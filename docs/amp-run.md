@@ -172,10 +172,18 @@ mode. Whether threads created from that runner's terminal inherit it is
 unconfirmed from the runner side — verify with `amp threads export` and
 rely on `sessions run` continues, which always pass `-m` themselves.
 
-Task sessions cannot run amp directly: a stub `amp` sits first on PATH
-in task workers' panes and refuses (`agentmux starts amp for you; test
-with fakes or -dry-run`). Real runs are started by agentmux, not by the
-worker.
+Task sessions never run amp by hand: an `amp` wrapper sits first on PATH
+in task workers' panes and adds the instance's effective mode as `-m`
+to every thread-creating call (`-x`, `threads new`/`continue`, `last`),
+so even a manual probe lands on the host mode instead of amp's default
+model (AMUX-45). Read-only calls (`threads list`/`export`, `version`)
+pass through untouched, an explicit `-m`/`--mode` is never doubled, and
+with no mode configured anywhere the wrapper refuses. Real runs are
+still started by agentmux (`sessions run`), not by the worker — and
+tests and probes use a fake amp or `sessions run -dry-run`, never a
+real thread. A probe run through the wrapper shows the contributor
+mode in the thread's export (`meta.threadAgent.definition`), which is
+what the back-test asserts with a fake amp.
 
 amp has no default-mode setting (checked 2026-10-06: only
 `amp.updates.mode` and `amp.defaultVisibility` exist in its settings

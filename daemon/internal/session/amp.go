@@ -182,9 +182,9 @@ func RunAmp(name string) error {
 	// The default launch is amp itself. An instance with an op env-file
 	// (see openv.go) instead re-enters agentmux, which starts amp through
 	// `op run` so its secrets never touch tmux, argv, or the registry.
-	// Task instances get the stub first on PATH (see taskAmpStubArgs):
-	// a bare `amp` typed in the worker's own pane refuses — real runs
-	// are started by agentmux, not by the worker.
+	// Task instances get the wrapper first on PATH (see taskAmpStubArgs):
+	// a bare `amp` typed in the worker's own pane carries the host mode
+	// — real runs are still started by agentmux, not by the worker.
 	agentCmd := append([]string{"amp"}, launchArgs...)
 	if opEnvFileExists(name) {
 		if err := opPreflight(); err != nil {
@@ -196,7 +196,7 @@ func RunAmp(name string) error {
 		}
 		agentCmd = []string{self, "session", "exec", "--instance", name}
 	}
-	tmuxArgs := append([]string{"-L", socket, "new-session", "-d", "-s", session, "-c", workdir}, taskAmpStubArgs(name)...)
+	tmuxArgs := append([]string{"-L", socket, "new-session", "-d", "-s", session, "-c", workdir}, taskAmpStubArgs(name, fields)...)
 	tmuxArgs = append(tmuxArgs, agentCmd...)
 	if out, err := withPath("tmux", tmuxArgs...).CombinedOutput(); err != nil {
 		return fmt.Errorf("starting tmux session %s: %w: %s", session, err, out)
@@ -215,21 +215,98 @@ func taskAmpStubDir() string {
 	return filepath.Join(home, ".agentmux", "stubs")
 }
 
-// taskAmpStubRefusal is what the stub prints: why a direct amp call is
-// refused and what to do instead. Kept in one place so the stub script
-// and the tests quote the same text.
+// taskAmpStubRefusal is what the wrapper prints when it refuses: why a
+// direct amp call can't run and what to do instead. Kept in one place
+// so the wrapper script and the tests quote the same text.
 const taskAmpStubRefusal = "agentmux starts amp for you; test with fakes or -dry-run"
 
-// taskAmpStubArgs returns the tmux new-session -e pair putting the stub
-// first on PATH for task-* instances, or nothing for any other instance
-// (non-task workers keep the real amp). The -e pair rides new-session
-// the same way taskSessionEnvArgs does for claude-code: before the
-// command, applying to that session's initial pane. The runner itself is
-// unaffected — tmux resolves `amp` before the pane's shell ever sees the
-// -e PATH — while a bare `amp` typed in the worker's own pane hits the
-// stub, which refuses (AMUX-36), instead of starting a thread on amp's
-// default model.
-func taskAmpStubArgs(name string) []string {
+// taskAmpWrapper is the amp wrapper installed first on PATH in task-*
+// instances' panes (AMUX-45). A worker that runs `amp` by hand bypasses
+// `sessions run`, so without this the thread starts on amp's default
+// model; the wrapper adds the instance's effective mode as -m to every
+// thread-creating call instead. Read-only calls (threads list/export,
+// version, ...) pass through untouched, and an explicit -m/--mode is
+// never doubled. With no mode the wrapper refuses rather than starting a
+// thread on the default model.
+//
+// The mode rides AGENTMUX_AMP_MODE, stamped per session by taskAmpStubArgs
+// from the same Require resolution the runner itself uses; the wrapper
+// never parses amp.yaml. taskAmpWrapperFor fills in the mode env var
+// name and the refusal text; the body has no % directives so Sprintf
+// cannot mangle its %% parameter expansions.
+const taskAmpWrapper = `#!/bin/sh
+# agentmux task wrapper (AMUX-45): manual amp calls in a task pane get
+# the host mode. Generated - do not hand-edit; RunAmp rewrites it when
+# its content drifts.
+MODE="${@@MODE_ENV@@:-}"
+if [ -z "$MODE" ]; then
+	echo "amp: no amp mode configured (@@MODE_ENV@@ unset): @@REFUSAL@@" >&2
+	exit 1
+fi
+REAL=""
+SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REST="$PATH:"
+while [ -n "$REST" ]; do
+	d=${REST%%:*}
+	REST=${REST#*:}
+	[ -z "$d" ] && d="."
+	if [ "$d" != "$SELF_DIR" ]; then
+		if [ -x "$d/amp" ] && [ ! -d "$d/amp" ]; then
+			REAL="$d/amp"
+			break
+		fi
+	fi
+done
+if [ -z "$REAL" ]; then
+	echo "amp: no real amp behind the wrapper on PATH" >&2
+	exit 1
+fi
+NEEDS_MODE=0
+SEEN_DASHDASH=0
+PREV=""
+for a in "$@"; do
+	if [ "$SEEN_DASHDASH" = 0 ]; then
+		case "$a" in
+		-m|--mode|-m=*|--mode=*) exec "$REAL" "$@" ;;
+		--) SEEN_DASHDASH=1 ;;
+		-x|--execute|--orb-execute|-ox) NEEDS_MODE=1 ;;
+		esac
+		if [ "$PREV" = "threads" ] || [ "$PREV" = "thread" ] || [ "$PREV" = "t" ]; then
+			case "$a" in
+			new|n|continue|c) NEEDS_MODE=1 ;;
+			esac
+		fi
+		if [ "$PREV" = "" ]; then
+			case "$a" in
+			last|l) NEEDS_MODE=1 ;;
+			esac
+		fi
+	fi
+	PREV="$a"
+done
+if [ "$NEEDS_MODE" = 1 ]; then
+	exec "$REAL" -m "$MODE" "$@"
+fi
+exec "$REAL" "$@"
+`
+
+// taskAmpWrapperFor renders taskAmpWrapper with the mode env var name
+// and refusal text filled in. strings.Replace, not Sprintf: the body
+// carries shell %% expansions that a format string would eat.
+func taskAmpWrapperFor() string {
+	s := strings.ReplaceAll(taskAmpWrapper, "@@MODE_ENV@@", ampconfig.EnvOverride)
+	return strings.ReplaceAll(s, "@@REFUSAL@@", taskAmpStubRefusal)
+}
+
+// taskAmpStubArgs returns the tmux new-session -e pairs for task-*
+// instances: the wrapper first on PATH plus the instance's effective amp
+// mode for the wrapper to inject (AMUX-45). Any other instance gets
+// nothing — non-task workers keep the real amp. fields is the instance's
+// registry entry, whose AGENTMUX_AMP_MODE override wins over the host
+// file exactly as in ampLaunchArgsFor; a missing mode everywhere means no
+// pairs (and ampLaunchArgsFor refuses the runner itself), never a silent
+// run on amp's default model.
+func taskAmpStubArgs(name string, fields map[string]string) []string {
 	if !strings.HasPrefix(name, liveguard.TaskPrefix) {
 		return nil
 	}
@@ -237,29 +314,38 @@ func taskAmpStubArgs(name string) []string {
 	if dir == "" {
 		return nil
 	}
-	if err := ensureTaskAmpStub(dir); err != nil {
-		fmt.Fprintf(os.Stderr, "%s: task amp stub: %v\n", name, err)
+	host, herr := ampconfig.Load(ampconfig.DefaultPath())
+	if herr != nil {
+		if strings.TrimSpace(fields[ampconfig.EnvOverride]) == "" {
+			fmt.Fprintf(os.Stderr, "%s: task amp wrapper: %v\n", name, herr)
+			return nil
+		}
+		host = ampconfig.Config{}
+	}
+	mode, _, err := ampconfig.Require(host, fields[ampconfig.EnvOverride])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: task amp wrapper: %v\n", name, err)
 		return nil
 	}
-	return []string{"-e", "PATH=" + dir + ":$PATH"}
+	if err := ensureTaskAmpStub(dir); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: task amp wrapper: %v\n", name, err)
+		return nil
+	}
+	return []string{"-e", "PATH=" + dir + ":$PATH", "-e", ampconfig.EnvOverride + "=" + mode}
 }
 
-// ensureTaskAmpStub writes the stub script into dir (once — an existing
-// file is left alone so a hand-fixed stub survives). The stub refuses
-// every invocation with taskAmpStubRefusal on stderr, exit 1: real runs
-// go through `sessions run`, which spawns its own amp child directly
-// and never consults this PATH.
+// ensureTaskAmpStub writes the wrapper script into dir, rewriting it
+// whenever its content drifts (so the AMUX-36 refusing stub upgrades in
+// place on the next RunAmp). An identical file is left alone.
 func ensureTaskAmpStub(dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
+	script := taskAmpWrapperFor()
 	path := filepath.Join(dir, "amp")
-	if _, err := os.Stat(path); err == nil {
+	if data, err := os.ReadFile(path); err == nil && string(data) == script {
 		return nil
 	}
-	script := "#!/bin/sh\n" +
-		"echo \"amp: " + taskAmpStubRefusal + "\" >&2\n" +
-		"exit 1\n"
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		return err
 	}

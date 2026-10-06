@@ -577,33 +577,223 @@ func TestRunAmpUpdate(t *testing.T) {
 	}
 }
 
-// TestTaskAmpStubArgsStampsTaskInstancesOnly pins the PATH stub wiring:
-// a task-* instance gets the -e PATH pair ahead of the command, every
-// other instance gets nothing, and the stub script itself refuses.
+// TestTaskAmpStubArgsStampsTaskInstancesOnly pins the wrapper wiring: a
+// task-* instance gets the -e PATH pair plus its effective mode, every
+// other instance gets nothing, and a task instance with no mode anywhere
+// gets nothing either (the runner itself refuses).
 func TestTaskAmpStubArgsStampsTaskInstancesOnly(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	got := taskAmpStubArgs("task-9")
-	if len(got) != 2 || got[0] != "-e" || !strings.HasPrefix(got[1], "PATH=") || !strings.HasSuffix(got[1], ":$PATH") {
+	writeHostModeFile(t, home, "high")
+	got := taskAmpStubArgs("task-9", map[string]string{})
+	if len(got) != 4 || got[0] != "-e" || !strings.HasPrefix(got[1], "PATH=") || !strings.HasSuffix(got[1], ":$PATH") {
 		t.Fatalf("taskAmpStubArgs(task-9) = %q, want the -e PATH pair", got)
 	}
-	if got := taskAmpStubArgs("site-amp"); len(got) != 0 {
+	if got[2] != "-e" || got[3] != "AGENTMUX_AMP_MODE=high" {
+		t.Fatalf("taskAmpStubArgs(task-9) = %q, want the stamped host mode", got)
+	}
+	// The instance override wins over the host file.
+	got = taskAmpStubArgs("task-9", map[string]string{"AGENTMUX_AMP_MODE": "custom"})
+	if len(got) != 4 || got[3] != "AGENTMUX_AMP_MODE=custom" {
+		t.Fatalf("taskAmpStubArgs(task-9, override) = %q, want the override", got)
+	}
+	if got := taskAmpStubArgs("site-amp", map[string]string{}); len(got) != 0 {
 		t.Fatalf("taskAmpStubArgs(site-amp) = %q, want nothing", got)
 	}
-	// The stub exists, is executable, and refuses.
-	stub := filepath.Join(home, ".agentmux", "stubs", "amp")
-	out, err := exec.Command("sh", stub, "threads", "list").CombinedOutput()
-	if err == nil {
-		t.Fatal("stub amp succeeded")
+	// The wrapper script exists and is executable.
+	if fi, err := os.Stat(filepath.Join(home, ".agentmux", "stubs", "amp")); err != nil || fi.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("wrapper missing or not executable: %v", fi)
 	}
-	if !strings.Contains(string(out), taskAmpStubRefusal) {
-		t.Fatalf("stub output = %q, want the refusal", out)
+}
+
+// TestTaskAmpStubArgsRefusesWithoutMode: with no host mode and no
+// instance override the wrapper pairs are absent — a silent run on amp's
+// default model is never wired up.
+func TestTaskAmpStubArgsRefusesWithoutMode(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // no amp.yaml anywhere
+	if got := taskAmpStubArgs("task-9", map[string]string{}); len(got) != 0 {
+		t.Fatalf("taskAmpStubArgs(task-9) without a mode = %q, want nothing", got)
+	}
+}
+
+// TestEnsureTaskAmpStubRewritesDrift upgrades the AMUX-36 refusing stub
+// in place: an old stub file is rewritten to the wrapper.
+func TestEnsureTaskAmpStubRewritesDrift(t *testing.T) {
+	dir := t.TempDir()
+	old := "#!/bin/sh\necho \"amp: agentmux starts amp for you; test with fakes or -dry-run\" >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "amp"), []byte(old), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureTaskAmpStub(dir); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "amp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "exit 1\n") && !strings.Contains(string(data), "-m") {
+		t.Fatalf("old refusing stub survived: %q", data)
+	}
+	// A second call is a no-op (identical content left alone).
+	fi1, _ := os.Stat(filepath.Join(dir, "amp"))
+	if err := ensureTaskAmpStub(dir); err != nil {
+		t.Fatal(err)
+	}
+	fi2, _ := os.Stat(filepath.Join(dir, "amp"))
+	if !fi1.ModTime().Equal(fi2.ModTime()) {
+		t.Fatal("ensureTaskAmpStub rewrote an identical wrapper")
+	}
+}
+
+// wrapperHarness installs the generated wrapper with a fake amp behind
+// it: bindir holds an `amp` shell script recording its argv to argvFile,
+// and the wrapper dir holds the real generated script. It returns the
+// environment (PATH with the wrapper first, AGENTMUX_AMP_MODE set) for
+// running probe commands through the wrapper.
+func wrapperHarness(t *testing.T, mode string) (wrapper string, bindir, argvFile string, env []string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	stubDir := filepath.Join(home, ".agentmux", "stubs")
+	if err := ensureTaskAmpStub(stubDir); err != nil {
+		t.Fatal(err)
+	}
+	wrapper = filepath.Join(stubDir, "amp")
+	bindir = t.TempDir()
+	argvFile = filepath.Join(t.TempDir(), "argv")
+	fake := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"" + argvFile + "\"\n"
+	if err := os.WriteFile(filepath.Join(bindir, "amp"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env = []string{
+		"PATH=" + stubDir + ":" + bindir + ":/usr/bin:/bin",
+		"AGENTMUX_AMP_MODE=" + mode,
+		"HOME=" + home,
+	}
+	return wrapper, bindir, argvFile, env
+}
+
+func runWrapper(t *testing.T, wrapper string, env []string, args ...string) (string, error) {
+	t.Helper()
+	cmd := exec.Command(wrapper, args...)
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func readArgv(t *testing.T, argvFile string) []string {
+	t.Helper()
+	data, err := os.ReadFile(argvFile)
+	if err != nil {
+		t.Fatalf("fake amp never ran: %v", err)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return nil
+	}
+	return lines
+}
+
+// TestTaskAmpWrapperAddsHostMode is the AMUX-45 back-test: a probe run
+// through the wrapper the way a worker would run it reaches the real
+// (here fake) amp with the host mode as -m.
+func TestTaskAmpWrapperAddsHostMode(t *testing.T) {
+	wrapper, _, argvFile, env := wrapperHarness(t, "high")
+	for _, args := range [][]string{
+		{"-x", "reply with exactly: MODE-PROBE-OK and nothing else"},
+		{"--execute", "probe"},
+		{"threads", "new"},
+		{"t", "c", "T-01a1119c-1111-4111-8111-111111111111"},
+		{"threads", "continue", "T-01a1119c-1111-4111-8111-111111111111"},
+		{"last"},
+	} {
+		os.Remove(argvFile)
+		if _, err := runWrapper(t, wrapper, env, args...); err != nil {
+			t.Fatalf("wrapper %v: %v", args, err)
+		}
+		got := readArgv(t, argvFile)
+		if len(got) < 2 || got[0] != "-m" || got[1] != "high" {
+			t.Fatalf("wrapper %v reached amp as %q, want -m high first", args, got)
+		}
+		if strings.Join(got[2:], " ") != strings.Join(args, " ") {
+			t.Fatalf("wrapper %v reached amp as %q, want the args carried through", args, got)
+		}
+	}
+}
+
+// TestTaskAmpWrapperPassesReadsThrough: read-only calls reach amp
+// without -m, exactly as typed.
+func TestTaskAmpWrapperPassesReadsThrough(t *testing.T) {
+	wrapper, _, argvFile, env := wrapperHarness(t, "high")
+	for _, args := range [][]string{
+		{"threads", "list"},
+		{"threads", "export", "T-01a1119c-1111-4111-8111-111111111111"},
+		{"version"},
+		{"--version"},
+	} {
+		os.Remove(argvFile)
+		if _, err := runWrapper(t, wrapper, env, args...); err != nil {
+			t.Fatalf("wrapper %v: %v", args, err)
+		}
+		if got, want := readArgv(t, argvFile), args; strings.Join(got, " ") != strings.Join(want, " ") {
+			t.Fatalf("wrapper %v reached amp as %q, want passthrough", args, got)
+		}
+	}
+}
+
+// TestTaskAmpWrapperNeverDoublesMode: an explicit -m/--mode rides
+// through untouched — the worker's (or agentmux's) choice wins.
+func TestTaskAmpWrapperNeverDoublesMode(t *testing.T) {
+	wrapper, _, argvFile, env := wrapperHarness(t, "high")
+	for _, args := range [][]string{
+		{"-m", "custom", "-x", "probe"},
+		{"--mode", "custom", "threads", "new"},
+		{"--mode=custom", "-x", "probe"},
+		{"-x", "--mode", "custom", "probe"},
+	} {
+		os.Remove(argvFile)
+		if _, err := runWrapper(t, wrapper, env, args...); err != nil {
+			t.Fatalf("wrapper %v: %v", args, err)
+		}
+		if got, want := readArgv(t, argvFile), args; strings.Join(got, " ") != strings.Join(want, " ") {
+			t.Fatalf("wrapper %v reached amp as %q, want no injected -m", args, got)
+		}
+	}
+}
+
+// TestTaskAmpWrapperRefusesWithoutMode: no mode, no thread — the
+// wrapper exits non-zero before any amp runs.
+func TestTaskAmpWrapperRefusesWithoutMode(t *testing.T) {
+	wrapper, _, argvFile, env := wrapperHarness(t, "")
+	envNoMode := []string{"PATH=" + strings.Split(env[0], "=")[1]}
+	out, err := runWrapper(t, wrapper, envNoMode, "-x", "probe")
+	if err == nil {
+		t.Fatal("wrapper ran with no mode configured")
+	}
+	if !strings.Contains(out, taskAmpStubRefusal) {
+		t.Fatalf("wrapper refusal = %q, want the no-manual-runs text", out)
+	}
+	if _, serr := os.Stat(argvFile); !os.IsNotExist(serr) {
+		t.Fatal("fake amp ran despite the missing mode")
+	}
+}
+
+// TestTaskAmpWrapperFindsRealAmp: the wrapper never calls itself —
+// argv shows the fake behind it ran, exactly once.
+func TestTaskAmpWrapperFindsRealAmp(t *testing.T) {
+	wrapper, _, argvFile, env := wrapperHarness(t, "high")
+	if _, err := runWrapper(t, wrapper, env, "threads", "list"); err != nil {
+		t.Fatalf("wrapper: %v", err)
+	}
+	if got := readArgv(t, argvFile); strings.Join(got, " ") != "threads list" {
+		t.Fatalf("fake amp saw %q", got)
 	}
 }
 
 // TestRunAmpStampsStubPathOnTaskLaunch pins the full tmux argv for a
-// task instance: the -e PATH pair lands before the runner command, so a
-// bare `amp` in the worker's own pane hits the stub.
+// task instance: the wrapper -e pairs land before the runner command,
+// so a bare `amp` in the worker's own pane hits the wrapper with the
+// host mode, and the stamped mode matches the runner's own -m.
 func TestRunAmpStampsStubPathOnTaskLaunch(t *testing.T) {
 	dir := withEnvDir(t)
 	withTestHostMode(t, "high")
@@ -624,9 +814,12 @@ func TestRunAmpStampsStubPathOnTaskLaunch(t *testing.T) {
 	got := newSessionArgs(t, *calls)
 	flat := strings.Join(got, " ")
 	if !strings.Contains(flat, "-e PATH=") {
-		t.Fatalf("task launch carries no stub PATH: %v", got)
+		t.Fatalf("task launch carries no wrapper PATH: %v", got)
 	}
-	// The -e pair precedes the runner command.
+	if !strings.Contains(flat, "AGENTMUX_AMP_MODE=high") {
+		t.Fatalf("task launch carries no stamped mode: %v", got)
+	}
+	// The -e pairs precede the runner command.
 	ei, ai := -1, -1
 	for i, a := range got {
 		if a == "-e" {
@@ -637,6 +830,16 @@ func TestRunAmpStampsStubPathOnTaskLaunch(t *testing.T) {
 		}
 	}
 	if ei < 0 || ai < 0 || ei > ai {
-		t.Fatalf("stub -e must precede amp: %v", got)
+		t.Fatalf("wrapper -e must precede amp: %v", got)
+	}
+	// The stamped mode matches the runner's own -m.
+	mi := -1
+	for i, a := range got {
+		if a == "-m" {
+			mi = i
+		}
+	}
+	if mi < 0 || mi+1 >= len(got) || got[mi+1] != "high" {
+		t.Fatalf("runner carries no -m high: %v", got)
 	}
 }
