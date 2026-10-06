@@ -108,3 +108,43 @@ func readTestFile(path string) (string, error) {
 	}
 	return string(data), nil
 }
+
+func TestHomeOfFindsHome(t *testing.T) {
+	if got := homeOf("/home/me/.agentmux/bin/agentmux"); got != "/home/me" {
+		t.Errorf("homeOf pinned bin = %q, want /home/me", got)
+	}
+	if got := homeOf("/tmp/tool"); got == "" {
+		t.Errorf("homeOf fallback is empty")
+	}
+}
+
+func TestInstalledDoctorTime(t *testing.T) {
+	dir := t.TempDir()
+	home := dir + "/home"
+	plistDir := home + "/Library/LaunchAgents"
+	if err := os.MkdirAll(plistDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := selfUpdateInstalledDoctorTime(home); got != "" {
+		t.Errorf("missing plist = %q, want empty", got)
+	}
+	plist := `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>5</integer>
+    </dict>
+</dict>
+</plist>
+`
+	if err := os.WriteFile(plistDir+"/com.m-rk.agentmux.doctor.plist", []byte(plist), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := selfUpdateInstalledDoctorTime(home); got != "04:05" {
+		t.Errorf("doctor time = %q, want 04:05", got)
+	}
+}

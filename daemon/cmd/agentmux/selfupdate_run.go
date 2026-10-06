@@ -155,40 +155,44 @@ func selfUpdateInstallAgentmux(home string, cfg selfUpdateHostConfig, built stri
 	return nil
 }
 
-// rollbackLogged logs a failure plus the rollback and returns the error.
-func rollbackLogged(home, repo, sha, reason string) error {
-	_ = selfupdate.LogEvent(home, selfupdate.FailedLine(repo, sha, reason+" (rolled back)"))
-	return fmt.Errorf("%s", reason)
-}
-
-// selfUpdateRestartAgentmux reloads the daemon and gateway LaunchAgents
-// in place: kickstart -k restarts a loaded job. The plist rewrite (new
-// binary path baked in) happens via the installed binary's own `daemon
-// install` when the updater execs it; when already running from the
-// installed binary, InstallForDeploy with the installed doctor time
-// refreshes the plists first. Failures are returned, never fatal here:
-// the caller decides rollback.
+// selfUpdateRestartAgentmux restarts the daemon and gateway on the new
+// binary, exactly once each. Either branch fully reloads the daemon
+// (bootout+bootstrap+kickstart), so the caller then only kickstarts the
+// gateway — whose plist is never rewritten here, so a kick is enough to
+// pick up the new binary bytes at the unchanged path. Failures are
+// returned, never fatal here: the caller decides rollback.
 func selfUpdateRestartAgentmux(bin string) error {
 	self, err := os.Executable()
 	if err != nil {
 		return err
 	}
+	doctor := selfUpdateInstalledDoctorTime(homeOf(bin))
+	if doctor == "" {
+		doctor = daemoninstall.DefaultDoctorTime
+	}
 	if self != bin {
-		cmd := exec.Command(bin, "daemon", "install")
+		// daemon install bootouts+bootstraps+kickstarts the daemon and
+		// reloads the doctor/gc jobs; pass the preserved doctor time so
+		// a customized schedule survives the update.
+		cmd := exec.Command(bin, "daemon", "install", "-doctor-time", doctor)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("daemon install: %w: %s", err, strings.TrimSpace(string(out)))
 		}
-	} else if err := daemoninstall.InstallForDeploy(daemoninstall.DefaultDoctorTime); err != nil {
-		return fmt.Errorf("refreshing plists: %w", err)
+	} else if err := daemoninstall.Install(doctor); err != nil {
+		return fmt.Errorf("reloading daemon: %w", err)
 	}
-	for _, label := range []string{"com.agentmux.daemon", gatewayLabel} {
-		if out, err := exec.Command("launchctl", "kickstart", "-k", "gui/"+selfUpdateUID()+"/"+label).CombinedOutput(); err != nil {
-			return fmt.Errorf("kickstart %s: %w: %s", label, err, strings.TrimSpace(string(out)))
-		}
+	if out, err := exec.Command("launchctl", "kickstart", "-k", "gui/"+selfUpdateUID()+"/"+gatewayLabel).CombinedOutput(); err != nil {
+		return fmt.Errorf("kickstart %s: %w: %s", gatewayLabel, err, strings.TrimSpace(string(out)))
 	}
 	// Give launchd a moment to respawn before the smoke check probes.
 	time.Sleep(5 * time.Second)
 	return nil
+}
+
+// rollbackLogged logs a failure plus the rollback and returns the error.
+func rollbackLogged(home, repo, sha, reason string) error {
+	_ = selfupdate.LogEvent(home, selfupdate.FailedLine(repo, sha, reason+" (rolled back)"))
+	return fmt.Errorf("%s", reason)
 }
 
 // selfUpdateSmoke checks the daemon and gateway answer: the same dry-run
@@ -402,6 +406,82 @@ func printShip(jsonOut bool, host string, gate map[string]string) {
 	for _, repo := range selfupdate.Repos {
 		fmt.Printf("  %-10s %s\n", repo, shortSHA(gate[repo]))
 	}
+}
+
+// homeOf returns the home dir containing bin, or "" when it cannot.
+// Used to find the installed doctor plist next to the installed binary.
+func homeOf(bin string) string {
+	abs, err := filepath.Abs(bin)
+	if err != nil {
+		return ""
+	}
+	// <home>/.agentmux/bin/agentmux -> <home>.
+	parent := filepath.Dir(filepath.Dir(abs))
+	if filepath.Base(filepath.Dir(abs)) == "bin" && filepath.Base(parent) == ".agentmux" {
+		return filepath.Dir(parent)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return home
+}
+
+// selfUpdateInstalledDoctorTime reads the installed doctor plist's
+// HH:MM, so a plist refresh keeps the operator's schedule instead of
+// resetting it to the default. Empty when no doctor plist is
+// installed. The plist is XML, but the hour/minute integers sit on
+// their own lines, so a line scan is enough — no XML parsing needed.
+func selfUpdateInstalledDoctorTime(home string) string {
+	data, err := os.ReadFile(filepath.Join(home, "Library", "LaunchAgents", "com.m-rk.agentmux.doctor.plist"))
+	if err != nil {
+		return ""
+	}
+	var hour, minute string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "<key>Hour</key>") {
+			hour = ""
+		}
+		if hour == "" {
+			if v, ok := plistInt(line); ok {
+				hour = v
+			}
+			continue
+		}
+		if minute == "" {
+			if v, ok := plistInt(line); ok {
+				minute = v
+			}
+			continue
+		}
+	}
+	if hour == "" || minute == "" {
+		return ""
+	}
+	if len(hour) == 1 {
+		hour = "0" + hour
+	}
+	if len(minute) == 1 {
+		minute = "0" + minute
+	}
+	if _, _, err := daemoninstall.ParseDoctorTime(hour + ":" + minute); err != nil {
+		return ""
+	}
+	return hour + ":" + minute
+}
+
+// plistInt reads "<integer>N</integer>" into N.
+func plistInt(line string) (string, bool) {
+	s, ok := strings.CutPrefix(line, "<integer>")
+	if !ok {
+		return "", false
+	}
+	s, ok = strings.CutSuffix(s, "</integer>")
+	if !ok {
+		return "", false
+	}
+	return strings.TrimSpace(s), true
 }
 
 // selfUpdateUID is the gui domain id for kickstart: this user's uid.
