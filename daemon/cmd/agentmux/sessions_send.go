@@ -14,6 +14,7 @@ import (
 	"github.com/m-rk/agentmux/daemon/internal/gatewayapi"
 	"github.com/m-rk/agentmux/daemon/internal/gatewayclient"
 	"github.com/m-rk/agentmux/daemon/internal/hostsconfig"
+	"github.com/m-rk/agentmux/daemon/internal/liveguard"
 	"github.com/m-rk/agentmux/daemon/internal/ops"
 	"github.com/m-rk/agentmux/daemon/internal/safesend"
 )
@@ -22,6 +23,9 @@ import (
 // session with readiness checks, a provenance prefix and an audit entry. See
 // docs/design/gateway.md (phase 3) and ops.Env.Send. Exit 0 delivered, 1
 // refused or failed, 2 usage.
+//
+// Task sessions refuse (see liveguard) so a task instance cannot type into
+// another session.
 func runSessionsSend(args []string) {
 	fs := flag.NewFlagSet("sessions send", flag.ExitOnError)
 	jsonOut := fs.Bool("json", false, "print machine-readable JSON (also on refusal)")
@@ -39,6 +43,15 @@ func runSessionsSend(args []string) {
 	if fs.NArg() < 1 || fs.NArg() > 2 || (fs.NArg() == 2) == (*file != "") {
 		fmt.Fprintln(os.Stderr, "usage: agentmux sessions send -by PRINCIPAL [-via relayed|dispatched|sent] [-from REF] [-correlation ID] [-hosts PATH] [-wait DUR] [-doorbell] [-json] <instance>@<host>[#<thread>] (TEXT | -file PATH|-)")
 		os.Exit(2)
+	}
+	if err := liveguard.Check(); err != nil {
+		res := ops.SendResult{Address: fs.Arg(0), Reason: safesend.ReasonForbidden, Detail: err.Error(), Correlation: *correlation}
+		if *jsonOut {
+			writeJSON(res)
+		} else {
+			fmt.Fprintf(os.Stderr, "not sent to %s: %s: %s\n", res.Address, res.Reason, res.Detail)
+		}
+		os.Exit(1)
 	}
 
 	req := ops.SendRequest{

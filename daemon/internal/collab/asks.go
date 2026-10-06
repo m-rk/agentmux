@@ -255,6 +255,13 @@ func (c *Client) PostAskInThread(ctx context.Context, threadID, title, body stri
 	return message.ID, c.seedReactions(ctx, threadID, message.ID, opts.Reactions)
 }
 
+// ForumForPreview fetches the forum channel for -dry-run tag resolution.
+// It is a read (no post, reply, reaction, or edit), so -dry-run never
+// touches live Discord even though it needs the network.
+func (c *Client) ForumForPreview(ctx context.Context) (Channel, error) {
+	return c.forum(ctx)
+}
+
 // replaceOutcomeTag returns the applied tag IDs with every outcome tag
 // removed, then outcome and extra appended (without duplicates).
 func replaceOutcomeTag(forum Channel, applied []string, outcome string, extra []string) ([]string, error) {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/m-rk/agentmux/daemon/internal/collab"
 	"github.com/m-rk/agentmux/daemon/internal/discordnotify"
+	"github.com/m-rk/agentmux/daemon/internal/liveguard"
 )
 
 func runAsksCmd(args []string) {
@@ -50,13 +51,16 @@ func runAsksCmd(args []string) {
 
 func asksUsage() {
 	fmt.Fprintln(os.Stderr, `usage:
-  agentmux asks post (-title T | -thread ID [-title T]) -body-file F [-tag NAME ...] [-react EMOJI,EMOJI,...] [-button LABEL ...] [-buttons-json FILE] [-json]
-  agentmux asks reply -thread ID -body-file F [-mention]
+  agentmux asks post (-title T | -thread ID [-title T]) -body-file F [-tag NAME ...] [-react EMOJI,EMOJI,...] [-button LABEL ...] [-buttons-json FILE] [-json] [-dry-run]
+  agentmux asks reply -thread ID -body-file F [-mention] [-dry-run]
   agentmux asks read -thread ID [-after MESSAGE_ID] [-json]
   agentmux asks react -thread ID -message ID -emoji EMOJI
   agentmux asks edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL]
   agentmux asks close -thread ID [-tag NAME] [-lock]
-  agentmux asks serve                      hold the Discord gateway open to record button clicks`)
+  agentmux asks serve                      hold the Discord gateway open to record button clicks
+
+-dry-run prints the Discord payload instead of sending it; task sessions
+refuse the sending commands without AGENTMUX_ALLOW_LIVE=1`)
 }
 
 type tagFlags []string
@@ -101,6 +105,7 @@ func runAsksPost(args []string) error {
 	asJSON := fs.Bool("json", false, "print JSON")
 	react := fs.String("react", "", "comma-separated emoji the bot adds as reactions, in order (e.g. 1️⃣,2️⃣,⏸️)")
 	buttonsJSON := fs.String("buttons-json", "", "file with a JSON array of {label, emoji?, style?} buttons ('-' for stdin); appended after -button labels")
+	dryRun := fs.Bool("dry-run", false, "print the Discord payload instead of sending it")
 	var tags, buttons tagFlags
 	fs.Var(&tags, "tag", "extra forum tag; repeatable")
 	fs.Var(&buttons, "button", "button label (needs 'asks serve' running to record clicks); repeatable")
@@ -131,6 +136,12 @@ func runAsksPost(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *dryRun {
+		return printAsksPostPreview(client, *title, *thread, body, tags, opts, *asJSON)
+	}
+	if err := liveguard.Check(); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	var threadID, messageID string
@@ -153,6 +164,48 @@ func runAsksPost(args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(result)
 	}
 	fmt.Printf("Ask posted in thread %s (message %s).\n", threadID, messageID)
+	return nil
+}
+
+// printAsksPostPreview resolves the forum's tags and prints the payload a
+// post would send, without touching Discord. -thread posts are shown as a
+// reply-style preview: the live path renames the thread and reopens it, so
+// the preview names the target instead of rendering those edits.
+func printAsksPostPreview(client *collab.Client, title, thread, body string, tags []string, opts collab.AskOptions, asJSON bool) error {
+	if thread != "" {
+		preview := collab.AskPreview{Kind: "post-in-thread", Title: title, Content: body, ThreadID: thread, Tags: tags, Options: opts}
+		if asJSON {
+			js, err := preview.Marshal()
+			if err != nil {
+				return err
+			}
+			fmt.Println(js)
+			return nil
+		}
+		fmt.Print(preview.Format())
+		return nil
+	}
+	forum, err := client.ForumForPreview(context.Background())
+	if err != nil {
+		return err
+	}
+	names := make([]string, 0, len(forum.AvailableTags))
+	for _, t := range forum.AvailableTags {
+		names = append(names, t.Name)
+	}
+	preview, err := client.PreviewPost(title, body, tags, opts, names)
+	if err != nil {
+		return err
+	}
+	if asJSON {
+		js, err := preview.Marshal()
+		if err != nil {
+			return err
+		}
+		fmt.Println(js)
+		return nil
+	}
+	fmt.Print(preview.Format())
 	return nil
 }
 
@@ -182,6 +235,8 @@ func runAsksReply(args []string) error {
 	thread := fs.String("thread", "", "ask thread ID")
 	bodyFile := fs.String("body-file", "", "file with the reply body ('-' for stdin)")
 	mention := fs.Bool("mention", false, "mention the configured user")
+	dryRun := fs.Bool("dry-run", false, "print the Discord payload instead of sending it")
+	asJSON := fs.Bool("json", false, "print JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -191,6 +246,25 @@ func runAsksReply(args []string) error {
 	}
 	client, err := asksClient()
 	if err != nil {
+		return err
+	}
+	if *dryRun {
+		preview, err := client.PreviewReply(*thread, body, *mention)
+		if err != nil {
+			return err
+		}
+		if *asJSON {
+			js, err := preview.Marshal()
+			if err != nil {
+				return err
+			}
+			fmt.Println(js)
+			return nil
+		}
+		fmt.Print(preview.Format())
+		return nil
+	}
+	if err := liveguard.Check(); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -252,6 +326,9 @@ func runAsksClose(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := liveguard.Check(); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := client.CloseAsk(ctx, *thread, *tag, *lock); err != nil {
@@ -271,6 +348,9 @@ func runAsksReact(args []string) error {
 	}
 	client, err := asksClient()
 	if err != nil {
+		return err
+	}
+	if err := liveguard.Check(); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -302,6 +382,9 @@ func runAsksEdit(args []string) error {
 	}
 	client, err := asksClient()
 	if err != nil {
+		return err
+	}
+	if err := liveguard.Check(); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

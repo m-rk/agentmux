@@ -13,6 +13,7 @@ import (
 	"github.com/m-rk/agentmux/daemon/internal/daemoninstall"
 	"github.com/m-rk/agentmux/daemon/internal/daemonserver"
 	"github.com/m-rk/agentmux/daemon/internal/discovery"
+	"github.com/m-rk/agentmux/daemon/internal/liveguard"
 	"github.com/m-rk/agentmux/daemon/internal/pb"
 	"github.com/m-rk/agentmux/daemon/internal/provision"
 )
@@ -24,6 +25,11 @@ func runDaemonCmd(args []string) {
 	}
 	switch args[0] {
 	case "install":
+		// Installing the daemon rewrites host services: never from a task
+		// session (see liveguard).
+		if err := liveguard.Check(); err != nil {
+			log.Fatalf("daemon install: %v", err)
+		}
 		fs := flag.NewFlagSet("daemon install", flag.ExitOnError)
 		doctorTime := fs.String("doctor-time", daemoninstall.DefaultDoctorTime, "daily doctor time in HH:MM (after the refresh window)")
 		fs.Parse(args[1:])

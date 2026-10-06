@@ -22,6 +22,7 @@ import (
 	"github.com/m-rk/agentmux/daemon/internal/gatewayapi"
 	"github.com/m-rk/agentmux/daemon/internal/gatewayclient"
 	"github.com/m-rk/agentmux/daemon/internal/hostsconfig"
+	"github.com/m-rk/agentmux/daemon/internal/liveguard"
 	"github.com/m-rk/agentmux/daemon/internal/ops"
 	"github.com/m-rk/agentmux/daemon/internal/safesend"
 )
@@ -54,6 +55,11 @@ func runDeployCmd(args []string) {
 	if fs.NArg() != 0 {
 		fmt.Fprintln(os.Stderr, "usage: agentmux deploy [-doctor-time HH:MM] [-template INSTANCE] [-base BRANCH] [-smoke-name NAME] [-hosts PATH] [-socket PATH]")
 		os.Exit(2)
+	}
+	// Deploy restarts the whole fleet's services: never from a task session
+	// (see liveguard).
+	if err := liveguard.Check(); err != nil {
+		log.Fatalf("deploy: %v", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)

@@ -13,6 +13,7 @@ import (
 	"github.com/m-rk/agentmux/daemon/internal/gatewayapi"
 	"github.com/m-rk/agentmux/daemon/internal/gatewayclient"
 	"github.com/m-rk/agentmux/daemon/internal/hostsconfig"
+	"github.com/m-rk/agentmux/daemon/internal/liveguard"
 	"github.com/m-rk/agentmux/daemon/internal/ops"
 	"github.com/m-rk/agentmux/daemon/internal/safesend"
 )
@@ -41,6 +42,13 @@ func runSessionsRun(args []string) {
 	if fs.NArg() != 1 || *file == "" {
 		fmt.Fprintln(os.Stderr, "usage: agentmux sessions run [-json] [-dry-run] [-socket PATH] [-hosts PATH] [-thread THREAD_ID] [-title TEXT] -file PATH|- <instance>@<host>[#<thread>]")
 		os.Exit(2)
+	}
+	// Task sessions refuse unless this is itself a dry run (see liveguard),
+	// so a task instance cannot start threads on another session.
+	if !*dryRun {
+		if err := liveguard.Check(); err != nil {
+			failRun(*jsonOut, fs.Arg(0), safesend.ReasonForbidden, err.Error())
+		}
 	}
 	addrText := fs.Arg(0)
 	if *thread != "" {
