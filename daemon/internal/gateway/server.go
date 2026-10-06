@@ -392,7 +392,7 @@ func (s *Server) runOp(w http.ResponseWriter, r *http.Request, a *access, id Ide
 		s.refuse(w, a, http.StatusForbidden, safesend.ReasonForbidden, fmt.Sprintf("run on %s is not permitted", addr.Session()))
 		return
 	}
-	res, err := s.backend.Run(r.Context(), ops.RunRequest{Address: req.Address, Text: req.Text, Title: req.Title, Labels: req.Labels, DryRun: req.DryRun, Template: req.Template})
+	res, err := s.backend.Run(r.Context(), ops.RunRequest{Address: req.Address, Text: req.Text, Title: req.Title, Labels: req.Labels, Mode: req.Mode, DryRun: req.DryRun, Template: req.Template})
 	if err != nil {
 		e := ops.AsError(err)
 		s.refuse(w, a, gatewayapi.HTTPStatus(e.Reason), e.Reason, e.Detail)

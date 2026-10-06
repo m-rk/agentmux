@@ -39,13 +39,14 @@ func runSessionsRun(args []string) {
 	title := fs.String("title", "", "title the thread (\"<task id> <task name>\" from the dispatcher); re-applied after every run since amp's auto-title overwrites it")
 	var labels labelFlags
 	fs.Var(&labels, "label", "amp thread label; repeatable, rides -l on every run so `amp threads list --label X` finds it")
+	mode := fs.String("mode", "", "explicit amp -m/--mode for this run only, overriding the host file and the instance override")
 	dryRun := fs.Bool("dry-run", false, "validate the run without starting any amp thread (deploy smoke test)")
 	template := fs.String("template", "", "dry-run only: validate against this existing amp instance instead of the target, which may not exist yet (deploy smoke test)")
 	socketPath := fs.String("socket", daemoninstall.SocketPath(), "Unix socket of the local agentmuxd")
 	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml with the gateway URL of other hosts")
 	fs.Parse(args)
 	if fs.NArg() != 1 || *file == "" {
-		fmt.Fprintln(os.Stderr, "usage: agentmux sessions run [-json] [-dry-run] [-socket PATH] [-hosts PATH] [-thread THREAD_ID] [-title TEXT] [-label LABEL ...] [-template NAME] -file PATH|- <instance>@<host>[#<thread>]")
+		fmt.Fprintln(os.Stderr, "usage: agentmux sessions run [-json] [-dry-run] [-socket PATH] [-hosts PATH] [-thread THREAD_ID] [-title TEXT] [-label LABEL ...] [-mode MODE] [-template NAME] -file PATH|- <instance>@<host>[#<thread>]")
 		os.Exit(2)
 	}
 	// Task sessions refuse unless this is itself a dry run (see liveguard),
@@ -74,7 +75,7 @@ func runSessionsRun(args []string) {
 		failRun(*jsonOut, addrText, safesend.ReasonInvalid, err.Error())
 	}
 
-	req := ops.RunRequest{Address: addrText, Text: text, Title: *title, Labels: labels, DryRun: *dryRun, Template: *template}
+	req := ops.RunRequest{Address: addrText, Text: text, Title: *title, Labels: labels, Mode: *mode, DryRun: *dryRun, Template: *template}
 	var res ops.RunResult
 	route, rerr := resolveRoute(req.Address, *hostsPath, address.LocalHostName())
 	switch {
@@ -85,7 +86,7 @@ func runSessionsRun(args []string) {
 		ctx, cancel := context.WithTimeout(context.Background(), gatewayclient.RunTimeout+time.Minute)
 		defer cancel()
 		var rerr error
-		res, rerr = route.Remote.Run(ctx, gatewayapi.RunRequest{Address: req.Address, Text: req.Text, Title: req.Title, Labels: req.Labels, DryRun: req.DryRun, Template: req.Template})
+		res, rerr = route.Remote.Run(ctx, gatewayapi.RunRequest{Address: req.Address, Text: req.Text, Title: req.Title, Labels: req.Labels, Mode: req.Mode, DryRun: req.DryRun, Template: req.Template})
 		if rerr != nil {
 			e := ops.AsError(rerr)
 			failRun(*jsonOut, req.Address, e.Reason, e.Detail)

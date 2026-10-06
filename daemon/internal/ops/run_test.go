@@ -39,12 +39,37 @@ func newRunEnv(t *testing.T, extra ...string) *runEnv {
 	old := discovery.EnvDir
 	discovery.EnvDir = envDir
 	t.Cleanup(func() { discovery.EnvDir = old })
+	withTestHostModeAt(t, home)
 	lines := []string{"AGENTMUX_AGENT=amp", "AGENTMUX_WORKDIR=" + workdir, "AGENTMUX_AMP_RUNNER_ID=probe"}
 	lines = append(lines, extra...)
 	if err := os.WriteFile(filepath.Join(envDir, "probe.env"), []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return &runEnv{home: home}
+}
+
+// withTestHostModeAt writes a host amp.yaml with the test mode into an
+// existing home dir, so ops.Run's Require resolves. Tests whose home is
+// fixed (newRunEnv/newSendEnv build home under the temp root) use this;
+// withTestHostMode is the standalone variant.
+func withTestHostModeAt(t *testing.T, home string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(home, ".config", "agentmux"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".config", "agentmux", "amp.yaml"), []byte("mode: high\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// withTestHostMode points HOME at a temp dir carrying a host amp.yaml
+// with the test mode, so ops.Run's Require resolves. ampconfig
+// DefaultPath reads $HOME, and t.Setenv restores it after the test.
+func withTestHostMode(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	withTestHostModeAt(t, home)
+	t.Setenv("HOME", home)
 }
 
 func localAddr(thread string) string {
@@ -526,5 +551,56 @@ func TestRunTemplateIsDryRunOnly(t *testing.T) {
 	wantReason(t, rerr, safesend.ReasonInvalid)
 	if len(fake.Argv) != 0 {
 		t.Fatalf("refused run spawned amp: %q", fake.Argv)
+	}
+}
+
+// TestRunRefusesWithoutMode is the AMUX-36 guard on the run path: with
+// no host mode, no instance override and no -mode flag, the run is
+// refused instead of starting on amp's default model — and nothing
+// spawns.
+func TestRunRefusesWithoutMode(t *testing.T) {
+	c := newRunEnv(t)
+	_ = c
+	// Wipe the host mode the fixture writes: HOME's amp.yaml goes away,
+	// and the registry carries no instance override.
+	if err := os.Remove(filepath.Join(os.Getenv("HOME"), ".config", "agentmux", "amp.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	restore, fake := session.AmpSwapForTest("T-44444444-4444-4444-8444-444444444444", nil)
+	defer restore()
+	_, rerr := Env{}.Run(context.Background(), RunRequest{Address: localAddr(""), Text: "hi"})
+	wantReason(t, rerr, safesend.ReasonFailed)
+	if !strings.Contains(AsError(rerr).Detail, "no amp mode configured") {
+		t.Fatalf("refusal = %v, want the no-mode refusal", rerr)
+	}
+	if len(fake.Argv) != 0 {
+		t.Fatalf("refused run spawned amp: %q", fake.Argv)
+	}
+	if fake.Checked != 0 {
+		t.Fatalf("refused run checked a mode: %d", fake.Checked)
+	}
+}
+
+// TestRunFlagModeOverridesUnconfiguredHost covers the explicit -mode
+// flag: a run with Mode set starts with that -m even when no host mode
+// or instance override exists anywhere.
+func TestRunFlagModeOverridesUnconfiguredHost(t *testing.T) {
+	newRunEnv(t)
+	if err := os.Remove(filepath.Join(os.Getenv("HOME"), ".config", "agentmux", "amp.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	id := "T-55555555-5555-4555-8555-555555555555"
+	restore, fake := session.AmpSwapForTest(id, nil)
+	defer restore()
+	res, rerr := Env{}.Run(context.Background(), RunRequest{Address: localAddr(""), Text: "hi", Mode: "high"})
+	if rerr != nil {
+		t.Fatalf("run: %v", rerr)
+	}
+	_ = res
+	if fake.Mode != "high" {
+		t.Fatalf("mode = %q, want high", fake.Mode)
+	}
+	if !strings.Contains(strings.Join(fake.Argv, " "), "-m high") {
+		t.Fatalf("no -m high in %q", fake.Argv)
 	}
 }

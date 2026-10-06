@@ -33,6 +33,7 @@ func newSendEnv(t *testing.T, extra ...string) *sendEnv {
 		}
 	}
 	t.Setenv("HOME", home)
+	withTestHostModeAt(t, home)
 	envDir := filepath.Join(root, "env")
 	if err := os.Mkdir(envDir, 0o755); err != nil {
 		t.Fatal(err)

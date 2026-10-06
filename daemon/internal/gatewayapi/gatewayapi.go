@@ -134,7 +134,10 @@ type RunRequest struct {
 	Text    string   `json:"text"`
 	Title   string   `json:"title,omitempty"`
 	Labels  []string `json:"labels,omitempty"`
-	DryRun  bool     `json:"dry_run,omitempty"`
+	// Mode is an explicit per-run -m override (sessions run -mode):
+	// when set it wins over the instance override and the host file.
+	Mode   string `json:"mode,omitempty"`
+	DryRun bool   `json:"dry_run,omitempty"`
 	// Template is dry-run only: the instance the run readiness is
 	// validated against when the target need not exist yet.
 	Template string `json:"template,omitempty"`

@@ -36,7 +36,7 @@ const sessionsUsage = `usage:
                          [-hosts PATH] [-wait DUR] [-json] <instance>@<host>[#<thread>] (TEXT | -file PATH|-)
   agentmux sessions create [-json] [-dry-run] [-socket PATH] [-hosts PATH] -template <instance>@<host> -instance NAME -branch B
                            [-base BRANCH] [-worktree NAME] [-allow-file PATH ...]
-  agentmux sessions run [-json] [-dry-run] [-hosts PATH] [-thread THREAD_ID] [-title TEXT] [-template NAME] -file PATH|- <instance>@<host>[#<thread>]
+  agentmux sessions run [-json] [-dry-run] [-hosts PATH] [-thread THREAD_ID] [-title TEXT] [-mode MODE] [-template NAME] -file PATH|- <instance>@<host>[#<thread>]
   agentmux sessions retire [-json] [-dry-run] [-hosts PATH] <instance>@<host>
   agentmux amp sweep [-json] [-dry-run] [-run-user USER]
                                archive junk amp threads that belong to no task instance

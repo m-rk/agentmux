@@ -51,6 +51,7 @@ func TestRunTaskChildRefusesLivePost(t *testing.T) {
 		}
 	}
 	t.Setenv("HOME", home)
+	withTestHostModeAt(t, home)
 	// The child must carry only what the run stamps: clear any ambient
 	// identity (and the override) from this test process.
 	t.Setenv("AGENTMUX_INSTANCE_NAME", "")
@@ -183,6 +184,7 @@ func TestRunStampsTaskInstanceOnSpawn(t *testing.T) {
 		}
 	}
 	t.Setenv("HOME", home)
+	withTestHostModeAt(t, home)
 	envDir := filepath.Join(root, "env")
 	if err := os.Mkdir(envDir, 0o755); err != nil {
 		t.Fatal(err)

@@ -29,6 +29,10 @@ type RunRequest struct {
 	// Labels ride `amp -l` on every run, new or continued; "" or junk
 	// entries are dropped by session.CleanAmpLabels, never a refusal.
 	Labels []string
+	// Mode is an explicit per-run -m override (sessions run -mode):
+	// when set it wins over the instance override and the host file.
+	// AMUX-36's Require applies only when this is empty.
+	Mode string
 	// Template names an existing amp instance on this host whose
 	// registry, workdir, mode and thread path a dry run validates
 	// against instead of the target's: a dry-run create makes nothing,
@@ -220,7 +224,17 @@ func (e Env) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		}
 		host = ampconfig.Config{}
 	}
-	mode, _ := ampconfig.Resolve(host, fields[ampconfig.EnvOverride])
+	// No amp thread starts without -m (AMUX-36): a missing mode
+	// everywhere is a refusal, never a silent run on amp's default
+	// model. The -mode flag overrides both, per run.
+	mode := strings.TrimSpace(req.Mode)
+	if mode == "" {
+		var rerr error
+		mode, _, rerr = ampconfig.Require(host, fields[ampconfig.EnvOverride])
+		if rerr != nil {
+			return RunResult{}, Refuse(safesend.ReasonFailed, "%v", rerr)
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, runTimeout)
 	defer cancel()
