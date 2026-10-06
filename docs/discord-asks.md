@@ -73,6 +73,18 @@ agentmux asks serve   # long-running: records button clicks (buttons only)
 agentmux asks close -thread ID [-tag NAME] [-lock]   # default tag: answered
 ```
 
+- `post` and `reply` take `-dry-run`, which prints the Discord payload
+  (title, content with the mention, tags, buttons, reactions) instead of
+  sending it — the safe way to check real rendering from a test or task
+  session. `post -thread ID -dry-run` names the target thread without
+  renaming, reopening, or posting into it. All five sending commands
+  (`post`, `reply`, `react`, `edit`, `close`), `sessions send`, `sessions
+  run` (except its own `-dry-run`), `deploy`, and `daemon install` refuse
+  inside a task session (`AGENTMUX_INSTANCE_NAME` starting with `task-`)
+  with "task sessions can't touch live Discord or other sessions; use
+  fakes or -dry-run". A person can override one command with
+  `AGENTMUX_ALLOW_LIVE=1`; it is never set in task instance environments.
+
 - `-body-file -` reads the body from stdin. Bodies are limited to 2000
   characters including the mention.
 - `post` applies `ask` and `pending` plus any `-tag`s (Discord allows five
