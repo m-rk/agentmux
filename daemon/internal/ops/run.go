@@ -275,7 +275,7 @@ func (e Env) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		}
 		session.UnarchiveAmpThread(ctx, src.AmpEnvFile, thread)
 	}
-	id, err := session.StartAmpRun(ctx, src.AmpEnvFile, session.AmpRunArgs(text, mode, thread, title), workdir, logPath)
+	id, err := session.StartAmpRun(ctx, addr.Instance, src.AmpEnvFile, session.AmpRunArgs(text, mode, thread, title), workdir, logPath)
 	if err != nil {
 		// The real run is also the mode check now: a name amp rejects
 		// dies here before printing its init record, quoting amp's own

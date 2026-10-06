@@ -110,7 +110,7 @@ func TestScanAmpInit(t *testing.T) {
 // record to the log, and startAmpRun returns its thread id.
 func TestStartAmpRunReturnsOnInit(t *testing.T) {
 	old := ampStartNew
-	ampStartNew = func(_ context.Context, envFile string, argv []string, workdir, logPath string) (*os.Process, error) {
+	ampStartNew = func(_ context.Context, instance, envFile string, argv []string, workdir, logPath string) (*os.Process, error) {
 		if envFile != "" || argv[0] != "-x" || workdir != "/work/proj" {
 			t.Fatalf("spawn: env %q argv %q in %q", envFile, argv, workdir)
 		}
@@ -124,7 +124,7 @@ func TestStartAmpRunReturnsOnInit(t *testing.T) {
 		return fakeRunProcess()
 	}
 	t.Cleanup(func() { ampStartNew = old })
-	id, err := StartAmpRun(context.Background(), "", []string{"-x", "hi"}, "/work/proj", filepath.Join(t.TempDir(), "run.jsonl"))
+	id, err := StartAmpRun(context.Background(), "probe", "", []string{"-x", "hi"}, "/work/proj", filepath.Join(t.TempDir(), "run.jsonl"))
 	if err != nil || id != "T-run" {
 		t.Fatalf("run: %q %v", id, err)
 	}
@@ -134,7 +134,7 @@ func TestStartAmpRunReturnsOnInit(t *testing.T) {
 // exits before printing init (e.g. amp rejecting the mode).
 func TestStartAmpRunFailedLaunch(t *testing.T) {
 	old := ampStartNew
-	ampStartNew = func(_ context.Context, _ string, _ []string, _, logPath string) (*os.Process, error) {
+	ampStartNew = func(_ context.Context, _, _ string, _ []string, _, logPath string) (*os.Process, error) {
 		if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -147,7 +147,7 @@ func TestStartAmpRunFailedLaunch(t *testing.T) {
 		return fakeRunProcess()
 	}
 	t.Cleanup(func() { ampStartNew = old })
-	_, err := StartAmpRun(context.Background(), "", []string{"-x"}, "/w", filepath.Join(t.TempDir(), "run.jsonl"))
+	_, err := StartAmpRun(context.Background(), "", "", []string{"-x"}, "/w", filepath.Join(t.TempDir(), "run.jsonl"))
 	if err == nil || !strings.Contains(err.Error(), "Unexpected error") {
 		t.Fatalf("failed launch: %v", err)
 	}

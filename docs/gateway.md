@@ -181,7 +181,9 @@ agentmux sessions run -file followup.md -thread T-11111111-1111-4111-8111-111111
 Once a task is done and its work is on `main`, its runner session has
 served its purpose. `retire` ends it: for an amp instance it archives
 the thread with `amp threads archive` (the thread stays readable on
-ampcode.com); for every agent it stops the session, removes the
+ampcode.com) and kills any in-flight `amp -x` / `threads continue` runs
+for that instance, so a detached run can't keep working in the worktree
+being removed; for every agent it stops the session, removes the
 instance's units and registry entry, and removes the worktree. The
 worktree's branch — plus the recorded and sibling `task/<ID>-*` branches
 — is deleted only when origin's default branch provably contains every

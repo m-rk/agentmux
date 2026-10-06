@@ -12,6 +12,7 @@ import (
 
 	"github.com/m-rk/agentmux/daemon/internal/allowfiles"
 	"github.com/m-rk/agentmux/daemon/internal/discordnotify"
+	"github.com/m-rk/agentmux/daemon/internal/liveguard"
 	"github.com/m-rk/agentmux/daemon/internal/provision"
 )
 
@@ -122,7 +123,13 @@ func RunClaudeCode(name string) error {
 	claudeArgs := claudeLaunchArgs(display, resume, prepareClaudeAllowSettings(name, workdir, fields))
 	// exec.Command takes args as a slice, not a shell string, so unlike
 	// rc-start.sh there's no manual shell-quoting to get right here.
-	tmuxArgs := append([]string{"-L", socket, "new-session", "-d", "-s", session, "-c", workdir, "claude"}, claudeArgs...)
+	// Task instances stamp the session with the task identity (see
+	// liveguard): only via -e flags, never argv, so the name stays out of
+	// the world-readable process table. tmux 3.x's new-session takes one
+	// -e per variable before the command, applying to that session's
+	// initial pane (confirmed live against tmux 3.4).
+	tmuxArgs := append([]string{"-L", socket, "new-session", "-d", "-s", session, "-c", workdir}, taskSessionEnvArgs(name)...)
+	tmuxArgs = append(tmuxArgs, append([]string{"claude"}, claudeArgs...)...)
 	cmd := withPath("tmux", tmuxArgs...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("starting tmux session %s: %w: %s", session, err, out)
@@ -135,6 +142,18 @@ func RunClaudeCode(name string) error {
 	// the pane is still busy replaying a large transcript, in which case the
 	// next tick covers it exactly as before.
 	return ensureClaudeRemoteControl(tmux, name, socket, session)
+}
+
+// taskSessionEnvArgs is the tmux new-session -e pair stamping the task
+// identity (see liveguard) on a task-* instance's pane: one -e per
+// variable, before the command. Non-task instances get nothing — the
+// guard ignores them either way. Amp run children get the same pair via
+// AmpRunEnv in amprun.go.
+func taskSessionEnvArgs(name string) []string {
+	if !strings.HasPrefix(name, liveguard.TaskPrefix) {
+		return nil
+	}
+	return []string{"-e", liveguard.InstanceEnv + "=" + name, "-e", liveguard.TaskEnv + "=1"}
 }
 
 // claudeLaunchArgs builds the arguments after `claude`. settingsPath is

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/m-rk/agentmux/daemon/internal/liveguard"
 	"github.com/m-rk/agentmux/daemon/internal/runas"
 )
 
@@ -102,21 +103,59 @@ func AmpRunArgs(message, mode, threadID, title string) []string {
 // runner re-enters agentmux through `session exec` because tmux needs a
 // plain argv, while here agentmux spawns the child directly and can set
 // its environment itself.
+//
+// Every run child also carries the task identity from AmpRunEnv: the
+// instance name plus AGENTMUX_TASK_SESSION=1 for task-* instances, so a
+// guard check inside the agent's own subprocesses (see liveguard) refuses
+// live side effects even though the child is a plain `amp -x`, not an
+// agentmux-spawned session. The pair rides cmd.Env — never argv — so it
+// stays out of the world-readable process table.
 func ampRunCommand(ctx context.Context, envFile string, argv []string) (*exec.Cmd, error) {
+	return ampRunCommandFor(ctx, instanceForRun(), envFile, argv)
+}
+
+// instanceForRun is the instance name ambient to this process: what
+// sessions run stamped when it was itself dispatched (see ops.Run), so
+// nested runs and unarchive/rename helpers inherit the identity without
+// another parameter.
+func instanceForRun() string {
+	return os.Getenv(liveguard.InstanceEnv)
+}
+
+// ampRunCommandFor is ampRunCommand with the instance named explicitly,
+// so ops.Run stamps fresh identity while helpers inherit the ambient one.
+func ampRunCommandFor(ctx context.Context, instance, envFile string, argv []string) (*exec.Cmd, error) {
+	var cmd *exec.Cmd
 	if envFile == "" {
-		return runas.CurrentUserCommandContext(ctx, "amp", argv...), nil
+		cmd = runas.CurrentUserCommandContext(ctx, "amp", argv...)
+	} else {
+		tok, err := readOpToken()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := runas.CurrentUserLookPath("op"); err != nil {
+			return nil, fmt.Errorf("1Password CLI: %w", err)
+		}
+		cmd = runas.CurrentUserCommandContext(ctx, "op",
+			opRunArgs(envFile, append([]string{"amp"}, argv...))...)
+		cmd.Env = append(cmd.Env, opTokenEnv+"="+tok)
 	}
-	tok, err := readOpToken()
-	if err != nil {
-		return nil, err
-	}
-	if _, err := runas.CurrentUserLookPath("op"); err != nil {
-		return nil, fmt.Errorf("1Password CLI: %w", err)
-	}
-	cmd := runas.CurrentUserCommandContext(ctx, "op",
-		opRunArgs(envFile, append([]string{"amp"}, argv...))...)
-	cmd.Env = append(cmd.Env, opTokenEnv+"="+tok)
+	cmd.Env = append(cmd.Env, AmpRunEnv(instance)...)
 	return cmd, nil
+}
+
+// AmpRunEnv is the task identity every amp run child carries: the
+// instance name, plus AGENTMUX_TASK_SESSION=1 for task-* instances so
+// the live guard fires inside the agent's own subprocesses (see
+// liveguard). Non-task instances name themselves without the flag — the
+// guard ignores them either way — so every run child is identifiable,
+// not just task ones. Callers append it to cmd.Env, never argv.
+func AmpRunEnv(instance string) []string {
+	env := []string{liveguard.InstanceEnv + "=" + instance}
+	if strings.HasPrefix(instance, liveguard.TaskPrefix) {
+		env = append(env, liveguard.TaskEnv+"=1")
+	}
+	return env
 }
 
 // ampStartNew spawns the run child detached: argv resolved through
@@ -139,8 +178,13 @@ var ampStartNew = startAmpProcessDetached
 // ampRunCommand, so an instance env-file runs amp under `op run` exactly
 // like the mode check. The child outlives this process: callers report
 // the thread while the agent keeps working.
-func StartAmpRun(ctx context.Context, envFile string, argv []string, workdir, logPath string) (string, error) {
-	proc, err := ampStartNew(ctx, envFile, argv, workdir, logPath)
+//
+// instance names the run's own instance for the task identity stamped on
+// the child (see AmpRunEnv). ops.Run passes the target instance; helpers
+// that don't know it pass "" and inherit whatever the ambient process
+// already carries.
+func StartAmpRun(ctx context.Context, instance, envFile string, argv []string, workdir, logPath string) (string, error) {
+	proc, err := ampStartNew(ctx, instance, envFile, argv, workdir, logPath)
 	if err != nil {
 		return "", err
 	}
@@ -151,15 +195,21 @@ func StartAmpRun(ctx context.Context, envFile string, argv []string, workdir, lo
 	return waitAmpInit(ctx, logPath)
 }
 
-func startAmpProcessDetached(ctx context.Context, envFile string, argv []string, workdir, logPath string) (*os.Process, error) {
+func startAmpProcessDetached(ctx context.Context, instance, envFile string, argv []string, workdir, logPath string) (*os.Process, error) {
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("amp run needs a command")
 	}
-	// Resolve through ampRunCommand, not a bare PATH lookup: with an
+	// Resolve through ampRunCommandFor, not a bare PATH lookup: with an
 	// instance env-file the child is `op run --env-file=... --
 	// /usr/bin/env -u ... amp <args>`, and cmd.Path/Args carry the full
 	// spawn shape (resolved binary plus env) the double-fork replays.
-	cmd, err := ampRunCommand(ctx, envFile, argv)
+	// The instance stamps the task identity (see AmpRunEnv) so the guard
+	// fires inside the agent's own run; "" keeps whatever the ambient
+	// process already carries.
+	if instance == "" {
+		instance = instanceForRun()
+	}
+	cmd, err := ampRunCommandFor(ctx, instance, envFile, argv)
 	if err != nil {
 		return nil, err
 	}
@@ -502,6 +552,9 @@ func ampLogTail(logPath string) string {
 type AmpFakeSpawn struct {
 	// Argv is the argv the fake was asked to spawn.
 	Argv []string
+	// Instance is the instance the fake was asked to spawn for — the
+	// identity ops.Run stamps on the run child (see AmpRunEnv).
+	Instance string
 	// Mode is the mode the check was asked about.
 	Mode string
 	// Checked counts mode checks, so tests can assert the check runs (or
@@ -555,8 +608,9 @@ func AmpSwapSpawnForTest(threadID string, spawnLog []byte, checkErr error) (rest
 	fake = &AmpFakeSpawn{}
 	oldStart, oldCheck, oldRename := ampStartNew, checkAmpMode, renameAmpThread
 	oldUnarchive, oldStop := unarchiveAmpThread, stopAmpRun
-	ampStartNew = func(_ context.Context, _ string, argv []string, _ string, logPath string) (*os.Process, error) {
+	ampStartNew = func(_ context.Context, instance, _ string, argv []string, _ string, logPath string) (*os.Process, error) {
 		fake.Argv = append([]string(nil), argv...)
+		fake.Instance = instance
 		fake.spawnedAt++
 		if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 			return nil, err
@@ -714,6 +768,111 @@ func ampRunCmdlineMatch(cmdlinePath, threadID, workdir string) bool {
 		}
 	}
 	return true
+}
+
+// StopAmpRuns kills every in-flight amp run child for an instance: both
+// fresh `amp -x` starts and `threads continue` follow-ups, scoped by the
+// task identity stamped on the child environment (see AmpRunEnv) and the
+// run workdir. Retire calls it before removing the worktree so a detached
+// run can't keep working in a deleted directory — MERG-31's run kept going
+// for 24 minutes after its instance was retired. Best-effort and Linux
+// only: no /proc, no scan. A missing process is not an error.
+func StopAmpRuns(instance, workdir string) {
+	for _, pid := range ampRunPidsForInstance(instance, workdir) {
+		if proc, err := os.FindProcess(pid); err == nil {
+			_ = proc.Kill()
+		}
+	}
+}
+
+// stopAmpRunsForTest exposes the scan for tests: the pids StopAmpRuns
+// would kill for this instance and workdir.
+func stopAmpRunsForTest(instance, workdir string) []int {
+	return ampRunPidsForInstance(instance, workdir)
+}
+
+// ampRunPidsForInstance scans the process table for amp run children of
+// one instance: an `amp -x` or `amp threads continue` argv whose stamped
+// AGENTMUX_INSTANCE_NAME matches and whose cwd is the run workdir. The
+// environ check needs same-user (or root) readability; unreadable
+// processes are skipped, never fatal.
+func ampRunPidsForInstance(instance, workdir string) []int {
+	if instance == "" {
+		return nil
+	}
+	matches, err := filepath.Glob("/proc/[0-9]*/cmdline")
+	if err != nil {
+		return nil
+	}
+	var out []int
+	for _, p := range matches {
+		if !ampRunCmdlineMatchAny(p) {
+			continue
+		}
+		if !ampRunEnvironMatch(p, instance) {
+			continue
+		}
+		if workdir != "" {
+			if link, err := os.Readlink(filepath.Join(filepath.Dir(p), "cwd")); err != nil || link != workdir {
+				continue
+			}
+		}
+		var pid int
+		if _, err := fmt.Sscanf(filepath.Base(filepath.Dir(p)), "%d", &pid); err != nil || pid <= 0 {
+			continue
+		}
+		out = append(out, pid)
+	}
+	return out
+}
+
+// ampRunCmdlineMatchAny reports whether the /proc/<pid>/cmdline file
+// holds an amp run child at all: a bare `amp -x` start or an
+// `amp threads continue` follow-up. NUL-separated cmdline bytes are
+// compared field-wise so a thread id that is a prefix of another can't
+// false-match.
+func ampRunCmdlineMatchAny(cmdlinePath string) bool {
+	data, err := os.ReadFile(cmdlinePath)
+	if err != nil {
+		return false
+	}
+	fields := strings.Split(string(data), "\x00")
+	for i := 0; i < len(fields); i++ {
+		switch fields[i] {
+		case "-x":
+			// A bare `amp --stream-json ... -x <prompt>` start: the
+			// binary is argv[0], so -x anywhere after it counts —
+			// except `threads continue` argv, which also carries -x
+			// after its thread id and is matched below.
+			if i > 0 {
+				return true
+			}
+		case "continue":
+			// An `amp threads continue <threadID>` follow-up.
+			if i > 0 && fields[i-1] == "threads" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ampRunEnvironMatch reports whether the /proc/<pid>/environ file carries
+// the stamped instance identity (see AmpRunEnv). NUL-separated environ
+// bytes are compared as whole entries so AGENTMUX_INSTANCE_NAME=task-9
+// can't false-match a longer value.
+func ampRunEnvironMatch(cmdlinePath, instance string) bool {
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(cmdlinePath), "environ"))
+	if err != nil {
+		return false
+	}
+	want := liveguard.InstanceEnv + "=" + instance
+	for _, entry := range strings.Split(string(data), "\x00") {
+		if entry == want {
+			return true
+		}
+	}
+	return false
 }
 
 // checkAmpMode is the mode check var: production calls it through

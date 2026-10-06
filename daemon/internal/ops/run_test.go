@@ -87,6 +87,10 @@ func TestRunStartsThread(t *testing.T) {
 	if _, err := os.Stat(session.AmpRunLogPath(c.home, "probe", id)); err != nil {
 		t.Fatalf("thread log missing: %v", err)
 	}
+	// The run stamps its own instance on the child for the live guard.
+	if fake.Instance != "probe" {
+		t.Fatalf("spawn instance = %q, want probe", fake.Instance)
+	}
 }
 
 func TestRunPassesConfiguredMode(t *testing.T) {

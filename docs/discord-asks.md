@@ -92,9 +92,15 @@ agentmux asks close -thread ID [-tag NAME] [-lock]   # default tag: answered
   renaming, reopening, or posting into it. All five sending commands
   (`post`, `reply`, `react`, `edit`, `close`), `sessions send`, `sessions
   run` (except its own `-dry-run`), `deploy`, and `daemon install` refuse
-  inside a task session (`AGENTMUX_INSTANCE_NAME` starting with `task-`)
-  with "task sessions can't touch live Discord or other sessions; use
-  fakes or -dry-run". A person can override one command with
+  inside a task session with "task sessions can't touch live Discord or
+  other sessions; use fakes or -dry-run". A task session is any process
+  with `AGENTMUX_TASK_SESSION=1`, with `AGENTMUX_INSTANCE_NAME` starting
+  with `task-`, or running inside a `*-worktrees/task-*` directory —
+  `sessions run` stamps the first two on every amp run child (task
+  claude-code panes get the same pair), so the guard fires inside the
+  agent's own runs even though real `amp -x` processes inherit no
+  agentmux environment of their own. The directory fallback covers runs
+  whose environment was scrubbed. A person can override one command with
   `AGENTMUX_ALLOW_LIVE=1`; it is never set in task instance environments.
 
 - `-body-file -` reads the body from stdin. Bodies are limited to 2000

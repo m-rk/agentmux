@@ -347,7 +347,7 @@ func TestPlan(t *testing.T) {
 		AmpThreads: []string{"T-00000000-0000-4000-8000-000000000001"}}
 	plan := st.Plan("amp")
 	joined := strings.Join(plan, "\n")
-	for _, want := range []string{"archive amp thread", "stop session", "remove units", "remove worktree",
+	for _, want := range []string{"archive amp thread", "stop in-flight amp runs", "stop session", "remove units", "remove worktree",
 		"delete branch task/9 (origin/main contains it)"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("amp plan missing %q: %v", want, plan)

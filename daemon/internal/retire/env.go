@@ -119,7 +119,7 @@ func (s State) Plan(agent string) []string {
 		for _, thread := range s.AmpThreads {
 			plan = append(plan, "archive amp thread "+thread)
 		}
-		plan = append(plan, "stop session", "remove units and registry entry")
+		plan = append(plan, "stop in-flight amp runs", "stop session", "remove units and registry entry")
 	case "claude-code":
 		plan = append(plan, "stop session (keep transcripts)", "remove units and registry entry")
 	default: // opencode, kilo, zero
@@ -398,6 +398,12 @@ func apply(ctx context.Context, removeManaged func(context.Context, string) (str
 			}
 		}
 		res.AmpThreads = st.AmpThreads
+		// Kill in-flight runs before the worktree goes: a detached
+		// `amp -x` keeps working in the deleted directory otherwise
+		// (see session.StopAmpRuns). Best-effort — a missing process
+		// is not an error — and scoped to this instance's stamped
+		// identity, so other instances' runs are untouched.
+		session.StopAmpRuns(instance, st.Workdir)
 	case "opencode":
 		res.OpencodeSessions = st.OpencodeSessions
 	}
