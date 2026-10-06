@@ -6,10 +6,24 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 )
+
+
+// hostModeConfig returns a Config whose inherited host mode resolves
+// from a temp amp.yaml carrying mode, so tests never touch the real
+// ~/.config/agentmux/amp.yaml.
+func hostModeConfig(t *testing.T, mode string) Config {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "amp.yaml")
+	if err := os.WriteFile(p, []byte("mode: "+mode+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return Config{HostModePath: p}
+}
 
 // fakeCommand returns a CommandFactory that records the args/env it was
 // called with and runs script through sh -c instead of the real amp
@@ -31,7 +45,8 @@ func fakeCommand(t *testing.T, script string) (factory CommandFactory, gotArgs *
 
 func TestRunUsesStdinNotArgv(t *testing.T) {
 	factory, gotArgs, _ := fakeCommand(t, `cat >/dev/null; printf 'ok'`)
-	out, err := Run(context.Background(), factory, Config{}, "secret pane text")
+	mcfg := hostModeConfig(t, "high")
+	out, err := Run(context.Background(), factory, mcfg, "secret pane text")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -108,7 +123,8 @@ func TestRunLocalExecutorDefaultWhenExecutorEmpty(t *testing.T) {
 		}
 		return exec.CommandContext(ctx, "sh", "-c", `cat >/dev/null; printf 'ok'`)
 	}
-	if _, err := Run(context.Background(), factory, Config{}, "hi"); err != nil {
+	base := hostModeConfig(t, "high")
+	if _, err := Run(context.Background(), factory, base, "hi"); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 }
@@ -127,7 +143,9 @@ func TestRunRunnerExecutorNoSettingsFile(t *testing.T) {
 		}
 		return exec.CommandContext(ctx, "sh", "-c", `cat >/dev/null; printf 'ok'`)
 	}
-	cfg := Config{Executor: "runner:abc123", RunnerDir: "/srv/work"}
+	cfg := hostModeConfig(t, "high")
+	cfg.Executor = "runner:abc123"
+	cfg.RunnerDir = "/srv/work"
 	if _, err := Run(context.Background(), factory, cfg, "hi"); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -159,7 +177,9 @@ func TestRunSettingsFileChownedToOwner(t *testing.T) {
 		_ = st
 		return exec.CommandContext(ctx, "sh", "-c", `cat >/dev/null; printf 'ok'`)
 	}
-	cfg := Config{Executor: "local", Owner: me}
+	cfg := hostModeConfig(t, "high")
+	cfg.Executor = "local"
+	cfg.Owner = me
 	if _, err := Run(context.Background(), factory, cfg, "hi"); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -174,7 +194,8 @@ func TestRunAPIKeyInEnvNotArgv(t *testing.T) {
 		}
 		return exec.CommandContext(ctx, "sh", "-c", `cat >/dev/null; env`)
 	}
-	cfg := Config{APIKey: "sk-super-secret"}
+	cfg := hostModeConfig(t, "high")
+	cfg.APIKey = "sk-super-secret"
 	out, err := Run(context.Background(), factory, cfg, "hi")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -189,7 +210,9 @@ func TestRunAPIKeyPreservesInheritedEnv(t *testing.T) {
 	factory := func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		return exec.CommandContext(ctx, "sh", "-c", `cat >/dev/null; env`)
 	}
-	out, err := Run(context.Background(), factory, Config{APIKey: "k"}, "hi")
+	kcfg := hostModeConfig(t, "high")
+	kcfg.APIKey = "k"
+	out, err := Run(context.Background(), factory, kcfg, "hi")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -208,7 +231,8 @@ func TestRunErrorPropagates(t *testing.T) {
 	factory := func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		return exec.CommandContext(ctx, "sh", "-c", `cat >/dev/null; echo boom 1>&2; exit 1`)
 	}
-	if _, err := Run(context.Background(), factory, Config{}, "hi"); err == nil {
+	ecfg := hostModeConfig(t, "high")
+	if _, err := Run(context.Background(), factory, ecfg, "hi"); err == nil {
 		t.Fatal("Run: want error from a failing command")
 	}
 }
@@ -251,5 +275,47 @@ func TestRunnerWarning(t *testing.T) {
 	warning, ok := RunnerWarning("runner:abc123")
 	if !ok || !strings.Contains(warning, "runner:abc123") {
 		t.Errorf("RunnerWarning(runner:abc123) = %q, %v", warning, ok)
+	}
+}
+
+// TestRunInheritsHostModeAsM is the AMUX-36 guard on the -x path: with
+// no explicit Mode, Run resolves the host mode and carries it as -m.
+func TestRunInheritsHostModeAsM(t *testing.T) {
+	factory, gotArgs, _ := fakeCommand(t, `cat >/dev/null; printf 'ok'`)
+	cfg := hostModeConfig(t, "high")
+	if _, err := Run(context.Background(), factory, cfg, "hi"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if joined := strings.Join(*gotArgs, " "); !strings.Contains(joined, "-m high") {
+		t.Fatalf("args = %q, want -m high", *gotArgs)
+	}
+}
+
+// TestRunExplicitModeWinsOverHost is the per-call override: an explicit
+// Mode rides -m as-is without consulting the host file.
+func TestRunExplicitModeWinsOverHost(t *testing.T) {
+	factory, gotArgs, _ := fakeCommand(t, `cat >/dev/null; printf 'ok'`)
+	cfg := Config{Mode: "ultra", HostModePath: filepath.Join(t.TempDir(), "missing.yaml")}
+	if _, err := Run(context.Background(), factory, cfg, "hi"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if joined := strings.Join(*gotArgs, " "); !strings.Contains(joined, "-m ultra") || strings.Contains(joined, "-m high") {
+		t.Fatalf("args = %q, want exactly -m ultra", *gotArgs)
+	}
+}
+
+// TestRunRefusesWithoutMode is the AMUX-36 refusal on the -x path: with
+// no explicit Mode and no host mode anywhere, Run refuses before amp
+// spawns instead of running on amp's default model.
+func TestRunRefusesWithoutMode(t *testing.T) {
+	factory, gotArgs, _ := fakeCommand(t, `cat >/dev/null; printf 'ok'`)
+	cfg := Config{HostModePath: filepath.Join(t.TempDir(), "missing.yaml")}
+	if _, err := Run(context.Background(), factory, cfg, "hi"); err == nil {
+		t.Fatal("Run succeeded with no mode configured")
+	} else if !strings.Contains(err.Error(), "no amp mode configured") {
+		t.Fatalf("Run error = %v, want the no-mode refusal", err)
+	}
+	if len(*gotArgs) != 0 {
+		t.Fatalf("refused Run spawned amp: %q", *gotArgs)
 	}
 }

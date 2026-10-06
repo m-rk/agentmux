@@ -2,7 +2,9 @@ package threadwatch
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -19,6 +21,18 @@ func fakeAmpCommand(t *testing.T, script string) ampexec.CommandFactory {
 	}
 }
 
+
+// hostModeReviewConfig is the reviewer config for tests: the host mode
+// resolves from a temp amp.yaml, so ampexec's Require inherits it.
+func hostModeReviewConfig(t *testing.T) ampexec.Config {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "amp.yaml")
+	if err := os.WriteFile(p, []byte("mode: high\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return ampexec.Config{Executor: "local", Label: "agentmux-review", HostModePath: p}
+}
+
 func TestAmpReviewerUsesStdinAndParsesFencedJSON(t *testing.T) {
 	var gotArgs []string
 	reviewer := AmpReviewer{
@@ -26,7 +40,7 @@ func TestAmpReviewerUsesStdinAndParsesFencedJSON(t *testing.T) {
 			gotArgs = append([]string(nil), args...)
 			return exec.CommandContext(ctx, "sh", "-c", "cat >/dev/null; printf '```json\\n{\"summary\":\"ok\",\"insights\":[]}\\n```'")
 		},
-		Config: ampexec.Config{Executor: "local", Label: "agentmux-review"},
+		Config: hostModeReviewConfig(t),
 	}
 	input := ReviewInput{Clusters: []Cluster{{Tag: "x", Instance: "a", Evidence: []string{"secret pane text"}}}}
 	result, err := reviewer.Review(context.Background(), input)
@@ -37,7 +51,7 @@ func TestAmpReviewerUsesStdinAndParsesFencedJSON(t *testing.T) {
 		t.Errorf("Summary = %q, want ok", result.Summary)
 	}
 	joined := strings.Join(gotArgs, " ")
-	if !strings.Contains(joined, "-x") || !strings.Contains(joined, "--executor local") || !strings.Contains(joined, "-l agentmux-review") {
+	if !strings.Contains(joined, "-x") || !strings.Contains(joined, "--executor local") || !strings.Contains(joined, "-l agentmux-review") || !strings.Contains(joined, "-m high") {
 		t.Errorf("args missing expected flags: %q", joined)
 	}
 	if strings.Contains(joined, "secret pane text") {

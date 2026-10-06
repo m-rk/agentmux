@@ -19,6 +19,8 @@ import (
 	"os/user"
 	"strconv"
 	"strings"
+
+	"github.com/m-rk/agentmux/daemon/internal/ampconfig"
 )
 
 // CommandFactory creates the (possibly privilege-dropped) amp process. Same
@@ -46,9 +48,18 @@ type Config struct {
 	// which of that runner's served directories the thread runs in. Empty
 	// leaves it at the runner's own default.
 	RunnerDir string
-	// Mode is an optional amp -m/--mode override (low|medium|high|ultra,
-	// or a plugin mode). Empty uses amp's own default.
+	// Mode is an explicit amp -m/--mode override for this call (the
+	// review.amp.mode / doctor flag value). Empty means "inherit the
+	// host mode": Require resolves ~/.config/agentmux/amp.yaml at the
+	// caller's home and refuses when nothing is configured, so no
+	// review or escalation thread ever starts on amp's default model
+	// (AMUX-36). The field's zero value is the safe default — callers
+	// that already read threadwatch.yaml get inheritance for free.
 	Mode string
+	// HostModePath overrides where the inherited host mode is read
+	// from; empty uses ampconfig.DefaultPath. Tests set it; production
+	// leaves it alone so the run user's own amp.yaml applies.
+	HostModePath string
 	// Label is the -l/--label applied to the thread this call creates.
 	Label string
 	// APIKey, when non-empty, is passed to the child as AMP_API_KEY in its
@@ -108,9 +119,26 @@ func Run(ctx context.Context, command CommandFactory, cfg Config, message string
 	}
 
 	args := []string{"-x", "--executor", executor, "--no-color"}
-	if cfg.Mode != "" {
-		args = append(args, "-m", cfg.Mode)
+	// Every thread carries -m (AMUX-36): the explicit override when
+	// set, else the host mode inherited through Require. A missing
+	// mode everywhere refuses before amp spawns.
+	mode := strings.TrimSpace(cfg.Mode)
+	if mode == "" {
+		path := cfg.HostModePath
+		if path == "" {
+			path = ampconfig.DefaultPath()
+		}
+		host, herr := ampconfig.Load(path)
+		if herr != nil {
+			return "", fmt.Errorf("reading amp host config: %w", herr)
+		}
+		var rerr error
+		mode, _, rerr = ampconfig.Require(host, "")
+		if rerr != nil {
+			return "", rerr
+		}
 	}
+	args = append(args, ampconfig.SpawnArgs(mode)...)
 	if cfg.Label != "" {
 		args = append(args, "-l", cfg.Label)
 	}

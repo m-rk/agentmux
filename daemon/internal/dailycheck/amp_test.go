@@ -2,7 +2,9 @@ package dailycheck
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -19,6 +21,18 @@ func fakeAmpCommand(t *testing.T, script string) ampexec.CommandFactory {
 	}
 }
 
+
+// hostModeDoctorConfig is the analyzer config for tests: the host mode
+// resolves from a temp amp.yaml, so ampexec's Require inherits it.
+func hostModeDoctorConfig(t *testing.T) ampexec.Config {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "amp.yaml")
+	if err := os.WriteFile(p, []byte("mode: high\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return ampexec.Config{Executor: "local", Label: "agentmux-doctor", HostModePath: p}
+}
+
 func TestAmpAnalyzerUsesStdinAndParsesFencedJSON(t *testing.T) {
 	var gotArgs []string
 	analyzer := AmpAnalyzer{
@@ -26,7 +40,7 @@ func TestAmpAnalyzerUsesStdinAndParsesFencedJSON(t *testing.T) {
 			gotArgs = append([]string(nil), args...)
 			return exec.CommandContext(ctx, "sh", "-c", "cat >/dev/null; printf '```json\\n{\"summary\":\"fine\",\"findings\":[]}\\n```'")
 		},
-		Config: ampexec.Config{Executor: "local", Label: "agentmux-doctor"},
+		Config: hostModeDoctorConfig(t),
 	}
 	plan, err := analyzer.Analyze(context.Background(), []Snapshot{{Name: "one", Pane: "secret pane text"}})
 	if err != nil {
@@ -36,7 +50,7 @@ func TestAmpAnalyzerUsesStdinAndParsesFencedJSON(t *testing.T) {
 		t.Errorf("Summary = %q, want fine", plan.Summary)
 	}
 	joined := strings.Join(gotArgs, " ")
-	if !strings.Contains(joined, "-x") || !strings.Contains(joined, "--executor local") {
+	if !strings.Contains(joined, "-x") || !strings.Contains(joined, "--executor local") || !strings.Contains(joined, "-m high") {
 		t.Errorf("args missing expected flags: %q", joined)
 	}
 	if strings.Contains(joined, "secret pane text") {
