@@ -73,6 +73,18 @@ var ampArchiveRun = func(ctx context.Context, src transcript.Source, args ...str
 	return transcript.AmpRun(ctx, src, args...)
 }
 
+// LiveAmpThreads resolves the instance's amp threads from a transcript
+// source, newest first — the exported form of liveAmpThread for ops.Send.
+// It prefers the threads agentmux itself recorded in the `sessions run`
+// state dir, which are found even when `amp threads list` can't see them
+// (archived, or the runner mapping never learned them); when the state
+// dir holds no thread ids but the transcript lists one on the instance's
+// runner, that listed thread is used. No ids from either source is
+// not_found.
+func LiveAmpThreads(ctx context.Context, src transcript.Source) ([]string, error) {
+	return liveAmpThreads(ctx, src)
+}
+
 // liveAmpThread resolves the instance's amp threads: every thread id
 // agentmux itself recorded in the `sessions run` state dir
 // (~/.local/state/agentmux/sessions/<instance>/amp-run-<thread>.jsonl),
@@ -83,15 +95,20 @@ var ampArchiveRun = func(ctx context.Context, src transcript.Source, args ...str
 // thread is used. No ids from either source is not_found.
 func liveAmpThread(ctx context.Context, instance string, fields map[string]string) ([]string, error) {
 	src := ampSource(instance, fields)
+	return liveAmpThreads(ctx, src)
+}
+
+// liveAmpThreads is liveAmpThread from an already-built source.
+func liveAmpThreads(ctx context.Context, src transcript.Source) ([]string, error) {
 	if recorded := recordedAmpThreads(src); len(recorded) > 0 {
 		return recorded, nil
 	}
 	threads, err := listAmpThreads(ctx, src)
 	if err != nil {
-		return nil, errorf(safesend.ReasonFailed, "listing amp threads for %s: %v", instance, err)
+		return nil, errorf(safesend.ReasonFailed, "listing amp threads for %s: %v", src.Instance, err)
 	}
 	if len(threads) == 0 {
-		return nil, errorf(safesend.ReasonNotFound, "no amp thread found for %s", instance)
+		return nil, errorf(safesend.ReasonNotFound, "no amp thread found for %s", src.Instance)
 	}
 	return []string{threads[0].ID}, nil
 }

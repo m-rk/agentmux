@@ -142,6 +142,19 @@ from that line. `-json` adds `base` and `base_commit` to the result.
 
 ## Running an amp thread
 
+`sessions send` to an amp instance never pastes into the runner's
+terminal — that starts a new thread on amp's default model instead of
+the host-configured mode, whose output nobody reads (AMUX-37). It
+resumes the instance's thread through the `run` path instead: the
+address's thread suffix, else the instance's current thread (newest
+`sessions run` log, else the newest thread listed on its runner), with
+the host/instance mode. With no thread to resume the send is refused as
+`not_found` with the `sessions run` to use instead. The result names
+the resumed thread and `confirmed` means its run reports running — poll
+`sessions status` for `<instance>#<thread>` for what happens next, and
+the audit log records the outcome as `resumed`, never `delivered`.
+`-doorbell` is refused for amp instances.
+
 `run` starts an amp thread on an amp instance (or continues one with a
 thread id), for prompts that should become their own thread rather than a
 paste into the runner's TUI. It shares `send`'s rate bucket, and refuses

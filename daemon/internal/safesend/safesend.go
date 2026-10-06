@@ -305,7 +305,7 @@ type AuditEntry struct {
 	Correlation string    `json:"correlation,omitempty"`
 	Bytes       int       `json:"bytes"`
 	SHA256      string    `json:"sha256"`
-	Outcome     string    `json:"outcome"` // "delivered" or the refusal Reason
+	Outcome     string    `json:"outcome"` // "delivered", "resumed" (an amp send continued the worker's thread), or the refusal Reason
 	Detail      string    `json:"detail,omitempty"`
 }
 

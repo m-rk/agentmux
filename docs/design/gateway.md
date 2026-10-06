@@ -84,14 +84,11 @@ can take input. Required behaviour:
 - Return an acknowledgement that the text was submitted, not that the agent
   acted on it. Confirm by observing the transcript or pane change.
 - amp runners take their input from threads on ampcode.com, not from the
-  tmux pane, so amp send goes through the CLI, not tmux:
-  `amp threads continue <id> -ox "<message>"` posts to an existing thread and
-  runs it on that thread's own executor (the runner), and
-  `amp -x "<message>" --executor runner:<id> [--runner-dir <dir>]` starts a
-  new thread on a runner. Both need `AMP_API_KEY` and stdin closed (with stdin
-  left open the CLI waits and fails with "Timeout while reading from stdin").
-  Verified on 2026-10-02 against amp 0.0.1789646488: both messages appeared in
-  the thread export and in the runner's `no-tui.log`.
+  tmux pane — and pasting into the runner's terminal starts a new thread
+  on amp's default model instead of the host-configured mode (AMUX-37),
+  whose output nobody reads. So an amp send never touches the runner's
+  terminal: it resumes the instance's thread through the `run` path (see
+  the contract below), with the host/instance mode.
 
 ### 3. Status is too coarse
 
@@ -272,17 +269,26 @@ Each phase is shippable and useful alone.
      text goes in as one bracketed paste through the daemon's new `SendText`
      RPC (so newlines don't submit early), then Enter. `confirmed` is true
      when the session is seen starting a turn within `-confirm` (15 s).
-   - amp: with a thread, `amp threads continue <id> --orb-execute`, after
-     checking the thread is on the instance's runner and idle; without one,
-     a new thread on the runner (`--executor runner:<id>`), whose id comes
-     back in `thread`.
+   - amp: the send resumes the instance's thread through the `run` path
+     (the address's thread suffix, else its current thread — newest
+     `sessions run` log, else the newest thread listed on its runner),
+     with the host/instance mode. Nothing pastes into the runner's
+     terminal, so a send can never start a new thread on amp's default
+     model; with no thread to resume it is refused as `not_found` with
+     the `sessions run` to use instead. The result names the resumed
+     thread and `confirmed` means its run reports running — poll
+     `sessions status` for `<instance>#<thread>` for what happens next.
+     `-doorbell` is refused for amp: there is no doorbell to coalesce
+     into, and a wake-up that starts no run would only look delivered.
    - `-wait` polls a busy session until it finishes; without it, busy is an
-     immediate refusal.
+     immediate refusal. Amp resumes have no separate wait: they continue
+     the thread the worker already owns.
    - `-doorbell` marks the send as a wake-up nudge for a session that drains
      its own queue (see [orchestrator-instance.md](../orchestrator-instance.md)).
      If the session is busy, or its input box already holds a pasted,
      unsubmitted message, the send succeeds without sending and the result
      has `coalesced: true`. A prompt or someone's typed draft still refuses.
+     TUI sessions only: `-doorbell` to an amp instance is refused.
      Local sessions only for now.
    - Every attempt after validation appends to
      `~/.local/state/agentmux/send-audit.jsonl` (0600): time, principal,

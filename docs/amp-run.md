@@ -68,6 +68,20 @@ cannot be continued". Unarchiving an active thread succeeds, so the
 continue does it unconditionally rather than detecting the archived state
 first.
 
+## Relaying into a worker thread
+
+`sessions send` to an amp instance is a `run` continue under another
+name: it resumes the instance's thread — the address's thread suffix,
+else the instance's current thread (newest run log, else the newest
+thread listed on its runner) — with the host/instance mode, carrying the
+provenance prefix as its text. Nothing ever pastes into the runner's
+terminal, so a send can never start a new thread on amp's default model
+(AMUX-37). With no thread to resume the send is refused as `not_found`
+with the `sessions run` to use instead; `-doorbell` is refused for amp.
+The result names the resumed thread and `confirmed` means its run
+reports running. For amp workers, relays and nudges must use this path
+(or `sessions run` directly), never a terminal paste.
+
 ## Waiting on a question
 
 An amp agent can call amp's built-in `ask_user_choice` tool to ask a

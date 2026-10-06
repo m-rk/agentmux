@@ -20,9 +20,11 @@ import (
 )
 
 // runSessionsSend is `agentmux sessions send`: deliver one message to a local
-// session with readiness checks, a provenance prefix and an audit entry. See
-// docs/design/gateway.md (phase 3) and ops.Env.Send. Exit 0 delivered, 1
-// refused or failed, 2 usage.
+// session with readiness checks, a provenance prefix and an audit entry. For
+// an amp instance the send resumes the worker's thread through the run path
+// (never a terminal paste — see docs/amp-run.md); the reply says "resumed".
+// See docs/design/gateway.md (phase 3) and ops.Env.Send. Exit 0 delivered
+// (or resumed), 1 refused or failed, 2 usage.
 //
 // Task sessions refuse (see liveguard) so a task instance cannot type into
 // another session.
@@ -34,8 +36,8 @@ func runSessionsSend(args []string) {
 	from := fs.String("from", "", "optional provenance source, e.g. a task id")
 	correlation := fs.String("correlation", "", "opaque id recorded in the audit log, not in the message")
 	file := fs.String("file", "", "read the message from this file (\"-\" for stdin) instead of the argument")
-	wait := fs.Duration("wait", 0, "if the session is busy, wait up to this long for it to finish before refusing")
-	doorbell := fs.Bool("doorbell", false, "wake-up nudge: if the session is busy or already has an undelivered doorbell, succeed without sending")
+	wait := fs.Duration("wait", 0, "TUI sessions only: if the session is busy, wait up to this long for it to finish before refusing (ignored for amp resumes)")
+	doorbell := fs.Bool("doorbell", false, "TUI sessions only (refused for amp): wake-up nudge: if the session is busy or already has an undelivered doorbell, succeed without sending")
 	confirm := fs.Duration("confirm", 15*time.Second, "how long to watch for the session starting a turn")
 	socketPath := fs.String("socket", daemoninstall.SocketPath(), "Unix socket of the local agentmuxd")
 	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml with the gateway URL of other hosts")
@@ -89,13 +91,18 @@ func runSessionsSend(args []string) {
 	if *jsonOut {
 		writeJSON(res)
 	} else if res.OK {
-		state := "submitted; turn start not observed"
+		verb, state := "delivered to", "submitted; turn start not observed"
+		if res.Agent == "amp" {
+			// The send resumed the worker's thread through the run
+			// path; the wording must never claim a terminal paste.
+			verb = "resumed"
+		}
 		if res.Coalesced {
 			state = "coalesced; not sent"
 		} else if res.Confirmed {
 			state = "confirmed"
 		}
-		fmt.Printf("delivered to %s (%s)\n", res.Address, state)
+		fmt.Printf("%s %s (%s)\n", verb, res.Address, state)
 	} else {
 		fmt.Fprintf(os.Stderr, "not sent to %s: %s: %s\n", res.Address, res.Reason, res.Detail)
 	}

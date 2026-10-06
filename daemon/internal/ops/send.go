@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/m-rk/agentmux/daemon/internal/address"
 	"github.com/m-rk/agentmux/daemon/internal/pb"
+	"github.com/m-rk/agentmux/daemon/internal/retire"
 	"github.com/m-rk/agentmux/daemon/internal/safesend"
 	"github.com/m-rk/agentmux/daemon/internal/transcript"
 )
@@ -43,8 +43,8 @@ type SendResult struct {
 	Detail      string          `json:"detail,omitempty"`
 	SubmittedAt *time.Time      `json:"submitted_at,omitempty"`
 	// Confirmed is true when the session was seen to start a turn after the
-	// submit (or amp returned the thread). False means submitted but not
-	// observed, not that it failed.
+	// submit (or an amp resume's run reports the worker running). False
+	// means submitted but not observed, not that it failed.
 	Confirmed bool `json:"confirmed"`
 	// Coalesced is true when a doorbell send succeeded without sending
 	// because the session was busy or already had a doorbell waiting.
@@ -54,7 +54,29 @@ type SendResult struct {
 	Correlation string `json:"correlation,omitempty"`
 }
 
-var ampThreadURL = regexp.MustCompile(`T-[0-9A-Fa-f-]{8,}`)
+// sendAmpThread resolves which amp thread a send resumes. An explicit
+// thread suffix wins (its shape is validated); otherwise the instance's
+// current thread is used: the newest `sessions run` log first (found even
+// when amp can't see the thread — archived, or the runner mapping never
+// learned it), else the newest thread listed on the instance's runner.
+// No thread anywhere is not_found with a hint at the equivalent sessions
+// run.
+func sendAmpThread(ctx context.Context, src transcript.Source, want string) (string, error) {
+	if want != "" {
+		if !transcript.ValidAmpThreadID(want) {
+			return "", Refuse(safesend.ReasonInvalid, "%q is not an amp thread id", want)
+		}
+		return want, nil
+	}
+	threads, err := retire.LiveAmpThreads(ctx, src)
+	if err != nil {
+		// A listing failure (amp gone, CLI error) with no recorded
+		// thread is still "nothing to resume": the run hint is what
+		// the caller needs, not amp's stderr.
+		return "", Refuse(safesend.ReasonNotFound, "no amp thread found for %s: run `agentmux sessions run -thread <T-id> -file <msg> %s@<host>` to continue the worker's own thread", src.Instance, src.Instance)
+	}
+	return threads[0], nil
+}
 
 // CleanText trims and validates message text.
 func CleanText(raw string) (string, error) {
@@ -129,11 +151,20 @@ func (e Env) Send(ctx context.Context, req SendRequest) SendResult {
 	}
 
 	if src.Agent == "amp" {
-		err = sendAmp(ctx, src, addr, message, req.Wait, &res)
+		if req.Doorbell {
+			err = Refuse(safesend.ReasonUnsupported, "-doorbell is not supported for amp instances: poll `sessions status` for the thread state instead")
+		} else {
+			err = sendAmpResume(ctx, src, addr, message, &res)
+		}
 	} else {
 		err = e.sendTmux(ctx, addr.Instance, src.Agent, message, req.Wait, req.Confirm, req.Doorbell, &res)
 	}
+	// An amp send resumes the worker's thread through the run path; its
+	// outcome says so, so the audit log never claims a terminal paste.
 	outcome, detail := "delivered", ""
+	if src.Agent == "amp" && err == nil {
+		outcome = "resumed"
+	}
 	if err != nil {
 		r := AsError(err)
 		outcome, detail = string(r.Reason), r.Detail
@@ -236,48 +267,35 @@ ready:
 	return nil
 }
 
-// sendAmp posts to a runner thread through the amp CLI, or starts a new
-// thread on the instance's runner when the address names none.
-func sendAmp(ctx context.Context, src transcript.Source, addr address.Address, message string, wait time.Duration, res *SendResult) error {
-	if src.AmpRunnerID == "" {
-		return Refuse(safesend.ReasonUnsupported, "%s has no amp runner id", addr.Instance)
+// sendAmpResume delivers to an amp instance by resuming its thread through
+// the `sessions run` path — never by pasting into the runner's terminal,
+// which starts a new thread on amp's default model instead of the
+// host-configured mode (and whose output nobody reads). The thread is the
+// address's own suffix, else the instance's current thread (see
+// sendAmpThread). The resume carries the provenance prefix as its text,
+// exactly like a TUI send; the result's address and thread name the
+// resumed thread, confirmed once the run reports the worker running.
+//
+// The resumed run appends to the thread's own stream log, which is how
+// status and read confirm the worker is running — nothing here pastes
+// into the runner's terminal, so a send can never start an amp thread.
+//
+// The old contract waited for a thread-local runner to go idle (busy past
+// -wait refused); resumes have no separate wait, they continue the thread
+// the worker already owns.
+func sendAmpResume(ctx context.Context, src transcript.Source, addr address.Address, message string, res *SendResult) error {
+	thread, terr := sendAmpThread(ctx, src, addr.Thread)
+	if terr != nil {
+		return terr
 	}
-	var out []byte
-	var err error
-	if addr.Thread == "" {
-		out, err = transcript.AmpRun(ctx, src, "--execute="+message, "--executor", "runner:"+src.AmpRunnerID)
-	} else {
-		if !transcript.ValidAmpThreadID(addr.Thread) {
-			return Refuse(safesend.ReasonInvalid, "%q is not an amp thread id", addr.Thread)
-		}
-		deadline := time.Now().Add(wait)
-		for {
-			state, serr := transcript.AmpThreadState(ctx, src, addr.Thread)
-			if errors.Is(serr, transcript.ErrNoThread) {
-				return Refuse(safesend.ReasonNotFound, "thread %s is not on runner %s", addr.Thread, src.AmpRunnerID)
-			}
-			if serr != nil {
-				return serr
-			}
-			if state == "" || state == "idle" {
-				break
-			}
-			if time.Now().Before(deadline) {
-				time.Sleep(5 * time.Second)
-				continue
-			}
-			return Refuse(safesend.ReasonBusy, "thread %s is %s", addr.Thread, state)
-		}
-		out, err = transcript.AmpRun(ctx, src, "threads", "continue", addr.Thread, "--orb-execute", "--execute="+message)
+	runRes, rerr := Env{}.Run(ctx, RunRequest{Address: address.Address{Instance: addr.Instance, Host: addr.Host, Thread: thread}.String(), Text: message})
+	if rerr != nil {
+		return rerr
 	}
-	if err != nil {
-		return Refuse(safesend.ReasonFailed, "amp: %v", err)
-	}
+	res.Address = runRes.Address
+	res.Thread = runRes.Thread
+	res.Confirmed = runRes.State == "running"
 	now := time.Now().UTC()
 	res.SubmittedAt = &now
-	if id := ampThreadURL.FindString(string(out)); id != "" {
-		res.Thread = id
-		res.Confirmed = true
-	}
 	return nil
 }
