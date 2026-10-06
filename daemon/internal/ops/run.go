@@ -297,26 +297,32 @@ func (e Env) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		}
 		return RunResult{}, Refuse(safesend.ReasonFailed, "amp: %v", err)
 	}
-	// A new thread keeps the task's title even though amp's auto-title
-	// replaces `--title` while working: best-effort, never a refusal. A
-	// continue re-applies the title too when one is given, since the
-	// worker's own turns overwrite it in between. The finished thread
-	// stays unarchived (see AmpRunArgs), so it can still be found and
-	// renamed.
+	// The thread keeps the task's title against amp's auto-title, which
+	// replaces `--title` with its own summary while the agent works:
+	// rename once now (best-effort, never a refusal), and once more in
+	// the background after the agent's first assistant record lands —
+	// the point where the overwrite happens. A continue re-applies a
+	// given title too, since the worker's own turns overwrite it in
+	// between. The finished thread stays unarchived (see AmpRunArgs),
+	// so it can still be found and renamed.
+	threadLog := logPath
+	if thread == "" {
+		// The log was kept under a pending name until the thread id was
+		// known; move it under the thread's own name so status and read
+		// find it — and so the background re-title watches the same
+		// file the agent appends to.
+		threadLog = session.AmpRunLogPath(src.Home, addr.Instance, id)
+		_ = os.Rename(logPath, threadLog)
+	}
 	if title != "" {
 		session.RenameAmpThread(ctx, src.AmpEnvFile, id, title)
+		session.RetitleSpawn(context.WithoutCancel(ctx), src.AmpEnvFile, id, title, threadLog)
 	}
 	full := address.Address{Instance: addr.Instance, Host: addr.Host, Thread: id}
 	res := RunResult{
 		OK: true, Address: full.String(), Agent: "amp",
 		Thread: id, ThreadID: id, ThreadURL: ampThreadURLPrefix + id,
 		State: "running",
-	}
-	if thread == "" {
-		// The log was kept under a pending name until the thread id was
-		// known; move it under the thread's own name so status and read
-		// find it.
-		_ = os.Rename(logPath, session.AmpRunLogPath(src.Home, addr.Instance, id))
 	}
 	return res, nil
 }

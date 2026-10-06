@@ -151,6 +151,12 @@ func TestRunTitlesNewThread(t *testing.T) {
 	if !fake.RenameSeen || fake.Renamed != "AMUX-17 do the thing" {
 		t.Fatalf("rename = %v %q", fake.RenameSeen, fake.Renamed)
 	}
+	if !fake.RetitleSeen || fake.Retitled.Thread != id || fake.Retitled.Title != "AMUX-17 do the thing" {
+		t.Fatalf("retitle = %v %+v", fake.RetitleSeen, fake.Retitled)
+	}
+	if !strings.HasSuffix(fake.Retitled.LogPath, "amp-run-"+id+".jsonl") {
+		t.Fatalf("retitle log = %q, want the thread's own log", fake.Retitled.LogPath)
+	}
 }
 
 // TestRunContinueReappliesTitle continues without --title (amp names a

@@ -109,6 +109,44 @@ func TestCleanAmpLabels(t *testing.T) {
 	}
 }
 
+// TestFirstAssistantAndRetitle covers the background re-title: an
+// assistant record in the stream log counts as the first turn, and
+// RetitleAmpThreadFor renames through it — while an empty wait, an empty
+// title, or an empty thread id renames nothing.
+func TestFirstAssistantAndRetitle(t *testing.T) {
+	p := writeLog(t,
+		`{"type":"system","subtype":"init","session_id":"T-s"}`,
+		`{"type":"assistant","message":{"role":"assistant"}}`,
+	)
+	if !ampFirstAssistant(p) {
+		t.Fatal("assistant record not detected")
+	}
+	quiet := writeLog(t, `{"type":"system","subtype":"init","session_id":"T-s"}`)
+	if ampFirstAssistant(quiet) {
+		t.Fatal("init-only log reads as a first turn")
+	}
+	if ampFirstAssistant(filepath.Join(t.TempDir(), "missing.jsonl")) {
+		t.Fatal("missing log reads as a first turn")
+	}
+	old := renameAmpThread
+	defer func() { renameAmpThread = old }()
+	var seen []string
+	renameAmpThread = func(_ context.Context, _, threadID, title string) {
+		seen = append(seen, threadID+"\x00"+title)
+	}
+	RetitleAmpThreadFor(func(context.Context, string) bool { return true },
+		context.Background(), "", "T-s", "AMUX-43 do the thing", p)
+	RetitleAmpThreadFor(func(context.Context, string) bool { return false },
+		context.Background(), "", "T-s", "AMUX-43 do the thing", p)
+	RetitleAmpThreadFor(func(context.Context, string) bool { return true },
+		context.Background(), "", "T-s", "", p)
+	RetitleAmpThreadFor(func(context.Context, string) bool { return true },
+		context.Background(), "", "", "AMUX-43 do the thing", p)
+	if len(seen) != 1 || seen[0] != "T-s\x00AMUX-43 do the thing" {
+		t.Fatalf("renames = %q", seen)
+	}
+}
+
 // TestScanAmpInit reads the thread id out of the stream log, skips
 // non-init lines, and tells "not yet" from "exited without init".
 func TestScanAmpInit(t *testing.T) {

@@ -56,7 +56,11 @@ findable and renamable — instead of vanishing into the archive. The
 prompt itself also opens with the title as a one-line header, since the
 kickoff notification shows the first message rather than the sidebar
 title. There is no amp setting that stops auto-titling; the re-apply is
-the mechanism. Archive task threads when the task note is archived, not
+the mechanism. The launch-time rename runs before `sessions run`
+returns; a second rename runs in the background once the agent's first
+assistant record lands in the stream log — the point where the
+overwrite happens — so the thread still reads `<ID> <title>` an hour
+after launch. Archive task threads when the task note is archived, not
 before.
 
 `-label X` (repeatable) tags the thread so `amp threads list --label X`

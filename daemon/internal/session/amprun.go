@@ -295,6 +295,94 @@ func waitAmpInit(ctx context.Context, logPath string) (string, error) {
 	}
 }
 
+// ampFirstAssistant reports whether the stream log holds an assistant
+// record: the agent's first turn has started, so amp's auto-title has had
+// its chance to replace the `--title` sidebar text. Runs re-apply the
+// title from here on (see RetitleAmpThread), keeping `<ID> <title>`
+// against the auto-titler without a watcher process.
+func ampFirstAssistant(logPath string) bool {
+	f, err := os.Open(logPath)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	for sc.Scan() {
+		var rec struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(sc.Bytes(), &rec) != nil || rec.Type != "assistant" {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// RetitleAmpThread waits for the agent's first assistant record in
+// logPath, then re-applies title to threadID — the point where amp's
+// auto-title overwrites `--title` with its own summary. Best-effort and
+// bounded: a run whose first turn never arrives (failed launch, stuck
+// spawn) stops waiting after retitleWait, leaving the launch-time rename
+// in ops.Run as the title. Callers run it in the background: the run
+// itself already returned its thread.
+func RetitleAmpThread(ctx context.Context, envFile, threadID, title, logPath string) {
+	RetitleAmpThreadFor(waitForFirstAssistant, ctx, envFile, threadID, title, logPath)
+}
+
+// waitForFirstAssistant is the RetitleAmpThread wait var: production
+// polls the log for the first assistant record, tests substitute a fake.
+var waitForFirstAssistant = waitForFirstAssistantImpl
+
+// retitleWait bounds the first-turn wait: a launch that never produces a
+// turn (failed launch, stuck spawn) must not hold a goroutine — or a
+// test — open-ended.
+const retitleWait = 10 * time.Minute
+
+func waitForFirstAssistantImpl(ctx context.Context, logPath string) bool {
+	ctx, cancel := context.WithTimeout(ctx, retitleWait)
+	defer cancel()
+	tick := time.NewTicker(2 * time.Second)
+	defer tick.Stop()
+	for {
+		if ampFirstAssistant(logPath) {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-tick.C:
+		}
+	}
+}
+
+// RetitleAmpThreadFor is RetitleAmpThread with the wait named explicitly,
+// so tests drive the rename path without a real stream log.
+func RetitleAmpThreadFor(wait func(context.Context, string) bool, ctx context.Context, envFile, threadID, title, logPath string) {
+	if title == "" || threadID == "" {
+		return
+	}
+	if !wait(ctx, logPath) {
+		return
+	}
+	RenameAmpThread(ctx, envFile, threadID, title)
+}
+
+// retitleSpawn launches the background re-title; a var so ops tests
+// observe the request without waiting out the real first-turn poll.
+var retitleSpawn = func(ctx context.Context, envFile, threadID, title, logPath string) {
+	go RetitleAmpThread(ctx, envFile, threadID, title, logPath)
+}
+
+// RetitleSpawn starts the background re-title after a run returned its
+// thread: the rename that keeps `<ID> <title>` against amp's auto-title
+// once the agent's first turn lands. Production calls it through the
+// retitleSpawn var; tests swap it through AmpSwapForTest.
+func RetitleSpawn(ctx context.Context, envFile, threadID, title, logPath string) {
+	retitleSpawn(ctx, envFile, threadID, title, logPath)
+}
+
 // ampStreamAssistant is the content shape of a stream-json assistant
 // record's message: text plus tool_use calls with their ids and inputs.
 type ampStreamAssistant struct {
@@ -617,12 +705,27 @@ type AmpFakeSpawn struct {
 	// Stopped is the thread the fake stop was asked to kill; StopSeen
 	// reports whether a stop ran at all. StopWorkdir is the workdir it
 	// was scoped to.
-	Stopped      string
-	StopWorkdir  string
-	StopSeen     bool
+	Stopped     string
+	StopWorkdir string
+	StopSeen    bool
+	// Retitled is the background re-title request the run queued: the
+	// thread, title, and log it watches for the first assistant record.
+	// RetitleSeen reports whether a background re-title was requested at
+	// all (synchronously, so tests never race the goroutine).
+	Retitled     RetitleRequest
+	RetitleSeen  bool
 	UnarchivedAt int
 	StoppedAt    int
 	spawnedAt    int
+}
+
+// RetitleRequest is one background re-title: the thread and title to
+// re-apply once the agent's first turn lands, plus the stream log the
+// waiter watches.
+type RetitleRequest struct {
+	Thread  string
+	Title   string
+	LogPath string
 }
 
 // AmpSwapForTest substitutes the detached spawn, the mode check, the
@@ -653,7 +756,7 @@ func AmpSwapForTest(threadID string, checkErr error) (restore func(), fake *AmpF
 func AmpSwapSpawnForTest(threadID string, spawnLog []byte, checkErr error) (restore func(), fake *AmpFakeSpawn) {
 	fake = &AmpFakeSpawn{}
 	oldStart, oldCheck, oldRename := ampStartNew, checkAmpMode, renameAmpThread
-	oldUnarchive, oldStop := unarchiveAmpThread, stopAmpRun
+	oldUnarchive, oldStop, oldRetitle := unarchiveAmpThread, stopAmpRun, retitleSpawn
 	ampStartNew = func(_ context.Context, instance, _ string, argv []string, _ string, logPath string) (*os.Process, error) {
 		fake.Argv = append([]string(nil), argv...)
 		fake.Instance = instance
@@ -702,9 +805,14 @@ func AmpSwapSpawnForTest(threadID string, spawnLog []byte, checkErr error) (rest
 		fake.StopWorkdir = workdir
 		fake.StoppedAt = fake.spawnedAt
 	}
+	retitleSpawn = func(_ context.Context, _, threadID, title, logPath string) {
+		fake.RetitleSeen = true
+		fake.Retitled = RetitleRequest{Thread: threadID, Title: title, LogPath: logPath}
+	}
 	return func() {
 		ampStartNew, checkAmpMode, renameAmpThread = oldStart, oldCheck, oldRename
 		unarchiveAmpThread, stopAmpRun = oldUnarchive, oldStop
+		retitleSpawn = oldRetitle
 	}, fake
 }
 
