@@ -275,7 +275,32 @@ func (l *Listener) HandleInteraction(ctx context.Context, raw json.RawMessage) e
 	return l.respond(ctx, in, 7, map[string]any{"components": settleComponents(in.Message.Components, in.Data.CustomID)})
 }
 
-// settleComponents disables every button and marks the chosen one.
+// settleLabel returns the chosen button's label: any existing check marks
+// (leading "✓ " or trailing " ✓", any count) stripped, exactly one " ✓" at
+// the end. Settling is idempotent — the gateway click handler and the `asks
+// edit -chosen` step may run in either order, and each must leave exactly
+// one check.
+func settleLabel(label string) string {
+	return settleBase(label) + " ✓"
+}
+
+// settleBase strips any existing check marks (leading or trailing ✓, any
+// count) so re-settling a settled label stays at exactly one check.
+func settleBase(label string) string {
+	for {
+		trimmed := strings.TrimSpace(label)
+		changed := trimmed
+		changed = strings.TrimSpace(strings.TrimPrefix(changed, "✓"))
+		changed = strings.TrimSpace(strings.TrimSuffix(changed, "✓"))
+		if changed == trimmed {
+			return trimmed
+		}
+		label = changed
+	}
+}
+
+// settleComponents disables every button and marks the chosen one with a
+// trailing ✓.
 func settleComponents(rows []map[string]any, chosen string) []map[string]any {
 	const styleSuccess = 3
 	for _, row := range rows {
@@ -289,7 +314,7 @@ func settleComponents(rows []map[string]any, chosen string) []map[string]any {
 			if btn["custom_id"] == chosen {
 				btn["style"] = styleSuccess
 				if label, ok := btn["label"].(string); ok {
-					btn["label"] = "✓ " + label
+					btn["label"] = settleLabel(label)
 				}
 			}
 		}

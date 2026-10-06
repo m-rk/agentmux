@@ -260,6 +260,7 @@ func (c *Client) PostAsk(ctx context.Context, title, body string, extraTags []st
 		"applied_tags":     tags,
 		"allowed_mentions": c.mentionPayload(user, true),
 	}
+	opts.applyEmbedFlag(payload)
 	if len(opts.Buttons) > 0 {
 		// A forum post's starter message shares the thread's id.
 		botPayload := map[string]any{
@@ -271,6 +272,7 @@ func (c *Client) PostAsk(ctx context.Context, title, body string, extraTags []st
 				"components":       c.buttonRowsWithGuild(ctx, guildID, opts.Buttons),
 			},
 		}
+		opts.applyEmbedFlag(botPayload["message"].(map[string]any))
 		var thread Channel
 		if err := c.botJSONBody(ctx, http.MethodPost, "/channels/"+url.PathEscape(c.Config.ForumChannelID)+"/threads", botPayload, &thread); err != nil {
 			return "", "", fmt.Errorf("creating Discord ask with buttons (the bot needs Create Posts on the forum): %w", err)
@@ -337,6 +339,7 @@ func (c *Client) PostAskInThread(ctx context.Context, threadID, title, body stri
 			"allowed_mentions": c.mentionPayload(user, true),
 			"components":       c.buttonRowsWithGuild(ctx, forum.GuildID, opts.Buttons),
 		}
+		opts.applyEmbedFlag(botPayload)
 		if err := c.botJSONBody(ctx, http.MethodPost, "/channels/"+url.PathEscape(threadID)+"/messages", botPayload, &message); err != nil {
 			return "", fmt.Errorf("posting ask with buttons into Discord thread (the bot needs Send Messages in Threads): %w", err)
 		}
@@ -346,6 +349,7 @@ func (c *Client) PostAskInThread(ctx context.Context, threadID, title, body stri
 			"username":         asksUsername,
 			"allowed_mentions": c.mentionPayload(user, true),
 		}
+		opts.applyEmbedFlag(payload)
 		query := url.Values{"wait": {"true"}, "thread_id": {threadID}}
 		if err := c.webhookJSON(ctx, http.MethodPost, query, payload, &message); err != nil {
 			return "", fmt.Errorf("posting ask into Discord thread: %w", err)
@@ -443,8 +447,9 @@ func (c *Client) askThread(ctx context.Context, threadID string) (Channel, Chann
 }
 
 // ReplyAsk posts into an existing ask thread, mentioning the configured user
-// only when mention is true.
-func (c *Client) ReplyAsk(ctx context.Context, threadID, body string, mention bool) (string, error) {
+// only when mention is true. Embeds opts back in with -embeds; the default
+// suppresses link unfurls so cards don't bury the thread.
+func (c *Client) ReplyAsk(ctx context.Context, threadID, body string, mention bool, embeds ...bool) (string, error) {
 	user := ""
 	if mention {
 		var err error
@@ -464,6 +469,7 @@ func (c *Client) ReplyAsk(ctx context.Context, threadID, body string, mention bo
 		"username":         asksUsername,
 		"allowed_mentions": c.mentionPayload(user, mention),
 	}
+	AskOptions{Embeds: len(embeds) > 0 && embeds[0]}.applyEmbedFlag(payload)
 	var message Message
 	query := url.Values{"wait": {"true"}, "thread_id": {threadID}}
 	if err := c.webhookJSON(ctx, http.MethodPost, query, payload, &message); err != nil {

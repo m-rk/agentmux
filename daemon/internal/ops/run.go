@@ -70,6 +70,13 @@ type AmpModeInfo struct {
 	Mode string `json:"mode,omitempty"`
 	// Source is "instance", "host", or "" (no mode configured anywhere).
 	Source string `json:"source,omitempty"`
+	// Label is the host's display name for the mode; empty when unconfigured.
+	Label string `json:"label,omitempty"`
+	// Short is the host's short button text; empty when unconfigured.
+	Short string `json:"short,omitempty"`
+	// Emoji are the host's display emoji names (first provider, last
+	// model); absent when unconfigured.
+	Emoji []string `json:"emoji,omitempty"`
 }
 
 // ampThreadURLPrefix is the public address of one amp thread.
@@ -82,7 +89,9 @@ const runTimeout = 3 * time.Minute
 
 // AmpModeOf resolves the effective amp mode for an instance: the
 // instance's AGENTMUX_AMP_MODE registry value, else the host's
-// ~/.config/agentmux/amp.yaml. Exported so Status reports it.
+// ~/.config/agentmux/amp.yaml. Exported so Status reports it. The display
+// keys (label/short/emoji) always come from the host file — an instance
+// override changes only the -m value — and stay empty when unconfigured.
 func AmpModeOf(instance string) AmpModeInfo {
 	var instanceMode string
 	if fields, err := session.ReadRegistry(instance); err == nil {
@@ -93,7 +102,8 @@ func AmpModeOf(instance string) AmpModeInfo {
 		host = ampconfig.Config{}
 	}
 	mode, source := ampconfig.Resolve(host, instanceMode)
-	return AmpModeInfo{Mode: mode, Source: source}
+	label, short, emoji := ampconfig.DisplayOf(host)
+	return AmpModeInfo{Mode: mode, Source: source, Label: label, Short: short, Emoji: emoji}
 }
 
 // runTarget resolves which instance's registry entry a run validates

@@ -57,11 +57,11 @@ func runAsksCmd(args []string) {
 
 func asksUsage() {
 	fmt.Fprintln(os.Stderr, `usage:
-  agentmux asks post (-title T | -thread ID [-title T]) -body-file F [-tag NAME ...] [-react EMOJI,EMOJI,...] [-button LABEL ...] [-buttons-json FILE] [-json] [-dry-run]
-  agentmux asks reply -thread ID -body-file F [-mention] [-dry-run]
+  agentmux asks post (-title T | -thread ID [-title T]) -body-file F [-tag NAME ...] [-react EMOJI,EMOJI,...] [-button LABEL ...] [-buttons-json FILE] [-embeds] [-json] [-dry-run]
+  agentmux asks reply -thread ID -body-file F [-mention] [-embeds] [-dry-run]
   agentmux asks read -thread ID [-after MESSAGE_ID] [-json]
   agentmux asks react -thread ID -message ID -emoji EMOJI
-  agentmux asks edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL]
+  agentmux asks edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL] [-embeds]
   agentmux asks tag -thread ID -set "task,working" [-unarchive]
   agentmux asks close -thread ID [-tag NAME] [-lock]
   agentmux asks list [-open|-archived|-all] [-tag NAME] [-since DUR] [-json]
@@ -124,6 +124,7 @@ func runAsksPost(args []string) error {
 	asJSON := fs.Bool("json", false, "print JSON")
 	react := fs.String("react", "", "comma-separated emoji the bot adds as reactions, in order (e.g. 1️⃣,2️⃣,⏸️)")
 	buttonsJSON := fs.String("buttons-json", "", "file with a JSON array of {label, emoji?, style?} buttons ('-' for stdin); appended after -button labels")
+	embeds := fs.Bool("embeds", false, "keep link unfurls (embeds) on this send; default suppresses them")
 	dryRun := fs.Bool("dry-run", false, "print the Discord payload instead of sending it")
 	var tags, buttons tagFlags
 	fs.Var(&tags, "tag", "extra forum tag; repeatable")
@@ -131,7 +132,7 @@ func runAsksPost(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	opts := collab.AskOptions{}
+	opts := collab.AskOptions{Embeds: *embeds}
 	for _, label := range buttons {
 		opts.Buttons = append(opts.Buttons, collab.AskButton{Label: label})
 	}
@@ -254,6 +255,7 @@ func runAsksReply(args []string) error {
 	thread := fs.String("thread", "", "ask thread ID")
 	bodyFile := fs.String("body-file", "", "file with the reply body ('-' for stdin)")
 	mention := fs.Bool("mention", false, "mention the configured user")
+	embeds := fs.Bool("embeds", false, "keep link unfurls (embeds) on this send; default suppresses them")
 	dryRun := fs.Bool("dry-run", false, "print the Discord payload instead of sending it")
 	asJSON := fs.Bool("json", false, "print JSON")
 	if err := fs.Parse(args); err != nil {
@@ -288,7 +290,7 @@ func runAsksReply(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	id, err := client.ReplyAsk(ctx, *thread, body, *mention)
+	id, err := client.ReplyAsk(ctx, *thread, body, *mention, *embeds)
 	if err != nil {
 		return err
 	}
@@ -447,6 +449,7 @@ func runAsksEdit(args []string) error {
 	bodyFile := fs.String("body-file", "", "file with the replacement body ('-' for stdin); empty keeps the message")
 	disable := fs.Bool("disable-buttons", false, "grey every button out")
 	chosen := fs.String("chosen", "", "button label to keep highlighted (success style); the rest go grey")
+	embeds := fs.Bool("embeds", false, "keep link unfurls (embeds) on the edit; default keeps them suppressed")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -476,6 +479,7 @@ func runAsksEdit(args []string) error {
 			Body:           body,
 			DisableButtons: *disable,
 			Chosen:         *chosen,
+			Embeds:         *embeds,
 		}); err != nil {
 			return err
 		}
@@ -488,6 +492,7 @@ func runAsksEdit(args []string) error {
 		Body:           body,
 		DisableButtons: *disable,
 		Chosen:         *chosen,
+		Embeds:         *embeds,
 	}); err != nil {
 		return err
 	}

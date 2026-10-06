@@ -152,7 +152,10 @@ rides the real run's `-m`, and an unknown mode fails there — the run is
 refused quoting amp's own error, with no throwaway check thread first.
 
 - Host default: `~/.config/agentmux/amp.yaml`, with `mode: <amp mode key or
-  label>`. Docs and tests use placeholders such as `high` — never put a
+  label>`. Three optional display keys ride alongside it for buttons and
+  status: `label:` (full display name), `short:` (short button text), and
+  `emoji:` (a list of emoji names — first provider, last model). Docs and
+  tests use placeholders such as `high` — never put a
   real user's mode name in the repo.
 - Per-instance override: `AGENTMUX_AMP_MODE`, set by
   `agentmux new -amp-mode <mode>`. A task instance created by
@@ -163,8 +166,11 @@ refused quoting amp's own error, with no throwaway check thread first.
 
 `sessions status -json` on an amp instance reports the effective mode as
 `amp_mode: {"mode": ..., "source": "instance"|"host"}` (absent when none is
-configured anywhere); the human-readable status prints it as
-`amp_mode <mode> (from <source>)`.
+configured anywhere), plus the host's display keys when set (`label`,
+`short`, `emoji` — omitted when unconfigured, so without the keys nothing
+changes); the human-readable status prints it as
+`amp_mode <mode> (from <source>)`. `agentmux list -json` carries the same
+`amp_mode` shape on every amp instance.
 
 The long-lived `--no-tui` runners also carry `-m` (the unit's command
 line includes it): every runner process starts with the host/instance

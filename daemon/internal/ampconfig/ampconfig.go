@@ -1,10 +1,12 @@
 // Package ampconfig loads the host-local amp settings from
-// ~/.config/agentmux/amp.yaml. Only one setting exists: mode, the amp
+// ~/.config/agentmux/amp.yaml. The one required setting is mode, the amp
 // agent mode (`-m/--mode`) every amp thread started by `sessions run` uses.
-// The file is host-local on purpose: the mode names a model/provider
-// choice that belongs to the machine, not the repo. Docs and tests use
-// placeholders such as "high" — never put a real user's mode name in the
-// repo.
+// Three optional display keys ride alongside it for buttons and status:
+// label (full display name), short (short button text), and emoji (a list
+// of emoji names, first provider, last model). The file is host-local on
+// purpose: the mode names a model/provider choice that belongs to the
+// machine, not the repo. Docs and tests use placeholders such as "high" —
+// never put a real user's mode name in the repo.
 //
 // Every amp thread must carry -m (AMUX-36): callers resolve the mode with
 // Require, which refuses when no mode is configured anywhere instead of
@@ -34,6 +36,15 @@ type Config struct {
 	// "high" or a plugin mode's key or label. Empty means no file or no
 	// mode set: callers run amp without -m.
 	Mode string
+	// Label is the full display name for the mode, for buttons and
+	// status. Empty means show Mode as-is.
+	Label string
+	// Short is the short button text for the mode. Empty means no short
+	// text was configured.
+	Short string
+	// Emoji are the display emoji names for the mode (first provider,
+	// last model). Empty means no emoji were configured.
+	Emoji []string
 }
 
 // DefaultPath returns ~/.config/agentmux/amp.yaml.
@@ -59,7 +70,10 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("reading %s: %w", path, err)
 	}
 	var raw struct {
-		Mode string `yaml:"mode"`
+		Mode  string   `yaml:"mode"`
+		Label string   `yaml:"label"`
+		Short string   `yaml:"short"`
+		Emoji []string `yaml:"emoji"`
 	}
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return Config{}, fmt.Errorf("parsing %s: %w", path, err)
@@ -68,7 +82,32 @@ func Load(path string) (Config, error) {
 	if mode == "" {
 		return Config{}, fmt.Errorf("parsing %s: mode is empty", path)
 	}
-	return Config{Mode: mode}, nil
+	return Config{
+		Mode:  mode,
+		Label: strings.TrimSpace(raw.Label),
+		Short: strings.TrimSpace(raw.Short),
+		Emoji: cleanEmojiNames(raw.Emoji),
+	}, nil
+}
+
+// cleanEmojiNames trims and drops blank emoji names, so `emoji: ["a", ""]`
+// behaves like `emoji: ["a"]` and an all-blank list reads as unconfigured.
+func cleanEmojiNames(names []string) []string {
+	var out []string
+	for _, n := range names {
+		if n = strings.TrimSpace(n); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// DisplayOf resolves the display keys for an instance: the host config's
+// label/short/emoji. An instance override changes only the -m value —
+// display keys always come from the host file, and are empty when the
+// host sets none.
+func DisplayOf(host Config) (label, short string, emoji []string) {
+	return host.Label, host.Short, host.Emoji
 }
 
 // Resolve is the effective mode for an instance: the instance's

@@ -157,7 +157,7 @@ func TestEditAskChosenHighlightsOne(t *testing.T) {
 	rows := s.bodies[0]["components"].([]any)
 	row := rows[0].(map[string]any)["components"].([]any)
 	chosen, other := row[0].(map[string]any), row[1].(map[string]any)
-	if chosen["disabled"] != true || chosen["style"] != float64(3) || chosen["label"] != "✓ Ship it" {
+	if chosen["disabled"] != true || chosen["style"] != float64(3) || chosen["label"] != "Ship it ✓" {
 		t.Fatalf("chosen = %#v", chosen)
 	}
 	if other["disabled"] != true || other["style"] != float64(2) || other["label"] != "Not now" {

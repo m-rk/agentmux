@@ -143,3 +143,28 @@ func TestButtonStyleNames(t *testing.T) {
 		t.Error("accepted unknown style")
 	}
 }
+
+// TestPostAskButtonPostSuppressesEmbeds pins that a button post's starter
+// message carries the suppress-embeds flag (unfurls would bury the buttons)
+// and drops it with -embeds.
+func TestPostAskButtonPostSuppressesEmbeds(t *testing.T) {
+	b := &buttonStyleServer{}
+	s := b.server(t)
+	defer s.Close()
+	c := asksClientFor(s.URL)
+	if _, _, err := c.PostAsk(context.Background(), "T", "see https://ampcode.com/threads/T-1", nil,
+		AskOptions{Buttons: []AskButton{{Label: "Ship it"}}}); err != nil {
+		t.Fatal(err)
+	}
+	msg := b.botPosts[0]["message"].(map[string]any)
+	if msg["flags"] != float64(4) {
+		t.Fatalf("button post flags = %#v", msg["flags"])
+	}
+	if _, _, err := c.PostAsk(context.Background(), "T", "b", nil,
+		AskOptions{Buttons: []AskButton{{Label: "Ship it"}}, Embeds: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := b.botPosts[1]["message"].(map[string]any)["flags"]; ok {
+		t.Fatalf("-embeds button post kept flags")
+	}
+}

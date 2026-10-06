@@ -42,12 +42,36 @@ type AskButton struct {
 	Style string `json:"style,omitempty"`
 }
 
+// suppressEmbedsFlag is Discord's SUPPRESS_EMBEDS message flag: a message
+// carrying it shows no link unfurls. Asks bodies link amp threads and
+// dashboards, and those cards bury the buttons, so every ask send carries
+// it unless the caller opts back in with -embeds.
+const suppressEmbedsFlag = 4
+
 // AskOptions are the optional one-tap answer choices on a posted ask.
 type AskOptions struct {
 	Reactions []string    // emoji the bot adds, in order
 	Buttons   []AskButton // buttons, in order
+	// Embeds keeps link unfurls on this send. Default suppresses them.
+	Embeds bool
 }
 
+// applyEmbedFlag sets the suppress-embeds message flag on a send payload
+// unless the caller opted back in with Embeds.
+func (o AskOptions) applyEmbedFlag(payload map[string]any) {
+	if !o.Embeds {
+		payload["flags"] = suppressEmbedsFlag
+	}
+}
+
+// applyEditEmbedFlag sets the suppress-embeds message flag on an edit
+// payload unless the caller opted back in with Embeds, so an edit never
+// re-enables cards a post suppressed.
+func (o EditAskOptions) applyEditEmbedFlag(payload map[string]any) {
+	if !o.Embeds {
+		payload["flags"] = suppressEmbedsFlag
+	}
+}
 // ReactionSeedError means the ask was posted but adding the seed reactions
 // failed (typically the bot lacks Add Reactions).
 type ReactionSeedError struct{ Err error }

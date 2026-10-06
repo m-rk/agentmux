@@ -189,7 +189,7 @@ func TestTestEditAfterPost(t *testing.T) {
 	}
 	rows := p["components"].([]any)[0].(map[string]any)["components"].([]any)
 	chosen := rows[0].(map[string]any)
-	if chosen["style"] != float64(3) || chosen["label"] != "✓ Ship it" {
+	if chosen["style"] != float64(3) || chosen["label"] != "Ship it ✓" {
 		t.Fatalf("chosen = %#v", chosen)
 	}
 }

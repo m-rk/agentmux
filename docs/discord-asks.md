@@ -123,22 +123,24 @@ Discord only lets an app edit its own messages.)
 ## Commands
 
 ```sh
-agentmux asks post -title T -body-file F [-tag NAME ...] [-react 1️⃣,2️⃣,⏸️] [-button LABEL ...] [-buttons-json FILE] -json
-# {"thread_id":"…","message_id":"…"}
+agentmux asks post -title T -body-file F [-tag NAME ...] [-react 1️⃣,2️⃣,⏸️] [-button LABEL ...] [-buttons-json FILE] [-embeds] -json
+# {"thread_id":"…","message_id":"…"}  (link unfurls suppressed unless -embeds)
 
-agentmux asks post -thread ID [-title T] -body-file F [-tag NAME ...] -json
+agentmux asks post -thread ID [-title T] -body-file F [-tag NAME ...] [-embeds] -json
 # {"thread_id":"…","message_id":"…"}  (thread_id is the one passed in)
 
-agentmux asks reply -thread ID -body-file F [-mention]
+agentmux asks reply -thread ID -body-file F [-mention] [-embeds]
 
 agentmux asks read -thread ID [-after MESSAGE_ID] -json
 # [{"id","author_id","author_name","author_is_configured_user","text","timestamp","answers":[…]}, …] oldest first
 
 agentmux asks react -thread ID -message ID -emoji 🤖   # bot adds a reaction to a posted message
 
-agentmux asks edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL]
+agentmux asks edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL] [-embeds]
 # replace the body and/or settle the buttons: -disable-buttons greys them all
-# out, -chosen LABEL keeps that one highlighted (success style) like a click
+# out, -chosen LABEL keeps that one highlighted (success style) like a click.
+# Edits keep link unfurls suppressed (an edit never re-enables cards)
+# unless -embeds.
 
 agentmux asks serve   # long-running: records button clicks (buttons only)
 
@@ -231,8 +233,12 @@ agentmux asks prune [-thread ID] [-older-than DUR] [-dry-run] [-json]
   seeding.
 - `edit` changes a posted message in place: `-body-file F` (`-` for stdin)
   replaces the text, `-disable-buttons` greys every button out, and
-  `-chosen LABEL` keeps that one highlighted (success style, ✓ prefix) with
-  the rest grey — the same settled look a click gets. `-chosen` must match a
+  `-chosen LABEL` keeps that one highlighted (success style, trailing ✓)
+  with the rest grey — the same settled look a click gets. Re-settling is
+  idempotent: the click handler and `-chosen` may run in either order, and
+  `-chosen` matches the settled label too (the trailing ✓ is stripped when
+  matching), always leaving exactly one ✓ at the end, after the label, so
+  the button reads `[emoji label ✓]`. `-chosen` must match a
   button on the message or the edit fails, so a typo can't silently grey
   everything. Only the body is rewritten, never re-mentioned, so an edit
   pings nobody. Typical autopilot settle: `asks react -emoji 🤖` then
@@ -306,13 +312,14 @@ interaction that must be acked within 3 seconds, so something must hold a
 Gateway connection open: `agentmux asks serve`. It records the click in
 `~/.local/state/agentmux/asks/clicks.jsonl` (`read` reads the same file, so
 run `serve` and `read` as the same user) and acks by editing the message:
-every button is disabled and the chosen one turns green with a ✓, keeping
+every button is disabled and the chosen one turns green with a trailing ✓
+(`[emoji label ✓]`), keeping
 each button's emoji and style. A click
 from anyone else, a second click on the same ask, or any click on a
 test-thread button gets a private (ephemeral) refusal and records
 nothing: test buttons can never answer a real ask. The first click wins. `asks edit
 -disable-buttons` and `-chosen LABEL` settle buttons the same way: only
-`disabled`, `style` and the ✓ prefix change, so emoji survive and clicks
+`disabled`, `style` and the trailing ✓ change, so emoji survive and clicks
 still map by label.
 
 - **Permissions:** the bot needs **Create Posts** (new asks) and **Send

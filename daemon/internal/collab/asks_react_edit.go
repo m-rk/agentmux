@@ -41,13 +41,16 @@ func validateReactionEmoji(emoji string) error {
 // EditAskOptions change a posted ask message in place: Body replaces the
 // text (empty keeps it), and the button flags restyle the message's buttons
 // without touching their labels. DisableButtons greys every button out;
-// Chosen keeps that one highlighted (success style, ✓ prefix) and greys the
+// Chosen keeps that one highlighted (success style, trailing ✓) and greys the
 // rest — the same settled look a click gets from the gateway.
 // Message edits need the bot (Send Messages in Threads on the forum).
 type EditAskOptions struct {
 	Body           string // replacement body; empty keeps the message as-is
 	DisableButtons bool   // grey every button out
 	Chosen         string // button label to highlight; implies DisableButtons for the rest
+	// Embeds keeps link unfurls on the edit. Default keeps them suppressed,
+	// so an edit never re-enables cards a post suppressed.
+	Embeds bool
 }
 
 func (o EditAskOptions) validate() error {
@@ -96,6 +99,7 @@ func (c *Client) EditAsk(ctx context.Context, threadID, messageID string, opts E
 		}
 		payload["components"] = rows
 	}
+	opts.applyEditEmbedFlag(payload)
 	if err := c.botJSONBody(ctx, http.MethodPatch,
 		"/channels/"+url.PathEscape(threadID)+"/messages/"+url.PathEscape(messageID), payload, nil); err != nil {
 		return fmt.Errorf("editing Discord message %s (the bot needs Send Messages in Threads on the forum): %w", messageID, err)
@@ -121,6 +125,18 @@ func (c *Client) settleMessageButtons(ctx context.Context, threadID, messageID, 
 	return rows, nil
 }
 
+// matchesChosen reports whether the button's custom id names the chosen
+// label. The id carries the original label, while -chosen may pass the
+// settled label (with a trailing ✓) when re-settling after a click, so
+// both forms match.
+func matchesChosen(id, chosen string) bool {
+	label := strings.TrimPrefix(id, buttonIDPrefix)
+	if label == chosen {
+		return true
+	}
+	return label == settleBase(chosen)
+}
+
 // settleFetchedComponents disables the buttons of a message fetched from
 // Discord, highlighting chosen (\"\" disables all without a highlight).
 // Buttons carry their label in `ask:<label>` custom ids, so the highlight
@@ -144,11 +160,14 @@ func settleFetchedComponents(rows []map[string]any, chosen string) ([]map[string
 			}
 			seen++
 			btn["disabled"] = true
-			if chosen != "" && strings.TrimPrefix(id, buttonIDPrefix) == chosen {
+			// Match on the custom id (which carries the original label), but
+			// settle the visible label: -chosen may name a button the click
+			// handler already settled, so strip any existing ✓ first.
+			if chosen != "" && matchesChosen(id, chosen) {
 				matched = true
 				btn["style"] = styleSuccess
 				if label, ok := btn["label"].(string); ok {
-					btn["label"] = "✓ " + label
+					btn["label"] = settleLabel(label)
 				}
 			}
 		}

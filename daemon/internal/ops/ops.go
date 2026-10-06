@@ -75,6 +75,10 @@ type Session struct {
 	Project          string `json:"project,omitempty"` // see ProjectOf
 	LastActivityUnix int64  `json:"last_activity_unix,omitempty"`
 	StartedAtUnix    int64  `json:"started_at_unix,omitempty"`
+	// AmpMode is the effective amp mode for amp instances (absent for other
+	// agents and when no mode is configured anywhere). `agentmux list`
+	// copies it from Status so -json carries the same amp_mode shape.
+	AmpMode AmpModeInfo `json:"amp_mode,omitempty"`
 }
 
 // StatusLabel is the text form of a daemon status.
@@ -123,6 +127,9 @@ func (e Env) List(ctx context.Context) ([]Session, error) {
 	for _, inst := range instances {
 		s := SessionFrom(host, inst)
 		s.Project = ProjectOf(inst.Name, inst.Workdir, keys)
+		if inst.Agent == "amp" {
+			s.AmpMode = AmpModeOf(inst.Name)
+		}
 		out = append(out, s)
 	}
 	return out, nil

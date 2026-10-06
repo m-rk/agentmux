@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -602,5 +603,54 @@ func TestRunFlagModeOverridesUnconfiguredHost(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(fake.Argv, " "), "-m high") {
 		t.Fatalf("no -m high in %q", fake.Argv)
+	}
+}
+
+// TestAmpModeOfExposesDisplayKeys pins that AmpModeOf carries the host's
+// display keys (label/short/emoji) alongside mode/source, and stays empty
+// when the host sets none.
+func TestAmpModeOfExposesDisplayKeys(t *testing.T) {
+	env := newRunEnv(t)
+	if err := os.WriteFile(filepath.Join(env.home, ".config", "agentmux", "amp.yaml"),
+		[]byte("mode: high\nlabel: Full Display Name\nshort: hi\nemoji: [prov-a, mod-b]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := AmpModeOf("probe")
+	if m.Mode != "high" || m.Source != "host" {
+		t.Fatalf("mode/source = %+v", m)
+	}
+	if m.Label != "Full Display Name" || m.Short != "hi" || len(m.Emoji) != 2 || m.Emoji[0] != "prov-a" || m.Emoji[1] != "mod-b" {
+		t.Fatalf("display = %+v", m)
+	}
+	js, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"label":"Full Display Name"`, `"short":"hi"`, `"emoji":["prov-a","mod-b"]`} {
+		if !strings.Contains(string(js), want) {
+			t.Fatalf("amp_mode json %s misses %s", js, want)
+		}
+	}
+}
+
+// TestAmpModeOfWithoutDisplayKeys pins the unchanged shape: no display
+// keys in the host file means no display keys in amp_mode.
+func TestAmpModeOfWithoutDisplayKeys(t *testing.T) {
+	newRunEnv(t) // host mode "high", no display keys
+	m := AmpModeOf("probe")
+	if m.Mode != "high" || m.Source != "host" {
+		t.Fatalf("mode/source = %+v", m)
+	}
+	if m.Label != "" || m.Short != "" || len(m.Emoji) != 0 {
+		t.Fatalf("unexpected display = %+v", m)
+	}
+	js, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"label", "short", "emoji"} {
+		if strings.Contains(string(js), want) {
+			t.Fatalf("amp_mode json %s carries %s", js, want)
+		}
 	}
 }

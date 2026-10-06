@@ -23,19 +23,20 @@ import (
 // lives on — deliberately not pb.Instance itself, so the -json output shape
 // stays stable even if the proto gains internal-only fields later.
 type listRow struct {
-	Host             string `json:"host"`
-	Address          string `json:"address"` // <instance>@<host>; see internal/address
-	Name             string `json:"name"`
-	Agent            string `json:"agent"`
-	Provider         string `json:"provider"`
-	Model            string `json:"model"`
-	Status           string `json:"status"`
-	Workdir          string `json:"workdir"`
-	Project          string `json:"project"` // empty for tcp:// hosts, whose workdir isn't local
-	TmuxSession      string `json:"tmux_session"`
-	Pid              int64  `json:"pid"`
-	LastActivityUnix int64  `json:"last_activity_unix"`
-	StartedAtUnix    int64  `json:"started_at_unix"`
+	Host             string         `json:"host"`
+	Address          string         `json:"address"` // <instance>@<host>; see internal/address
+	Name             string         `json:"name"`
+	Agent            string         `json:"agent"`
+	Provider         string         `json:"provider"`
+	Model            string         `json:"model"`
+	Status           string         `json:"status"`
+	Workdir          string         `json:"workdir"`
+	Project          string         `json:"project"` // empty for tcp:// hosts, whose workdir isn't local
+	AmpMode          ops.AmpModeInfo `json:"amp_mode,omitempty"`
+	TmuxSession      string         `json:"tmux_session"`
+	Pid              int64          `json:"pid"`
+	LastActivityUnix int64          `json:"last_activity_unix"`
+	StartedAtUnix    int64          `json:"started_at_unix"`
 }
 
 // runListCmd is `agentmux list`: a headless, scriptable counterpart to the
@@ -131,7 +132,7 @@ func collectRows(hosts []hostsconfig.Host) (rows []listRow, errs []string) {
 			if local {
 				project = ops.ProjectOf(inst.Name, inst.Workdir, keys)
 			}
-			rows = append(rows, listRow{
+			row := listRow{
 				Host:             h.Name,
 				Address:          address.Address{Instance: inst.Name, Host: address.Canonical(h.Name)}.String(),
 				Name:             inst.Name,
@@ -145,7 +146,11 @@ func collectRows(hosts []hostsconfig.Host) (rows []listRow, errs []string) {
 				Pid:              inst.Pid,
 				LastActivityUnix: inst.LastActivityUnix,
 				StartedAtUnix:    inst.StartedAtUnix,
-			})
+			}
+			if local && inst.Agent == "amp" {
+				row.AmpMode = ops.AmpModeOf(inst.Name)
+			}
+			rows = append(rows, row)
 		}
 	}
 	return rows, errs
@@ -168,6 +173,7 @@ func gatewayRows(h hostsconfig.Host) ([]listRow, error) {
 			Host: h.Name, Address: s.Address, Name: s.Name, Agent: s.Agent,
 			Provider: s.Provider, Model: s.Model, Status: s.Status, Workdir: s.Workdir,
 			Project:          s.Project,
+			AmpMode:          s.AmpMode,
 			LastActivityUnix: s.LastActivityUnix, StartedAtUnix: s.StartedAtUnix,
 		})
 	}

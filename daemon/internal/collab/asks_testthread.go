@@ -106,6 +106,7 @@ func (c *Client) sendTestMessage(ctx context.Context, task, body string, opts As
 		"content":          content,
 		"allowed_mentions": map[string]any{"parse": []string{}},
 	}
+	AskOptions{Embeds: opts.Embeds}.applyEmbedFlag(payload)
 	if len(opts.Buttons) > 0 {
 		payload["components"] = c.buttonRowsWithGuild(ctx, guildID, opts.Buttons)
 	}
@@ -175,6 +176,7 @@ func (c *Client) EditTestMessage(ctx context.Context, messageID string, opts Edi
 		payload["components"] = rows
 	}
 	payload["allowed_mentions"] = map[string]any{"parse": []string{}}
+	opts.applyEditEmbedFlag(payload)
 	if opts.Body != "" {
 		content := strings.TrimSpace(scrubTestBody(opts.Body))
 		if content == "" {

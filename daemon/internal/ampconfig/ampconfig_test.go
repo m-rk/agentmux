@@ -49,3 +49,42 @@ func TestResolve(t *testing.T) {
 		t.Fatalf("unset: %q %q", m, s)
 	}
 }
+
+func TestLoadDisplayKeys(t *testing.T) {
+	cfg, err := Load(write(t, "mode: high\nlabel: Full Display Name\nshort: hi\nemoji: [prov-a, mod-b]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Mode != "high" || cfg.Label != "Full Display Name" || cfg.Short != "hi" {
+		t.Fatalf("display keys = %+v", cfg)
+	}
+	if len(cfg.Emoji) != 2 || cfg.Emoji[0] != "prov-a" || cfg.Emoji[1] != "mod-b" {
+		t.Fatalf("emoji = %+v", cfg.Emoji)
+	}
+	// Without the keys nothing changes: empty display, no emoji.
+	cfg, err = Load(write(t, "mode: high\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Label != "" || cfg.Short != "" || len(cfg.Emoji) != 0 {
+		t.Fatalf("bare mode carries display: %+v", cfg)
+	}
+	// Blank emoji names drop out; an all-blank list reads as unconfigured.
+	cfg, err = Load(write(t, "mode: high\nemoji: [\"\", \"  \"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Emoji) != 0 {
+		t.Fatalf("blank emoji kept: %+v", cfg.Emoji)
+	}
+}
+
+func TestDisplayOf(t *testing.T) {
+	label, short, emoji := DisplayOf(Config{Mode: "high", Label: "Full", Short: "f", Emoji: []string{"a", "b"}})
+	if label != "Full" || short != "f" || len(emoji) != 2 {
+		t.Fatalf("display = %q %q %q", label, short, emoji)
+	}
+	if l, s, e := DisplayOf(Config{Mode: "high"}); l != "" || s != "" || len(e) != 0 {
+		t.Fatalf("bare display = %q %q %q", l, s, e)
+	}
+}

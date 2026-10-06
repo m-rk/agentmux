@@ -291,7 +291,7 @@ func TestHandleInteractionRecordsAndDisablesButtons(t *testing.T) {
 	}
 	row := a.callbacks[0]["data"].(map[string]any)["components"].([]any)[0].(map[string]any)["components"].([]any)
 	chosen, other := row[0].(map[string]any), row[1].(map[string]any)
-	if chosen["disabled"] != true || other["disabled"] != true || chosen["style"] != float64(3) || chosen["label"] != "✓ Ship it" || other["style"] != float64(2) {
+	if chosen["disabled"] != true || other["disabled"] != true || chosen["style"] != float64(3) || chosen["label"] != "Ship it ✓" || other["style"] != float64(2) {
 		t.Fatalf("row = %#v", row)
 	}
 	// The click ack keeps the button's emoji; clicks still map by custom id.
