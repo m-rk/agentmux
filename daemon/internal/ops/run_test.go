@@ -243,7 +243,7 @@ func TestRunLabelsRideBothRuns(t *testing.T) {
 	if rerr != nil {
 		t.Fatalf("continue: %v", rerr)
 	}
-	if flat := strings.Join(fake.Argv, " "); !strings.Contains(flat, "threads continue "+id+" --stream-json -l agentmux-task --no-archive-after-execute") {
+	if flat := strings.Join(fake.Argv, " "); !strings.Contains(flat, "threads continue "+id+" --stream-json -m high -l agentmux-task --no-archive-after-execute") {
 		t.Fatalf("continue labels: %q", flat)
 	}
 	res, rerr := Env{}.Run(context.Background(), RunRequest{Address: localAddr(""), Text: "hi", Labels: []string{"agentmux-task"}, DryRun: true})
