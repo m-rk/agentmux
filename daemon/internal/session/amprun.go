@@ -559,6 +559,36 @@ func AmpRunStateOfFile(logPath string) AmpRunState {
 	return st
 }
 
+// AmpRunStalledAfter is how long a running amp run log may go without an
+// append before a send-originated continue treats it as stalled (see
+// ops.Run's InterruptStalled): long enough that a healthy turn's normal
+// inter-record gaps never trip it, short enough that a nudge rescues a
+// stuck worker within the quarter-hour rather than queuing behind it.
+const AmpRunStalledAfter = 10 * time.Minute
+
+// AmpRunLogStalled reports whether the stream log at logPath looks like a
+// stuck run: it exists, and neither it nor its ".done" sentinel has been
+// touched for at least AmpRunStalledAfter. A missing log (spawn still in
+// flight), an unreadable one, or any recent write means not stalled — a
+// send must never interrupt a turn that may still be making progress.
+// Only mtimes are read; the log's content is untouched.
+func AmpRunLogStalled(logPath string) bool {
+	info, err := os.Stat(logPath)
+	if err != nil {
+		return false
+	}
+	cutoff := time.Now().Add(-AmpRunStalledAfter)
+	if !info.ModTime().Before(cutoff) {
+		return false
+	}
+	if done, err := os.Stat(logPath + ".done"); err == nil {
+		if !done.ModTime().Before(cutoff) {
+			return false
+		}
+	}
+	return true
+}
+
 // ampClearRunSentinel drops a leftover ".done" launch-failure sentinel
 // before a new run appends to the log, so the fresh segment never
 // inherits an earlier segment's failure. Called by the launcher on every

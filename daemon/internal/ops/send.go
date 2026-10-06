@@ -276,6 +276,14 @@ ready:
 // exactly like a TUI send; the result's address and thread name the
 // resumed thread, confirmed once the run reports the worker running.
 //
+// A send is always a nudge, so the resume sets InterruptStalled: when the
+// thread's run is still working yet its stream log has gone quiet past
+// session.AmpRunStalledAfter, the stuck local run child is stopped before
+// the continue spawns, and the nudge starts a fresh turn instead of
+// queuing behind one that never ends under a queue-default amp setting.
+// A healthy running turn is never preempted — only a stalled one — and an
+// explicit `sessions run -thread` continue never interrupts at all.
+//
 // The resumed run appends to the thread's own stream log, which is how
 // status and read confirm the worker is running — nothing here pastes
 // into the runner's terminal, so a send can never start an amp thread.
@@ -288,7 +296,7 @@ func sendAmpResume(ctx context.Context, src transcript.Source, addr address.Addr
 	if terr != nil {
 		return terr
 	}
-	runRes, rerr := Env{}.Run(ctx, RunRequest{Address: address.Address{Instance: addr.Instance, Host: addr.Host, Thread: thread}.String(), Text: message})
+	runRes, rerr := Env{}.Run(ctx, RunRequest{Address: address.Address{Instance: addr.Instance, Host: addr.Host, Thread: thread}.String(), Text: message, InterruptStalled: true})
 	if rerr != nil {
 		return rerr
 	}

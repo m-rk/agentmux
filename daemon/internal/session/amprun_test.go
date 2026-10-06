@@ -72,6 +72,53 @@ func TestAmpRunArgs(t *testing.T) {
 	}
 }
 
+// TestAmpRunLogStalled gates the send-path preempt: a run log untouched
+// for AmpRunStalledAfter (or its .done sentinel likewise stale) reads as
+// stalled; a fresh log, a fresh sentinel, a missing log (spawn still in
+// flight), or a missing file's error never does — a send must never
+// interrupt a turn that may still be making progress.
+func TestAmpRunLogStalled(t *testing.T) {
+	old := time.Now().Add(-AmpRunStalledAfter - time.Minute)
+	mk := func(age time.Time, withDone string) string {
+		p := filepath.Join(t.TempDir(), "run.jsonl")
+		if err := os.WriteFile(p, []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, age, age); err != nil {
+			t.Fatal(err)
+		}
+		if withDone != "" {
+			dp := p + ".done"
+			if err := os.WriteFile(dp, []byte{}, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ts := age
+			if withDone == "fresh" {
+				ts = time.Now()
+			}
+			if err := os.Chtimes(dp, ts, ts); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return p
+	}
+	if !AmpRunLogStalled(mk(old, "")) {
+		t.Fatal("stale log without sentinel reads fresh")
+	}
+	if !AmpRunLogStalled(mk(old, "stale")) {
+		t.Fatal("stale log with stale sentinel reads fresh")
+	}
+	if AmpRunLogStalled(mk(time.Now(), "")) {
+		t.Fatal("fresh log reads stalled")
+	}
+	if AmpRunLogStalled(mk(old, "fresh")) {
+		t.Fatal("stale log with a fresh sentinel reads stalled")
+	}
+	if AmpRunLogStalled(filepath.Join(t.TempDir(), "missing.jsonl")) {
+		t.Fatal("missing log reads stalled")
+	}
+}
+
 // TestCleanAmpTitle trims, caps length, and rejects control bytes: the
 // title rides argv through a sh double-fork, so a newline could smuggle
 // a second command.

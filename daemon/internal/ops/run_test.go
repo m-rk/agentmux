@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/m-rk/agentmux/daemon/internal/address"
 	"github.com/m-rk/agentmux/daemon/internal/discovery"
@@ -448,6 +449,106 @@ func TestRunContinueRunningStopsNothing(t *testing.T) {
 	}
 	if fake.StopSeen {
 		t.Fatalf("stop ran with no pending question: %q", fake.Stopped)
+	}
+	if !fake.UnarchiveSeen || fake.Unarchived != id {
+		t.Fatalf("unarchive = %v %q", fake.Unarchived, fake.Unarchived)
+	}
+}
+
+// stalledRunLog writes a running-state stream log for id under the
+// probe instance's state dir and ages it past AmpRunStalledAfter, so a
+// send-originated continue sees a stuck turn: still working, long quiet.
+func stalledRunLog(t *testing.T, id string) {
+	t.Helper()
+	home := os.Getenv("HOME")
+	dir := filepath.Join(home, ".local", "state", "agentmux", "sessions", "probe")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, "amp-run-"+id+".jsonl")
+	log := `{"type":"system","subtype":"init","session_id":"` + id + `"}` + "\n" +
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"working"}]}}` + "\n"
+	if err := os.WriteFile(p, []byte(log), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-session.AmpRunStalledAfter - time.Minute)
+	if err := os.Chtimes(p, old, old); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSendResumedContinueStopsStalledRun is the AMUX-46 guard: a send to
+// an amp instance whose run is still working yet gone quiet past
+// AmpRunStalledAfter stops the stuck local run child before the continue
+// spawns — the nudge starts a fresh turn instead of queuing behind one
+// that never ends — then unarchives and spawns in that order.
+func TestSendResumedContinueStopsStalledRun(t *testing.T) {
+	newSendEnv(t)
+	id := "T-dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+	stalledRunLog(t, id)
+	restore, fake := session.AmpSwapForTest(id, nil)
+	defer restore()
+	res := Env{}.Send(context.Background(), sendReq(localAddr(id), "nudge"))
+	if !res.OK {
+		t.Fatalf("send: %+v", res)
+	}
+	if !fake.StopSeen || fake.Stopped != id {
+		t.Fatalf("stop = %v %q, want the stalled run stopped", fake.StopSeen, fake.Stopped)
+	}
+	if fake.StopWorkdir == "" {
+		t.Fatal("stop ran without the instance workdir scope")
+	}
+	if !fake.UnarchiveSeen || fake.Unarchived != id {
+		t.Fatalf("unarchive = %v %q", fake.UnarchiveSeen, fake.Unarchived)
+	}
+	if !(fake.StoppedAt == 0 && fake.UnarchivedAt == 0) {
+		t.Fatalf("stop/unarchive ran after spawn: stopped=%d unarchived=%d", fake.StoppedAt, fake.UnarchivedAt)
+	}
+}
+
+// TestSendResumedContinueSparesFreshRun is the other half: the same send
+// against a run whose log is fresh stops nothing — a healthy turn is
+// never preempted, the nudge queues behind it as usual.
+func TestSendResumedContinueSparesFreshRun(t *testing.T) {
+	c := newSendEnv(t)
+	_ = c
+	id := "T-eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+	home := os.Getenv("HOME")
+	dir := filepath.Join(home, ".local", "state", "agentmux", "sessions", "probe")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	log := `{"type":"system","subtype":"init","session_id":"` + id + `"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "amp-run-"+id+".jsonl"), []byte(log), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	restore, fake := session.AmpSwapForTest(id, nil)
+	defer restore()
+	res := Env{}.Send(context.Background(), sendReq(localAddr(id), "nudge"))
+	if !res.OK {
+		t.Fatalf("send: %+v", res)
+	}
+	if fake.StopSeen {
+		t.Fatalf("stop ran on a fresh run: %q", fake.Stopped)
+	}
+}
+
+// TestRunContinueStalledStopsNothingWithoutFlag covers the explicit
+// continue: the same stalled log with InterruptStalled unset stops
+// nothing — only a send may preempt a running turn, never a human's
+// `sessions run -thread`.
+func TestRunContinueStalledStopsNothingWithoutFlag(t *testing.T) {
+	newRunEnv(t)
+	id := "T-ffffffff-ffff-4fff-8fff-ffffffffffff"
+	stalledRunLog(t, id)
+	restore, fake := session.AmpSwapForTest(id, nil)
+	defer restore()
+	_, rerr := Env{}.Run(context.Background(), RunRequest{Address: localAddr(id), Text: "again"})
+	if rerr != nil {
+		t.Fatalf("run: %v", rerr)
+	}
+	if fake.StopSeen {
+		t.Fatalf("explicit continue stopped a running turn: %q", fake.Stopped)
 	}
 	if !fake.UnarchiveSeen || fake.Unarchived != id {
 		t.Fatalf("unarchive = %v %q", fake.UnarchiveSeen, fake.Unarchived)

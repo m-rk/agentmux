@@ -43,6 +43,20 @@ type RunRequest struct {
 	// instance, workdir, host config, mode shape, thread id and title —
 	// but starts no amp thread. The result carries DryRun and Plan.
 	DryRun bool
+	// InterruptStalled lets a send-originated continue preempt a stuck
+	// run: when the thread's stream log says the run is still working
+	// yet has gone quiet for AmpRunStalledAfter (see
+	// session.AmpRunLogStalled), the stuck local run child is stopped
+	// before the continue spawns, so the nudge starts a fresh turn
+	// instead of queuing behind one that will never end. A pending
+	// ask_user_choice question always stops first (nothing can answer
+	// it in -x mode); a fresh log never stops. Only sendAmpResume sets
+	// this — an explicit `sessions run -thread` continue never
+	// interrupts a running turn on its own. Named for what it does
+	// (interrupt), never "steer": amp has no per-message steer flag on
+	// `threads continue -x`, and this is an abort plus a new turn, not
+	// amp's cooperative steer-at-the-next-interruption-point.
+	InterruptStalled bool
 }
 
 // RunResult is the thread, plus its state when already known.
@@ -301,9 +315,16 @@ func (e Env) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		// refuses), and stops the stuck process behind a pending
 		// `ask_user_choice` question: in `-x` mode nothing can answer
 		// that dialog, so the run just waits, and the old process would
-		// otherwise keep holding the thread. Both are best-effort — the
-		// continue proceeds either way.
-		if st := session.AmpRunStateOf(logPath); st.State == "waiting" {
+		// otherwise keep holding the thread. A send-originated continue
+		// (InterruptStalled) additionally stops a run the log says is
+		// still working yet has gone quiet past AmpRunStalledAfter —
+		// the stuck-turn case whose nudge would otherwise queue behind
+		// a turn that never ends under a queue-default setting. An
+		// explicit `sessions run -thread` continue never takes that
+		// branch: only a send may preempt a running turn. Stopping is
+		// best-effort either way — the continue proceeds regardless.
+		st := session.AmpRunStateOf(logPath)
+		if st.State == "waiting" || (req.InterruptStalled && st.State == "running" && session.AmpRunLogStalled(logPath)) {
 			session.StopAmpRun(ctx, thread, workdir)
 		}
 		session.UnarchiveAmpThread(ctx, src.AmpEnvFile, thread)

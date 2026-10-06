@@ -97,6 +97,20 @@ The result names the resumed thread and `confirmed` means its run
 reports running. For amp workers, relays and nudges must use this path
 (or `sessions run` directly), never a terminal paste.
 
+A send preempts a *stalled* turn, and only a stalled one: when the
+thread's run is still working yet its stream log has gone quiet for ten
+minutes, the stuck local run child is stopped before the continue
+spawns, so the nudge starts a fresh turn instead of queuing behind one
+that never ends under a queue-default amp setting (AMUX-46). A healthy
+running turn is never preempted — the nudge queues behind it as usual —
+and an explicit `sessions run -thread` continue never interrupts a
+running turn on its own. There is no per-message steer flag on `amp
+threads continue -x` (and the `--stream-json-input` steer attribute does
+not fit the detached `-x` spawn shape), so the preempt is an abort plus
+a new turn, not amp's cooperative steer — the right tradeoff for a stuck
+worker, the wrong one for a healthy turn, which is why the staleness
+gate decides.
+
 ## Waiting on a question
 
 An amp agent can call amp's built-in `ask_user_choice` tool to ask a
