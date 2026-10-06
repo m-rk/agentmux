@@ -249,7 +249,9 @@ func TestRunTaskChildRoutesPostIntoTestThread(t *testing.T) {
 	}
 
 	addr := "task-9@" + address.LocalHostName()
-	res, rerr := Env{}.Run(context.Background(), RunRequest{Address: addr, Text: "do the thing"})
+	// AMUX-36: every amp run needs a host mode; pass a fake one the way
+	// other run tests do, so the run reaches the fake amp.
+	res, rerr := Env{}.Run(context.Background(), RunRequest{Address: addr, Text: "do the thing", Mode: "test-mode"})
 	if rerr != nil {
 		t.Fatalf("run: %v", rerr)
 	}
