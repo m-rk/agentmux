@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeLog(t *testing.T, lines ...string) string {
@@ -239,11 +240,105 @@ func TestAmpRunStateOf(t *testing.T) {
 	}
 }
 
-// TestAmpRunStateOfWaitingFailedRun covers a failed run that ends at a
-// pending question: the error_during_execution result (e.g. the operator
-// killing the stuck process with SIGINT/SIGTERM) reports failed with the
-// error, not waiting — the question is answered-by-hand.
-func TestAmpRunStateOfWaitingFailedRun(t *testing.T) {
+// TestAmpRunStateOfResume covers a resumed run: an error result, then a
+// fresh system init (the continue appending to the same log), then more
+// work — the state is running again, not the first segment's failure.
+// A later success ends the resumed segment as done; a later error fails
+// it with the latest reason, not the first.
+func TestAmpRunStateOfResume(t *testing.T) {
+	init := `{"type":"system","subtype":"init","session_id":"T-resume"}`
+	firstErr, _ := json.Marshal(map[string]any{"type": "result", "subtype": "error_during_execution", "is_error": true, "error": "stream ended unexpectedly"})
+	work := `{"type":"assistant","message":{"role":"assistant"}}`
+	ok := `{"type":"result","subtype":"success","is_error":false,"result":"did it"}`
+	secondErr, _ := json.Marshal(map[string]any{"type": "result", "subtype": "error", "is_error": true, "result": "second boom"})
+	mk := func(lines ...string) string {
+		p := filepath.Join(t.TempDir(), "run.jsonl")
+		if err := os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	if st := AmpRunStateOf(mk(init, string(firstErr), init, work)); st.State != "running" || st.Reason != "" {
+		t.Fatalf("resumed running: %+v", st)
+	}
+	if st := AmpRunStateOf(mk(init, string(firstErr), init, ok)); st.State != "done" {
+		t.Fatalf("resumed done: %+v", st)
+	}
+	st := AmpRunStateOf(mk(init, string(firstErr), init, string(secondErr)))
+	if st.State != "failed" || !strings.Contains(st.Reason, "second boom") || strings.Contains(st.Reason, "stream ended") {
+		t.Fatalf("resumed failed: %+v", st)
+	}
+}
+
+// TestAmpRunStateOfResumeWaiting covers a question asked after a resume:
+// the earlier segment's outcome doesn't decide the state, and the
+// pending question reports waiting.
+func TestAmpRunStateOfResumeWaiting(t *testing.T) {
+	init := `{"type":"system","subtype":"init","session_id":"T-resume"}`
+	firstErr, _ := json.Marshal(map[string]any{"type": "result", "subtype": "error_during_execution", "is_error": true, "error": "stream ended unexpectedly"})
+	ask := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"TU-7","name":"ask_user_choice","input":{"question":"Proceed?","options":["Yes","No"]}}]}}`
+	mk := func(lines ...string) string {
+		p := filepath.Join(t.TempDir(), "run.jsonl")
+		if err := os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	st := AmpRunStateOf(mk(init, string(firstErr), init, ask))
+	if st.State != "waiting" || st.WaitingOn == nil || st.WaitingOn.ToolUseID != "TU-7" {
+		t.Fatalf("resumed waiting: %+v", st)
+	}
+}
+
+// TestAmpRunStateOfStaleDone covers a .done sentinel left over from an
+// earlier segment: once the run has resumed and appended (the log is
+// newer than the marker), the marker is ignored. The launcher also
+// removes the marker on every start, so a new run never inherits it.
+func TestAmpRunStateOfStaleDone(t *testing.T) {
+	init := `{"type":"system","subtype":"init","session_id":"T-resume"}`
+	mk := func(lines ...string) string {
+		p := filepath.Join(t.TempDir(), "run.jsonl")
+		if err := os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	p := mk(init)
+	if _, err := os.Create(p + ".done"); err != nil {
+		t.Fatal(err)
+	}
+	// Marker is fresh relative to an untouched log: still a failure.
+	if st := AmpRunStateOf(p); st.State != "failed" {
+		t.Fatalf("fresh sentinel: %+v", st)
+	}
+	// The run resumes and appends: the marker predates the log and no
+	// longer decides the state. Explicit mtimes keep the ordering exact
+	// regardless of filesystem timestamp granularity.
+	now := time.Now()
+	if err := os.Chtimes(p+".done", now.Add(-time.Hour), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(p, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if st := AmpRunStateOf(p); st.State != "running" {
+		t.Fatalf("stale sentinel: %+v", st)
+	}
+	// The launcher clears the marker on start.
+	if _, err := os.Create(p + ".done"); err != nil {
+		t.Fatal(err)
+	}
+	ampClearRunSentinel(p)
+	if _, err := os.Stat(p + ".done"); !os.IsNotExist(err) {
+		t.Fatalf("sentinel not cleared")
+	}
+	}
+
+	// TestAmpRunStateOfWaitingFailedRun covers a failed run that ends at a
+	// pending question: the error_during_execution result (e.g. the operator
+	// killing the stuck process with SIGINT/SIGTERM) reports failed with the
+	// error, not waiting — the question is answered-by-hand.
+	func TestAmpRunStateOfWaitingFailedRun(t *testing.T) {
 	init := `{"type":"system","subtype":"init","session_id":"T-s"}`
 	ask := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"TU-1","name":"ask_user_choice","input":{"question":"Tabs or spaces?","options":["Tabs","Spaces"]}}]}}`
 	cancelled, _ := json.Marshal(map[string]any{"type": "result", "subtype": "error_during_execution", "is_error": true, "error": "User cancelled (SIGINT/SIGTERM)"})

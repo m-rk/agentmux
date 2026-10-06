@@ -226,6 +226,11 @@ func startAmpProcessDetached(ctx context.Context, instance, envFile string, argv
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 		return nil, fmt.Errorf("creating amp run state dir: %w", err)
 	}
+	// A new run never inherits an old failure: drop a leftover ".done"
+	// sentinel from an earlier segment before appending, so state readers
+	// see only this run's outcome. A stale marker that somehow survives
+	// (e.g. an older launcher wrote it) is also ignored by ampDoneStale.
+	ampClearRunSentinel(logPath)
 	// Double fork through sh: the middle child starts the agent in the
 	// background with the log as its stdout/stderr and exits at once, so
 	// the agent is reparented to init and survives this process. argv
@@ -363,14 +368,18 @@ type AmpRunState struct {
 }
 
 // AmpRunStateOf reads the stream log for a run thread. A result record
-// ends the run: subtype "success" means done, anything else (or a .done
-// sentinel from a launch failure) means failed — including
+// ends the current segment: subtype "success" means done, anything else
+// (or a .done sentinel from a launch failure) means failed — including
 // "error_during_execution" with an "error" field (not "result"), which is
 // how a crashed run ends while amp still shows the thread as
-// running_tools. No result record means the agent is still working —
-// including a log that doesn't exist yet, since the first run may still be
-// spawning — except when the latest assistant record is a pending
-// `ask_user_choice` tool_use, which means waiting with the question.
+// running_tools. Each `system init` record starts a new segment (the run
+// resumed: `amp threads continue` appends a fresh init to the same log),
+// resetting the state to running — only a result after the last init
+// decides done or failed. No result record in the current segment means
+// the agent is still working — including a log that doesn't exist yet,
+// since the first run may still be spawning — except when the latest
+// assistant record is a pending `ask_user_choice` tool_use, which means
+// waiting with the question.
 //
 // Exported as AmpRunStateOfFile so the transcript package's run-log read
 // path shares it; session must not import transcript (transcript reads
@@ -402,6 +411,10 @@ func AmpRunStateOfFile(logPath string) AmpRunState {
 		var init ampStreamInit
 		if json.Unmarshal(line, &init) == nil && init.Type == "system" && init.Subtype == "init" && init.SessionID != "" {
 			lastID = init.SessionID
+			// A fresh init starts a new segment: the run resumed and is
+			// working again, so an earlier segment's result no longer
+			// decides the state — nor does its pending question.
+			st.State, st.Reason, waiting = "running", "", nil
 			continue
 		}
 		var res struct {
@@ -442,13 +455,39 @@ func AmpRunStateOfFile(logPath string) AmpRunState {
 	}
 	st.ThreadID = lastID
 	if st.State == "running" {
-		if _, serr := os.Stat(logPath + ".done"); serr == nil {
+		if _, serr := os.Stat(logPath + ".done"); serr == nil && !ampDoneStale(logPath) {
 			st.State, st.Reason = "failed", ampLogTail(logPath)
 		} else if waiting != nil {
 			st.State, st.WaitingOn = "waiting", waiting
 		}
 	}
 	return st
+}
+
+// ampClearRunSentinel drops a leftover ".done" launch-failure sentinel
+// before a new run appends to the log, so the fresh segment never
+// inherits an earlier segment's failure. Called by the launcher on every
+// start (fresh or continued: a continue appends a new init to the same
+// log, which is exactly the resume case the sentinel must not shadow).
+func ampClearRunSentinel(logPath string) {
+	_ = os.Remove(logPath + ".done")
+}
+
+// ampDoneStale reports whether the ".done" launch-failure sentinel at
+// logPath+".done" predates later log writes: the launcher removes the
+// marker on every start, so a marker older than the log itself is left
+// over from an earlier segment — a run that has since resumed and
+// appended — and must not fail the new segment.
+func ampDoneStale(logPath string) bool {
+	doneInfo, err := os.Stat(logPath + ".done")
+	if err != nil {
+		return false
+	}
+	logInfo, err := os.Stat(logPath)
+	if err != nil {
+		return false
+	}
+	return doneInfo.ModTime().Before(logInfo.ModTime())
 }
 
 // isAmpToolResult reports whether a stream-log line is a user record
