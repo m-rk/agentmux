@@ -21,20 +21,26 @@ import (
 )
 
 type fakeBackend struct {
-	mu        sync.Mutex
-	sessions  []ops.Session
-	err       error
-	sent      []ops.SendRequest
-	sendRes   *ops.SendResult
-	created   []ops.CreateRequest
-	createErr error
-	ran       []ops.RunRequest
-	runRes    *ops.RunResult
-	runErr    error
-	retired   []ops.RetireRequest
-	retireErr error
-	gced      []ops.GCRequest
-	gcErr     error
+	mu          sync.Mutex
+	sessions    []ops.Session
+	err         error
+	sent        []ops.SendRequest
+	sendRes     *ops.SendResult
+	created     []ops.CreateRequest
+	createErr   error
+	ran         []ops.RunRequest
+	runRes      *ops.RunResult
+	runErr      error
+	retired     []ops.RetireRequest
+	retireErr   error
+	gced        []ops.GCRequest
+	gcErr       error
+	shipped     map[string]string
+	shipErr     error
+	versions    map[string]string
+	versionsErr error
+	logLines    []string
+	logErr      error
 }
 
 func (f *fakeBackend) Host() string { return "hostA" }
@@ -116,6 +122,41 @@ func (f *fakeBackend) GC(_ context.Context, req ops.GCRequest) (ops.GCResult, er
 		return ops.GCResult{}, f.gcErr
 	}
 	return ops.GCResult{}, nil
+}
+
+func (f *fakeBackend) ShipPublish(_ context.Context, commits map[string]string) (map[string]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.shipped == nil {
+		f.shipped = map[string]string{}
+	}
+	for repo, sha := range commits {
+		f.shipped[repo] = sha
+	}
+	out := map[string]string{}
+	for repo, sha := range f.shipped {
+		out[repo] = sha
+	}
+	return out, f.shipErr
+}
+
+func (f *fakeBackend) Versions(context.Context) (map[string]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[string]string{}
+	for repo, sha := range f.versions {
+		out[repo] = sha
+	}
+	return out, f.versionsErr
+}
+
+func (f *fakeBackend) SelfUpdateLog(_ context.Context, lines int) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if lines <= 0 || lines > len(f.logLines) {
+		lines = len(f.logLines)
+	}
+	return append([]string{}, f.logLines[len(f.logLines)-lines:]...), f.logErr
 }
 
 type harness struct {

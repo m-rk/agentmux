@@ -36,7 +36,7 @@ const (
 )
 
 // Ops lists every operation a capability may name.
-var Ops = []string{OpList, OpStatus, OpThreads, OpRead, OpSend, OpCreate, OpRun, OpRetire, OpGC, OpEvents}
+var Ops = []string{OpList, OpStatus, OpThreads, OpRead, OpSend, OpCreate, OpRun, OpRetire, OpGC, OpEvents, OpShipPublish, OpVersions, OpSelfUpdateLog}
 
 // Path is the URL path for op, e.g. /v1/send.
 func Path(op string) string { return "/v1/" + op }

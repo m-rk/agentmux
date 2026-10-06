@@ -21,6 +21,12 @@ type Backend interface {
 	Run(ctx context.Context, req ops.RunRequest) (ops.RunResult, error)
 	Retire(ctx context.Context, req ops.RetireRequest) (ops.RetireResult, error)
 	GC(ctx context.Context, req ops.GCRequest) (ops.GCResult, error)
+	// ShipPublish merges commits into the ship gate (AMUX-29) and
+	// returns the gate. Versions reports the installed commit per
+	// repo. SelfUpdateLog tails the updater's event log.
+	ShipPublish(ctx context.Context, commits map[string]string) (map[string]string, error)
+	Versions(ctx context.Context) (map[string]string, error)
+	SelfUpdateLog(ctx context.Context, lines int) ([]string, error)
 }
 
 // LocalBackend serves this host's sessions through the local daemon.
@@ -60,4 +66,29 @@ func (b LocalBackend) Retire(ctx context.Context, req ops.RetireRequest) (ops.Re
 
 func (b LocalBackend) GC(ctx context.Context, req ops.GCRequest) (ops.GCResult, error) {
 	return b.Env.GC(ctx, req)
+}
+
+// ShipPublish merges commits into this host's ship gate file, so the
+// hub's publish lands where the pull updater reads it.
+func (LocalBackend) ShipPublish(ctx context.Context, commits map[string]string) (map[string]string, error) {
+	return ShipPublish(ctx, selfUpdateHome(), commits)
+}
+
+// Versions reports the installed commit per repo from this host's
+// versions file.
+func (LocalBackend) Versions(ctx context.Context) (map[string]string, error) {
+	return InstalledVersions(ctx, selfUpdateHome())
+}
+
+// SelfUpdateLog tails this host's updater event log. lines <= 0 means
+// the default tail; the reply is capped so a runaway log can't flood
+// the gateway.
+func (LocalBackend) SelfUpdateLog(_ context.Context, lines int) ([]string, error) {
+	if lines <= 0 {
+		lines = 50
+	}
+	if lines > 500 {
+		lines = 500
+	}
+	return TailLog(selfUpdateHome(), lines)
 }

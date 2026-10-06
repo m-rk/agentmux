@@ -40,6 +40,12 @@ const sessionsUsage = `usage:
   agentmux sessions retire [-json] [-dry-run] [-hosts PATH] <instance>@<host>
   agentmux amp sweep [-json] [-dry-run] [-run-user USER]
                                archive junk amp threads that belong to no task instance
+  agentmux sessions ship [-json] [-hosts PATH] <host> [repo@sha ...]
+                               publish the shipped commit per repo to that host's gate (the pull updater installs up to it)
+  agentmux sessions versions [-hosts PATH] [-lines N] <host>
+                               show that host's installed commits, plus the tail of its updater log
+  agentmux sessions selfupdate-log [-hosts PATH] [-lines N] <host>
+                               tail that host's pull-updater event log (the deployed lines the deploy watch greps)
   agentmux gc [-json] [-dry-run] [-hosts PATH] [-host NAME]`
 
 // runSessionsCmd is `agentmux sessions`: addressing and transcript access for
@@ -67,6 +73,12 @@ func runSessionsCmd(args []string) {
 		runSessionsRun(args[1:])
 	case "retire":
 		runSessionsRetire(args[1:])
+	case "ship":
+		runSessionsShip(args[1:])
+	case "versions":
+		runSessionsVersions(args[1:])
+	case "selfupdate-log":
+		runSessionsSelfUpdateLog(args[1:])
 	default:
 		fmt.Fprintln(os.Stderr, sessionsUsage)
 		os.Exit(2)

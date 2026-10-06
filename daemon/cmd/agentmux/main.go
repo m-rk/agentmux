@@ -20,6 +20,10 @@ func main() {
 	case "daemon":
 		runDaemonCmd(args[1:])
 	case "deploy":
+		if len(args) > 1 && (args[1] == "begin" || args[1] == "end") {
+			runDeployLock(args[1:])
+			return
+		}
 		runDeployCmd(args[1:])
 	case "new":
 		runWizard(args[1:])
@@ -59,6 +63,8 @@ func main() {
 		runPaseoCmd(args[1:])
 	case "gateway":
 		runGatewayCmd(args[1:])
+	case "self-update":
+		runSelfUpdateCmd(args[1:])
 	case "-h", "--help", "help":
 		printUsage()
 	default:
@@ -132,5 +138,8 @@ Usage:
   agentmux paseo update install [-at 04:00]       (Linux root / macOS user) schedule that daily
   agentmux gateway run -capability NAME [-listen ADDR]   serve this host's sessions to other tailnet hosts (see docs/gateway.md)
   agentmux gateway install -capability NAME        (Linux root / macOS user) keep that running as a service
+  agentmux self-update install|run|status          pull-based updater for the Mac: install up to the shipped commit (see docs/self-update.md)
+  agentmux sessions ship|versions|selfupdate-log   publish the shipped commit, or read what a host runs (see docs/self-update.md)
+  agentmux deploy begin|end                        hold/release the lock the pull updater skips on
   agentmux help                show this message`)
 }

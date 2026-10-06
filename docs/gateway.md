@@ -70,7 +70,7 @@ Each entry of the array is a grant object:
 
 | field      | meaning |
 |------------|---------|
-| `ops`      | any of `list`, `status`, `threads`, `read`, `send`, `create`, `run`, `retire`, `gc`, `events` |
+| `ops`      | any of `list`, `status`, `threads`, `read`, `send`, `create`, `run`, `retire`, `gc`, `events`, `ship-publish`, `versions`, `selfupdate-log` |
 | `sessions` | `path.Match` patterns over `<instance>@<host>`; `*` does not match `/` |
 
 Entries add up: a call is allowed if any one entry allows it. There is no
@@ -305,6 +305,42 @@ their own daily gc timer): junk threads belong to no task instance,
 so no retired record could ever reach them — the sweep archives them,
 records each under `~/.local/state/agentmux/swept/`, and this same gc
 deletes them after the same retention.
+
+## Self-update state (pull updater)
+
+Like `gc`, these name no session — the grant only needs the op. They
+are the hub side of the Mac's pull-based self-update (see
+[self-update](self-update.md)): the hub publishes the shipped commit
+per repo, and reads back what the Mac runs plus its updater log.
+
+```json
+"example.com/cap/agentmux-gateway": [
+  {"ops": ["ship-publish"], "sessions": ["*@*"]},
+  {"ops": ["versions", "selfupdate-log"], "sessions": ["*@*"]}
+]
+```
+
+```json
+POST /v1/ship-publish
+{"commits": {"agentmux": "2fe1a235a6f68f54bafcdcf2479e85c97b47a32e"}}
+
+POST /v1/versions
+{}
+
+POST /v1/selfupdate-log
+{"lines": 50}
+```
+
+`ship-publish` merges into the gate and echoes it; unknown repos and
+malformed shas are dropped. `versions` answers the installed commit
+per repo plus the host. `selfupdate-log` tails the updater's event
+log, including the `deployed <repo>@<sha>` line. From a shell:
+
+```sh
+agentmux sessions ship my-mac agentmux@2fe1a235a6f68f54bafcdcf2479e85c97b47a32e
+agentmux sessions versions my-mac
+agentmux sessions selfupdate-log my-mac
+```
 
 ## Running it
 
