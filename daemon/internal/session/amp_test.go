@@ -576,3 +576,67 @@ func TestRunAmpUpdate(t *testing.T) {
 		})
 	}
 }
+
+// TestTaskAmpStubArgsStampsTaskInstancesOnly pins the PATH stub wiring:
+// a task-* instance gets the -e PATH pair ahead of the command, every
+// other instance gets nothing, and the stub script itself refuses.
+func TestTaskAmpStubArgsStampsTaskInstancesOnly(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	got := taskAmpStubArgs("task-9")
+	if len(got) != 2 || got[0] != "-e" || !strings.HasPrefix(got[1], "PATH=") || !strings.HasSuffix(got[1], ":$PATH") {
+		t.Fatalf("taskAmpStubArgs(task-9) = %q, want the -e PATH pair", got)
+	}
+	if got := taskAmpStubArgs("site-amp"); len(got) != 0 {
+		t.Fatalf("taskAmpStubArgs(site-amp) = %q, want nothing", got)
+	}
+	// The stub exists, is executable, and refuses.
+	stub := filepath.Join(home, ".agentmux", "stubs", "amp")
+	out, err := exec.Command("sh", stub, "threads", "list").CombinedOutput()
+	if err == nil {
+		t.Fatal("stub amp succeeded")
+	}
+	if !strings.Contains(string(out), taskAmpStubRefusal) {
+		t.Fatalf("stub output = %q, want the refusal", out)
+	}
+}
+
+// TestRunAmpStampsStubPathOnTaskLaunch pins the full tmux argv for a
+// task instance: the -e PATH pair lands before the runner command, so a
+// bare `amp` in the worker's own pane hits the stub.
+func TestRunAmpStampsStubPathOnTaskLaunch(t *testing.T) {
+	dir := withEnvDir(t)
+	withTestHostMode(t, "high")
+	workdir := t.TempDir()
+	registryFile := "" +
+		"AGENTMUX_INSTANCE_NAME=task-9\n" +
+		"AGENTMUX_AGENT=amp\n" +
+		"AGENTMUX_AMP_RUNNER_ID=task-9\n" +
+		"AGENTMUX_TMUX_SESSION_NAME=task-9\n" +
+		"AGENTMUX_WORKDIR=" + workdir + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "task-9.env"), []byte(registryFile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	calls := fakeTmux(t)
+	if err := RunAmp("task-9"); err != nil {
+		t.Fatalf("RunAmp: %v", err)
+	}
+	got := newSessionArgs(t, *calls)
+	flat := strings.Join(got, " ")
+	if !strings.Contains(flat, "-e PATH=") {
+		t.Fatalf("task launch carries no stub PATH: %v", got)
+	}
+	// The -e pair precedes the runner command.
+	ei, ai := -1, -1
+	for i, a := range got {
+		if a == "-e" {
+			ei = i
+		}
+		if a == "amp" {
+			ai = i
+		}
+	}
+	if ei < 0 || ai < 0 || ei > ai {
+		t.Fatalf("stub -e must precede amp: %v", got)
+	}
+}

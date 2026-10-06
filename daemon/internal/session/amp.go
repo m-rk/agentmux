@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/m-rk/agentmux/daemon/internal/ampconfig"
+	"github.com/m-rk/agentmux/daemon/internal/liveguard"
 	"github.com/m-rk/agentmux/daemon/internal/provision"
 )
 
@@ -181,6 +182,9 @@ func RunAmp(name string) error {
 	// The default launch is amp itself. An instance with an op env-file
 	// (see openv.go) instead re-enters agentmux, which starts amp through
 	// `op run` so its secrets never touch tmux, argv, or the registry.
+	// Task instances get the stub first on PATH (see taskAmpStubArgs):
+	// a bare `amp` typed in the worker's own pane refuses — real runs
+	// are started by agentmux, not by the worker.
 	agentCmd := append([]string{"amp"}, launchArgs...)
 	if opEnvFileExists(name) {
 		if err := opPreflight(); err != nil {
@@ -192,9 +196,72 @@ func RunAmp(name string) error {
 		}
 		agentCmd = []string{self, "session", "exec", "--instance", name}
 	}
-	tmuxArgs := append([]string{"-L", socket, "new-session", "-d", "-s", session, "-c", workdir}, agentCmd...)
+	tmuxArgs := append([]string{"-L", socket, "new-session", "-d", "-s", session, "-c", workdir}, taskAmpStubArgs(name)...)
+	tmuxArgs = append(tmuxArgs, agentCmd...)
 	if out, err := withPath("tmux", tmuxArgs...).CombinedOutput(); err != nil {
 		return fmt.Errorf("starting tmux session %s: %w: %s", session, err, out)
+	}
+	return nil
+}
+
+// taskAmpStubDir is the directory holding the task-session amp stub, one
+// per run user under their own home: ~/.agentmux/stubs. It is created on
+// demand by ensureTaskAmpStub, never shipped in the repo.
+func taskAmpStubDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".agentmux", "stubs")
+}
+
+// taskAmpStubRefusal is what the stub prints: why a direct amp call is
+// refused and what to do instead. Kept in one place so the stub script
+// and the tests quote the same text.
+const taskAmpStubRefusal = "agentmux starts amp for you; test with fakes or -dry-run"
+
+// taskAmpStubArgs returns the tmux new-session -e pair putting the stub
+// first on PATH for task-* instances, or nothing for any other instance
+// (non-task workers keep the real amp). The -e pair rides new-session
+// the same way taskSessionEnvArgs does for claude-code: before the
+// command, applying to that session's initial pane. The runner itself is
+// unaffected — tmux resolves `amp` before the pane's shell ever sees the
+// -e PATH — while a bare `amp` typed in the worker's own pane hits the
+// stub, which refuses (AMUX-36), instead of starting a thread on amp's
+// default model.
+func taskAmpStubArgs(name string) []string {
+	if !strings.HasPrefix(name, liveguard.TaskPrefix) {
+		return nil
+	}
+	dir := taskAmpStubDir()
+	if dir == "" {
+		return nil
+	}
+	if err := ensureTaskAmpStub(dir); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: task amp stub: %v\n", name, err)
+		return nil
+	}
+	return []string{"-e", "PATH=" + dir + ":$PATH"}
+}
+
+// ensureTaskAmpStub writes the stub script into dir (once — an existing
+// file is left alone so a hand-fixed stub survives). The stub refuses
+// every invocation with taskAmpStubRefusal on stderr, exit 1: real runs
+// go through `sessions run`, which spawns its own amp child directly
+// and never consults this PATH.
+func ensureTaskAmpStub(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, "amp")
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	script := "#!/bin/sh\n" +
+		"echo \"amp: " + taskAmpStubRefusal + "\" >&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		return err
 	}
 	return nil
 }
