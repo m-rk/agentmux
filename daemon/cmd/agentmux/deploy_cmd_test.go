@@ -2,9 +2,12 @@ package main
 
 import (
 	"os"
+	"os/user"
 	"path"
+	"path/filepath"
 	"testing"
 
+	"github.com/m-rk/agentmux/daemon/internal/discovery"
 	"github.com/m-rk/agentmux/daemon/internal/hostsconfig"
 	"github.com/m-rk/agentmux/daemon/internal/ops"
 	"github.com/m-rk/agentmux/daemon/internal/safesend"
@@ -133,6 +136,59 @@ func TestSmokeRunSkippable(t *testing.T) {
 		if smokeRunSkippable(ops.Refuse(reason, "nope")) {
 			t.Errorf("reason %q: want failing, not skippable", reason)
 		}
+	}
+}
+
+// TestDeployAmpConfigPathReadsSudoUser is the AMUX-48 regression test:
+// under sudo, the smoke test's amp mode must come from the sudo user's
+// config, not root's. A run-user home carrying amp.yaml resolves to
+// that file even when the process itself runs as root.
+func TestDeployAmpConfigPathReadsSudoUser(t *testing.T) {
+	me, err := user.Current()
+	if err != nil {
+		t.Skipf("no current user: %v", err)
+	}
+	t.Setenv("SUDO_USER", me.Username)
+	if got := deployRunUser(); got != me.Username {
+		t.Fatalf("deployRunUser = %q, want %q", got, me.Username)
+	}
+	u, err := user.Lookup(me.Username)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(u.HomeDir, ".config", "agentmux", "amp.yaml")
+	if got := deployAmpConfigPath(); got != want {
+		t.Errorf("deployAmpConfigPath = %q, want %q", got, want)
+	}
+	if got := deployAmpConfigPath(); got == filepath.Join(string(filepath.Separator)+"root", ".config", "agentmux", "amp.yaml") {
+		t.Errorf("deployAmpConfigPath points at root's config under sudo")
+	}
+}
+
+// TestDeployLocalSmokeModePrefersInstanceOverride covers the mode order
+// for the local smoke run: the template's AGENTMUX_AMP_MODE wins over
+// the run user's amp.yaml, and an empty-everywhere resolves to "" so
+// ops.Run's own Require refuses (never a default-model fallback).
+func TestDeployLocalSmokeModePrefersInstanceOverride(t *testing.T) {
+	envDir := t.TempDir()
+	old := discovery.EnvDir
+	discovery.EnvDir = envDir
+	t.Cleanup(func() { discovery.EnvDir = old })
+	if err := os.WriteFile(filepath.Join(envDir, "tmpl.env"),
+		[]byte("AGENTMUX_AGENT=amp\nAGENTMUX_AMP_MODE=instance-mode\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	me, err := user.Current()
+	if err != nil {
+		t.Skipf("no current user: %v", err)
+	}
+	t.Setenv("SUDO_USER", me.Username)
+	got, merr := deployLocalSmokeMode("tmpl")
+	if merr != nil {
+		t.Fatalf("deployLocalSmokeMode: %v", merr)
+	}
+	if got != "instance-mode" {
+		t.Errorf("deployLocalSmokeMode = %q, want instance-mode", got)
 	}
 }
 

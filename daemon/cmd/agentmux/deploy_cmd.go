@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/m-rk/agentmux/daemon/internal/address"
+	"github.com/m-rk/agentmux/daemon/internal/ampconfig"
 	"github.com/m-rk/agentmux/daemon/internal/daemoninstall"
 	"github.com/m-rk/agentmux/daemon/internal/discovery"
 	"github.com/m-rk/agentmux/daemon/internal/gatewayapi"
@@ -253,6 +254,21 @@ func deployRunUser() string {
 	return ""
 }
 
+// deployAmpConfigPath resolves the amp.yaml deploy smoke-tests: the
+// run user's config (SUDO_USER's when running under sudo, else the
+// current user's) — never root's. Deploy runs as root, so
+// ampconfig.DefaultPath would point at /root while the operator's mode
+// lives in the sudo user's config (AMUX-48). Empty when no run user can
+// be resolved.
+func deployAmpConfigPath() string {
+	if runUser := deployRunUser(); runUser != "" {
+		if u, err := user.Lookup(runUser); err == nil && u.HomeDir != "" {
+			return filepath.Join(u.HomeDir, ".config", "agentmux", "amp.yaml")
+		}
+	}
+	return ampconfig.DefaultPath()
+}
+
 // deployHostsPath resolves the hosts.yaml deploy smoke-tests: the explicit
 // -hosts flag wins, then SUDO_USER's config (sudo runs deploy as root, so
 // os.UserHomeDir would point at /root), then the current user's default.
@@ -333,6 +349,27 @@ func deployTemplateRepo(ctx context.Context, socketPath, template string) string
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// deployLocalSmokeMode resolves the amp -m for the local smoke run:
+// the template's instance override first, then the run user's amp.yaml
+// (the same config a normal run as the host user reads — AMUX-48).
+// Empty means nothing is configured anywhere: ops.Run's own Require
+// refuses with the no-mode message, never a silent default-model run.
+func deployLocalSmokeMode(template string) (string, error) {
+	if fields, err := deployReadRegistry(template); err == nil {
+		if m := strings.TrimSpace(fields[ampconfig.EnvOverride]); m != "" {
+			return m, nil
+		}
+	}
+	host, err := ampconfig.Load(deployAmpConfigPath())
+	if err != nil {
+		return "", fmt.Errorf("reading amp host config %s: %w", deployAmpConfigPath(), err)
+	}
+	if host.Mode == "" {
+		return "", nil
+	}
+	return host.Mode, nil
 }
 
 // deployReadRegistry reads one instance's registry file.
@@ -465,6 +502,22 @@ func deploySmokeHost(ctx context.Context, socketPath string, t deployTarget, loc
 		Address: runAddr, Template: tmpl,
 		Text:    "deploy smoke test: reply with exactly: ok",
 		DryRun:  true,
+	}
+	// The local run executes in-process as root under sudo, while the
+	// operator's mode lives in the run user's config (as does the hosts
+	// file — see deployHostsPath). Tag the local request with that mode
+	// so Require resolves exactly what a normal run as the host user
+	// would: instance override first, then the run user's amp.yaml
+	// (AMUX-48). The template's instance override still wins when set,
+	// since ops.Run only consults the override for an explicitly-set
+	// Mode when it is empty. Remote hosts resolve their own config, so
+	// the override stays local (see deployRunOn).
+	if t.name == local {
+		mode, merr := deployLocalSmokeMode(tmpl)
+		if merr != nil {
+			return fmt.Errorf("smoke %s: %v", t.name, merr)
+		}
+		rreq.Mode = mode
 	}
 	rres, rerr := deployRunOn(ctx, socketPath, t, local, rreq)
 	if rerr != nil && smokeRunSkippable(rerr) {
@@ -650,11 +703,15 @@ func deployCreateOn(ctx context.Context, socketPath string, t deployTarget, loca
 // deployRunOn runs a run on one host, locally or through its gateway.
 // A dry-run template names an instance on the target host, so it rides
 // along unchanged: the remote host resolves it against its own registry.
+// A caller-set req.Mode is local-only: it is dropped before crossing a
+// gateway, so this host's mode never wins over the remote host's own
+// config.
 func deployRunOn(ctx context.Context, socketPath string, t deployTarget, local string, req ops.RunRequest) (ops.RunResult, error) {
 	if t.name != local {
 		if t.gateway == "" {
 			return ops.RunResult{}, ops.Refuse(safesend.ReasonNotLocal, "host %q has no gateway in hosts.yaml", t.name)
 		}
+		req.Mode = ""
 		c := &gatewayclient.Client{BaseURL: t.gateway, HTTP: &http.Client{}, Host: t.name}
 		return c.Run(ctx, gatewayapi.RunRequest{
 			Address: req.Address, Text: req.Text, Title: req.Title, DryRun: req.DryRun,
