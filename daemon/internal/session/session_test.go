@@ -17,6 +17,30 @@ func withEnvDir(t *testing.T) string {
 	return dir
 }
 
+// withTestHostMode points HOME at a temp dir carrying a host amp.yaml
+// with the test mode, so ampLaunchArgsFor's Require resolves exactly
+// that mode. ampconfig.DefaultPath reads $HOME, and t.Setenv restores
+// it after the test.
+func withTestHostMode(t *testing.T, mode string) {
+	t.Helper()
+	home := t.TempDir()
+	writeHostModeFile(t, home, mode)
+	t.Setenv("HOME", home)
+}
+
+// writeHostModeFile writes a host amp.yaml with the given mode into an
+// existing home dir (an opHome dir in openv tests), so
+// ampLaunchArgsFor's Require resolves it.
+func writeHostModeFile(t *testing.T, home, mode string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(home, ".config", "agentmux"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".config", "agentmux", "amp.yaml"), []byte("mode: "+mode+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTmuxSocket(t *testing.T) {
 	if got, want := tmuxSocket("probe"), "agentmux-probe"; got != want {
 		t.Errorf("tmuxSocket(probe) = %q, want %q", got, want)

@@ -5,6 +5,10 @@
 // choice that belongs to the machine, not the repo. Docs and tests use
 // placeholders such as "high" — never put a real user's mode name in the
 // repo.
+//
+// Every amp thread must carry -m (AMUX-36): callers resolve the mode with
+// Require, which refuses when no mode is configured anywhere instead of
+// falling back to amp's default model.
 package ampconfig
 
 import (
@@ -79,4 +83,33 @@ func Resolve(host Config, instanceMode string) (mode, source string) {
 		return host.Mode, "host"
 	}
 	return "", ""
+}
+
+// ErrNoMode is the refusal when no amp mode is configured anywhere: no
+// amp thread may start without -m, so running on amp's default model is
+// never a silent fallback (AMUX-36). The message names both places a
+// mode can come from, never a mode value.
+var ErrNoMode = errors.New("no amp mode configured: set mode: in ~/.config/agentmux/amp.yaml or pass -amp-mode for the instance")
+
+// Require is the effective mode for an amp spawn: Resolve, refused when
+// nothing is configured. Every builder below funnels through it —
+// sessions run and continue, the runner unit, the nightly review and
+// doctor escalation, the mode probe — so no amp process starts without
+// -m from any path. An explicit flag override (sessions run -mode,
+// threadwatch.yaml review.amp.mode) bypasses Require by construction:
+// the caller takes the flag when set, and only calls Require when it is
+// empty.
+func Require(host Config, instanceMode string) (mode, source string, err error) {
+	mode, source = Resolve(host, instanceMode)
+	if mode == "" {
+		return "", "", ErrNoMode
+	}
+	return mode, source, nil
+}
+
+// SpawnArgs returns the -m pair every amp spawn must carry: ["-m",
+// mode]. One builder for every amp command line (AMUX-36), so -m cannot
+// be forgotten on one path while present on the others.
+func SpawnArgs(mode string) []string {
+	return []string{"-m", mode}
 }

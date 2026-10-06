@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/m-rk/agentmux/daemon/internal/ampconfig"
 	"github.com/m-rk/agentmux/daemon/internal/provision"
 )
 
@@ -118,13 +119,30 @@ func ampRunnerIDFor(name string, fields map[string]string) (string, error) {
 }
 
 // ampLaunchArgsFor resolves the amp runner argv for an instance from its
-// registry fields.
+// registry fields, with the instance's effective mode included as -m:
+// every runner process starts with the host mode (AMUX-36), the same
+// guarantee sessions run gives each thread. A missing mode everywhere is
+// an error, never a silent run on amp's default model.
 func ampLaunchArgsFor(name string, fields map[string]string) ([]string, error) {
+	host, herr := ampconfig.Load(ampconfig.DefaultPath())
+	if herr != nil {
+		// A broken host file is caller-visible only when it would matter:
+		// with an instance override the host file is never consulted.
+		if strings.TrimSpace(fields[ampconfig.EnvOverride]) == "" {
+			return nil, fmt.Errorf("reading amp host config: %w", herr)
+		}
+		host = ampconfig.Config{}
+	}
+	mode, _, err := ampconfig.Require(host, fields[ampconfig.EnvOverride])
+	if err != nil {
+		return nil, err
+	}
 	runnerID, err := ampRunnerIDFor(name, fields)
 	if err != nil {
 		return nil, fmt.Errorf("resolving amp runner id for %s: %w", name, err)
 	}
-	return ampLaunchArgs(runnerID, provision.AmpSplitDirs(fields["AGENTMUX_AMP_DIRS"]), fields["AGENTMUX_AMP_DISCOVER_DIRS"] == "1"), nil
+	args := ampLaunchArgs(runnerID, provision.AmpSplitDirs(fields["AGENTMUX_AMP_DIRS"]), fields["AGENTMUX_AMP_DISCOVER_DIRS"] == "1")
+	return append(args, ampconfig.SpawnArgs(mode)...), nil
 }
 
 // RunAmp is `agentmux session run --instance NAME` for the amp agent:

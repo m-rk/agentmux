@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -78,10 +79,12 @@ func TestAmpRunnerIDFor(t *testing.T) {
 }
 
 // TestRunAmpLaunchesTheDocumentedCommand pins the actual tmux invocation:
-// the runner's working directory, its tmux session/socket, and the exact amp
-// argv from ampcode.com/docs/cli/runners.
+// the runner's working directory, its tmux session/socket, the exact amp
+// argv from ampcode.com/docs/cli/runners, and the host mode as -m
+// (AMUX-36: no runner starts without it).
 func TestRunAmpLaunchesTheDocumentedCommand(t *testing.T) {
 	dir := withEnvDir(t)
+	withTestHostMode(t, "high")
 	workdir := t.TempDir()
 	registryFile := "" +
 		"AGENTMUX_INSTANCE_NAME=probe\n" +
@@ -127,16 +130,48 @@ func TestRunAmpLaunchesTheDocumentedCommand(t *testing.T) {
 	want := []string{
 		"-L", "agentmux-probe", "new-session", "-d", "-s", "probe", "-c", workdir,
 		"amp", "--no-tui", "--runner-id", "probe", "--remote-control-terminal",
+		"-m", "high",
 	}
 	if strings.Join(launch, " ") != strings.Join(want, " ") {
 		t.Errorf("RunAmp launched\n  %v\nwant\n  %v", launch, want)
 	}
 }
 
+// TestRunAmpRefusesWithoutMode is the AMUX-36 guard on the runner path:
+// with no host mode and no instance override the runner refuses instead
+// of starting on amp's default model.
+func TestRunAmpRefusesWithoutMode(t *testing.T) {
+	dir := withEnvDir(t)
+	t.Setenv("HOME", t.TempDir()) // no amp.yaml anywhere
+	workdir := t.TempDir()
+	registryFile := "" +
+		"AGENTMUX_INSTANCE_NAME=probe\n" +
+		"AGENTMUX_AGENT=amp\n" +
+		"AGENTMUX_AMP_RUNNER_ID=probe\n" +
+		"AGENTMUX_TMUX_SESSION_NAME=probe\n" +
+		"AGENTMUX_WORKDIR=" + workdir + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "probe.env"), []byte(registryFile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	calls := fakeTmux(t)
+	if err := RunAmp("probe"); err == nil {
+		t.Fatal("RunAmp started with no mode configured")
+	} else if !strings.Contains(err.Error(), "no amp mode configured") {
+		t.Fatalf("RunAmp error = %v, want the no-mode refusal", err)
+	}
+	for _, args := range *calls {
+		if slices.Contains(args, "new-session") {
+			t.Fatalf("a session was started despite the missing mode: %v", args)
+		}
+	}
+}
+
 // TestRunAmpLaunchesMultiDirFlags pins the host-runner shape: discover plus
-// explicit --dir entries from the registry land in amp's argv in order.
+// explicit --dir entries from the registry land in amp's argv in order,
+// with the host mode as -m (AMUX-36).
 func TestRunAmpLaunchesMultiDirFlags(t *testing.T) {
 	dir := withEnvDir(t)
+	withTestHostMode(t, "high")
 	workdir := t.TempDir()
 	registryFile := "" +
 		"AGENTMUX_INSTANCE_NAME=probe\n" +
@@ -186,6 +221,7 @@ func TestRunAmpLaunchesMultiDirFlags(t *testing.T) {
 		"amp", "--no-tui", "--runner-id", "probe",
 		"--discover-dirs", "--dir", "/srv/hostel", "--dir", "/srv/extra",
 		"--remote-control-terminal",
+		"-m", "high",
 	}
 	if strings.Join(launch, " ") != strings.Join(want, " ") {
 		t.Errorf("RunAmp launched\n  %v\nwant\n  %v", launch, want)

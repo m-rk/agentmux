@@ -93,11 +93,12 @@ func TestOpRunArgsStripsTheTokenFromTheAgent(t *testing.T) {
 	}
 }
 
-// Instances with no env-file must launch byte-identically to before.
+// Instances with no env-file launch the runner with the host mode as -m.
 func TestRunAmpWithoutEnvFileIsUnchanged(t *testing.T) {
 	dir := withEnvDir(t)
 	workdir := t.TempDir()
 	opHome(t, true) // a token alone must not change anything
+	writeHostModeFile(t, os.Getenv("HOME"), "high")
 	writeAmpRegistry(t, dir, workdir)
 	calls := fakeTmux(t)
 
@@ -107,6 +108,7 @@ func TestRunAmpWithoutEnvFileIsUnchanged(t *testing.T) {
 	want := []string{
 		"-L", "agentmux-probe", "new-session", "-d", "-s", "probe", "-c", workdir,
 		"amp", "--no-tui", "--runner-id", "probe", "--remote-control-terminal",
+		"-m", "high",
 	}
 	if got := newSessionArgs(t, *calls); strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("launched\n  %v\nwant\n  %v", got, want)
@@ -117,6 +119,7 @@ func TestRunAmpWithEnvFileReentersAgentmuxWithoutSecrets(t *testing.T) {
 	dir := withEnvDir(t)
 	workdir := t.TempDir()
 	home := opHome(t, true)
+	writeHostModeFile(t, home, "high")
 	writeOpEnvFile(t, home, "probe")
 	writeAmpRegistry(t, dir, workdir)
 	calls := fakeTmux(t)
@@ -145,6 +148,7 @@ func TestRunAmpWithEnvFileFailsVisiblyWithoutToken(t *testing.T) {
 	dir := withEnvDir(t)
 	workdir := t.TempDir()
 	home := opHome(t, false)
+	writeHostModeFile(t, home, "high")
 	writeOpEnvFile(t, home, "probe")
 	writeAmpRegistry(t, dir, workdir)
 	calls := fakeTmux(t)
@@ -167,6 +171,7 @@ func TestExecAmpRunsOpWithTokenInEnvOnly(t *testing.T) {
 	dir := withEnvDir(t)
 	workdir := t.TempDir()
 	home := opHome(t, true)
+	writeHostModeFile(t, home, "high")
 	envFile := writeOpEnvFile(t, home, "probe")
 	writeAmpRegistry(t, dir, workdir)
 
@@ -188,6 +193,7 @@ func TestExecAmpRunsOpWithTokenInEnvOnly(t *testing.T) {
 	wantTail := []string{
 		"run", "--env-file=" + envFile, "--", "/usr/bin/env", "-u", "OP_SERVICE_ACCOUNT_TOKEN",
 		"amp", "--no-tui", "--runner-id", "probe", "--remote-control-terminal",
+		"-m", "high",
 	}
 	if len(gotArgv) < 1 || strings.Join(gotArgv[1:], "\x00") != strings.Join(wantTail, "\x00") {
 		t.Errorf("argv = %v, want op + %v", gotArgv, wantTail)
