@@ -13,7 +13,6 @@ import (
 func TestRefusalFromTaskFlag(t *testing.T) {
 	t.Setenv(TaskEnv, "1")
 	t.Setenv(InstanceEnv, "")
-	t.Setenv(AllowEnv, "")
 	if Allowed() {
 		t.Fatal("Allowed = true with AGENTMUX_TASK_SESSION=1 and no override")
 	}
@@ -27,7 +26,6 @@ func TestRefusalFromTaskFlag(t *testing.T) {
 func TestTaskFlagValuesOtherThanOne(t *testing.T) {
 	neutralCwd(t)
 	t.Setenv(InstanceEnv, "")
-	t.Setenv(AllowEnv, "")
 	for _, v := range []string{"true", "yes", "0", " 1", "2"} {
 		t.Setenv(TaskEnv, v)
 		if !Allowed() {
@@ -42,7 +40,6 @@ func TestTaskFlagValuesOtherThanOne(t *testing.T) {
 func TestRefusalFromTaskWorktreeCwd(t *testing.T) {
 	t.Setenv(TaskEnv, "")
 	t.Setenv(InstanceEnv, "")
-	t.Setenv(AllowEnv, "")
 	dir := filepath.Join(t.TempDir(), "work", "agentmux-worktrees", "task-AMUX-34")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -73,7 +70,6 @@ func TestAllowedOutsideTaskWorktreeCwd(t *testing.T) {
 	neutralCwd(t)
 	t.Setenv(TaskEnv, "")
 	t.Setenv(InstanceEnv, "site-amp")
-	t.Setenv(AllowEnv, "")
 	if !Allowed() {
 		t.Fatal("Allowed = false in a plain checkout outside a task session")
 	}
@@ -106,12 +102,13 @@ func TestInTaskWorktree(t *testing.T) {
 	}
 }
 
-// TestOverrideBeatsWorktreeFallback pins that a person can still opt out
-// inside a task worktree: the override wins over every signal.
-func TestOverrideBeatsWorktreeFallback(t *testing.T) {
+// TestNoOverrideInsideTaskWorktree pins AMUX-39: even the old override
+// cannot opt a task worktree back to live — the refusal wins over every
+// signal.
+func TestNoOverrideInsideTaskWorktree(t *testing.T) {
 	t.Setenv(TaskEnv, "1")
 	t.Setenv(InstanceEnv, "task-17")
-	t.Setenv(AllowEnv, "1")
+	t.Setenv("AGENTMUX_ALLOW_LIVE", "1")
 	dir := filepath.Join(t.TempDir(), "x-worktrees", "task-9")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -128,7 +125,7 @@ func TestOverrideBeatsWorktreeFallback(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if !Allowed() {
-		t.Fatal("Allowed = false with the override inside a task session")
+	if Allowed() {
+		t.Fatal("Allowed = true with the override inside a task session: the override is gone")
 	}
 }

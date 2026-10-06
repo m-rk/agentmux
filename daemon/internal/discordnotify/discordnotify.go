@@ -35,6 +35,12 @@ type CollaborationConfig struct {
 	// AskMentionUserID is the one Discord user that `agentmux asks` may
 	// @-mention, and whose replies are flagged when reading an ask.
 	AskMentionUserID string `yaml:"ask_mention_user_id,omitempty"`
+	// TestThreadID is the one reusable thread in the asks forum that task
+	// sessions may write to. From a task session `asks post` becomes a
+	// reply into this thread (never a new forum post) and reply/react/edit
+	// work only here; close/tag/list are no-ops. Empty means task sessions
+	// refuse every sending command. Stays in host config, never in a repo.
+	TestThreadID string `yaml:"test_thread,omitempty"`
 }
 
 func (c CollaborationConfig) Configured() bool {

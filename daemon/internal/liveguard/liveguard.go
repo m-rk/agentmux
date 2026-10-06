@@ -3,9 +3,14 @@
 // with task-, see retire.TaskPrefix) run prompts from other agents, so a
 // mistyped `agentmux asks post` inside one can reach a real forum. The
 // side-effecting CLI commands therefore refuse when they detect a task
-// session, unless a person explicitly opts out with AGENTMUX_ALLOW_LIVE=1 —
-// which is never set in a task instance's own environment, only by a person
-// or the orchestrator launching the command by hand. See AMUX-32.
+// session. The asks commands reroute into the reusable test thread instead
+// (see docs/discord-asks.md); every other guarded command just refuses.
+//
+// There is deliberately no override: a worker that can set an environment
+// variable on its own command could also set the override, so an override
+// the restrained agent can set itself isn't a guard (see AMUX-39). A real
+// boundary means running task sessions as a separate user without the
+// Discord token (`sessions run -run-user` exists); note it in the docs.
 //
 // Identity reaches the guard two ways. `sessions run` marks every amp run
 // child with AGENTMUX_INSTANCE_NAME plus AGENTMUX_TASK_SESSION=1 for
@@ -25,10 +30,6 @@ import (
 // TaskPrefix matches retire.TaskPrefix: task sessions are task-*.
 const TaskPrefix = "task-"
 
-// AllowEnv is the explicit override. Set by a person or the orchestrator,
-// never in task instance env files.
-const AllowEnv = "AGENTMUX_ALLOW_LIVE"
-
 // InstanceEnv is the registry variable every provisioned instance carries.
 // `sessions run` also sets it on every amp run child.
 const InstanceEnv = "AGENTMUX_INSTANCE_NAME"
@@ -45,7 +46,10 @@ const TaskEnv = "AGENTMUX_TASK_SESSION"
 // under one is inside task work even when its environment was scrubbed.
 const taskWorktreeMarker = "-worktrees/task-"
 
-// Refusal is the message refused commands print.
+// Refusal is the message refused commands print. It deliberately names no
+// override: live posting is for non-task callers only (a person, the
+// orchestrator, ask serve), and nothing a task session can set changes
+// that.
 const Refusal = "task sessions can't touch live Discord or other sessions; use fakes or -dry-run"
 
 // IsTaskSession reports whether the current process looks like it runs
@@ -71,12 +75,10 @@ func InTaskWorktree(dir string) bool {
 }
 
 // Allowed reports whether live side effects are permitted: anywhere but a
-// task session, or with the explicit override set to 1.
+// task session. Task sessions have no override; the asks commands reroute
+// into the test thread instead of refusing outright.
 func Allowed() bool {
-	if !IsTaskSession() {
-		return true
-	}
-	return os.Getenv(AllowEnv) == "1"
+	return !IsTaskSession()
 }
 
 // Check returns an error carrying Refusal when live side effects are not

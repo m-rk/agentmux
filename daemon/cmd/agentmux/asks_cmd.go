@@ -43,6 +43,8 @@ func runAsksCmd(args []string) {
 		err = runAsksList(args[1:])
 	case "serve":
 		err = runAsksServe(args[1:])
+	case "prune":
+		err = runAsksPrune(args[1:])
 	default:
 		asksUsage()
 		os.Exit(1)
@@ -64,9 +66,15 @@ func asksUsage() {
   agentmux asks close -thread ID [-tag NAME] [-lock]
   agentmux asks list [-open|-archived|-all] [-tag NAME] [-since DUR] [-json]
   agentmux asks serve                      hold the Discord gateway open to record button clicks
+  agentmux asks prune [-thread ID] [-older-than DUR] [-dry-run] [-json]
+                       delete old test-thread messages (task sessions: only the test thread)
 
--dry-run prints the Discord payload instead of sending it; task sessions
-refuse the sending commands without AGENTMUX_ALLOW_LIVE=1`)
+-dry-run prints the Discord payload instead of sending it.
+From a task session the sending commands reroute into the reusable test
+thread from discord.yaml (test thread: …) instead of touching live asks:
+post and reply post there, react and edit work only there, close, tag and
+list are dry-run style no-ops. Without a test thread configured, task
+sessions refuse the sending commands.`)
 }
 
 type tagFlags []string
@@ -85,6 +93,11 @@ func asksClient() (*collab.Client, error) {
 	client := collab.NewClient(cfg.Collaboration)
 	if home, err := os.UserHomeDir(); err == nil {
 		client.ClicksPath = collab.DefaultClicksPath(home)
+	}
+	// AGENTMUX_DISCORD_API_BASE points the bot API at a fake gateway in
+	// tests. Never set in production: it would redirect bot calls.
+	if base := strings.TrimSpace(os.Getenv("AGENTMUX_DISCORD_API_BASE")); base != "" {
+		client.APIBaseURL = base
 	}
 	return client, nil
 }
@@ -145,8 +158,8 @@ func runAsksPost(args []string) error {
 	if *dryRun {
 		return printAsksPostPreview(client, *title, *thread, body, tags, opts, *asJSON)
 	}
-	if err := liveguard.Check(); err != nil {
-		return err
+	if liveguard.IsTaskSession() {
+		return runAsksPostAsTest(client, body, opts, *asJSON)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -270,8 +283,8 @@ func runAsksReply(args []string) error {
 		fmt.Print(preview.Format())
 		return nil
 	}
-	if err := liveguard.Check(); err != nil {
-		return err
+	if liveguard.IsTaskSession() {
+		return runAsksReplyAsTest(client, body, *asJSON)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -346,8 +359,12 @@ func runAsksTag(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := liveguard.Check(); err != nil {
-		return err
+	if liveguard.IsTaskSession() {
+		if _, terr := client.TestThreadID(); terr != nil {
+			return liveguard.Check()
+		}
+		fmt.Printf("test thread: would retag thread %s as %s (no-op: tag never touches the test thread or a real one).\n", *thread, strings.Join(names, ","))
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -370,8 +387,12 @@ func runAsksClose(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := liveguard.Check(); err != nil {
-		return err
+	if liveguard.IsTaskSession() {
+		if _, terr := client.TestThreadID(); terr != nil {
+			return liveguard.Check()
+		}
+		fmt.Printf("test thread: would close ask thread %s as %q (no-op: close never touches the test thread or a real one).\n", *thread, *tag)
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -394,8 +415,21 @@ func runAsksReact(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := liveguard.Check(); err != nil {
-		return err
+	if liveguard.IsTaskSession() {
+		test, terr := client.TestThreadID()
+		if terr != nil {
+			return liveguard.Check()
+		}
+		if *thread != "" && *thread != test {
+			return fmt.Errorf("task sessions can only react in the test thread %s", test)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := client.ReactTestMessage(ctx, *message, *emoji); err != nil {
+			return err
+		}
+		fmt.Printf("test thread: reacted %s to message %s in test thread %s.\n", *emoji, *message, test)
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -428,8 +462,25 @@ func runAsksEdit(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := liveguard.Check(); err != nil {
-		return err
+	if liveguard.IsTaskSession() {
+		test, terr := client.TestThreadID()
+		if terr != nil {
+			return liveguard.Check()
+		}
+		if *thread != "" && *thread != test {
+			return fmt.Errorf("task sessions can only edit in the test thread %s", test)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := client.EditTestMessage(ctx, *message, collab.EditAskOptions{
+			Body:           body,
+			DisableButtons: *disable,
+			Chosen:         *chosen,
+		}); err != nil {
+			return err
+		}
+		fmt.Printf("test thread: edited message %s in test thread %s.\n", *message, test)
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -444,8 +495,9 @@ func runAsksEdit(args []string) error {
 	return nil
 }
 
-// runAsksList prints the asks forum's threads. It only reads Discord, so
-// unlike the sending commands it runs in task sessions too.
+// runAsksList prints the asks forum's threads. Listing is read-only, but
+// from a task session it is a dry-run style no-op that names the test
+// thread instead: nothing in a task session may enumerate live asks.
 func runAsksList(args []string) error {
 	fs := flag.NewFlagSet("asks list", flag.ContinueOnError)
 	open := fs.Bool("open", false, "only open (unarchived) threads (default)")
@@ -480,6 +532,23 @@ func runAsksList(args []string) error {
 	client, err := asksClient()
 	if err != nil {
 		return err
+	}
+	if liveguard.IsTaskSession() {
+		if _, terr := client.TestThreadID(); terr != nil {
+			return liveguard.Check()
+		}
+		filters := []string{"state=" + state}
+		if *tag != "" {
+			filters = append(filters, "tag="+*tag)
+		}
+		if *since != "" {
+			filters = append(filters, "since="+*since)
+		}
+		if *asJSON {
+			return json.NewEncoder(os.Stdout).Encode([]collab.AskThread{})
+		}
+		fmt.Printf("test thread: would list asks (%s) (no-op: list never enumerates live asks).\n", strings.Join(filters, ", "))
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -534,4 +603,130 @@ func runAsksServe(args []string) error {
 	defer stop()
 	l := &collab.Listener{Client: client, Store: &collab.ClickStore{Path: client.ClicksPath}}
 	return l.Run(ctx)
+}
+
+// testTaskID names the worker in its test messages ([<task id>] prefix),
+// from the task-session identity the guard already trusts: the task flag
+// and instance name `sessions run` stamps, falling back to the
+// *-worktrees/task-* directory. Empty when nothing identifies the worker.
+func testTaskID() string {
+	if inst := os.Getenv(liveguard.InstanceEnv); strings.HasPrefix(inst, liveguard.TaskPrefix) {
+		return strings.TrimPrefix(inst, liveguard.TaskPrefix)
+	}
+	if wd, err := os.Getwd(); err == nil {
+		for _, seg := range strings.Split(wd, string(os.PathSeparator)) {
+			if rest, ok := strings.CutPrefix(seg, "task-"); ok && rest != "" {
+				return rest
+			}
+		}
+	}
+	return ""
+}
+
+// runAsksPostAsTest routes a task session's `asks post` into the reusable
+// test thread: a bot reply there (mentions off, prefixed with the task
+// id), never a new forum post. Needs test_thread in discord.yaml; without
+// it the command refuses as before.
+func runAsksPostAsTest(client *collab.Client, body string, opts collab.AskOptions, asJSON bool) error {
+	test, terr := client.TestThreadID()
+	if terr != nil {
+		return liveguard.Check()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	messageID, err := client.PostTestMessage(ctx, testTaskID(), body, opts)
+	if err != nil {
+		return err
+	}
+	if asJSON {
+		return json.NewEncoder(os.Stdout).Encode(map[string]string{"thread_id": test, "message_id": messageID})
+	}
+	fmt.Printf("test thread: posted test message %s in test thread %s.\n", messageID, test)
+	return nil
+}
+
+// runAsksReplyAsTest routes a task session's `asks reply` the same way:
+// a bot message in the test thread, never touching the named thread.
+func runAsksReplyAsTest(client *collab.Client, body string, asJSON bool) error {
+	test, terr := client.TestThreadID()
+	if terr != nil {
+		return liveguard.Check()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	messageID, err := client.ReplyTestMessage(ctx, testTaskID(), body)
+	if err != nil {
+		return err
+	}
+	if asJSON {
+		return json.NewEncoder(os.Stdout).Encode(map[string]string{"thread_id": test, "message_id": messageID})
+	}
+	fmt.Printf("test thread: replied with test message %s in test thread %s.\n", messageID, test)
+	return nil
+}
+
+// runAsksPrune is `agentmux asks prune`: delete the bot's own messages in
+// a thread older than -older-than (default 24h), keeping the starter
+// message. From a task session only the configured test thread is
+// reachable (any other -thread is refused); a person may name another
+// ask thread explicitly, and the default is the test thread when one is
+// configured. The reconcile job calls this against the test thread so
+// yesterday's tests don't pile up; it never takes a thread id from a
+// thread listing.
+func runAsksPrune(args []string) error {
+	fs := flag.NewFlagSet("asks prune", flag.ContinueOnError)
+	thread := fs.String("thread", "", "thread to prune (default: the configured test thread)")
+	olderThan := fs.String("older-than", "24h", "delete the bot's own messages older than this (e.g. 24h, 30m)")
+	dryRun := fs.Bool("dry-run", false, "list what would go without deleting anything")
+	asJSON := fs.Bool("json", false, "print JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	dur, err := time.ParseDuration(*olderThan)
+	if err != nil {
+		return fmt.Errorf("bad -older-than: %w", err)
+	}
+	if dur < 0 {
+		return fmt.Errorf("-older-than must not be negative")
+	}
+	client, err := asksClient()
+	if err != nil {
+		return err
+	}
+	target := *thread
+	if target == "" {
+		target, err = client.TestThreadID()
+		if err != nil {
+			return err
+		}
+	}
+	if liveguard.IsTaskSession() && !client.IsTestThread(target) {
+		return fmt.Errorf("task sessions can only prune the test thread %s", strings.TrimSpace(client.Config.TestThreadID))
+	}
+	if !liveguard.Allowed() {
+		return liveguard.Check()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cut := time.Now().Add(-dur)
+	pruned, err := client.PruneTestMessages(ctx, target, cut, *dryRun)
+	if err != nil {
+		return err
+	}
+	if pruned == nil {
+		pruned = []string{}
+	}
+	if *asJSON {
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"thread_id": target, "pruned": pruned, "dry_run": *dryRun})
+	}
+	verb := "deleted"
+	if *dryRun {
+		verb = "would delete"
+	}
+	if len(pruned) == 0 {
+		fmt.Printf("test thread: nothing to prune in thread %s.\n", target)
+		return nil
+	}
+	fmt.Printf("test thread: %s %d message(s) in thread %s: %s.\n", verb, len(pruned), target, strings.Join(pruned, ", "))
+	return nil
 }

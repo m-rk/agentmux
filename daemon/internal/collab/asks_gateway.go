@@ -253,6 +253,11 @@ func (l *Listener) HandleInteraction(ctx context.Context, raw json.RawMessage) e
 	if err != nil {
 		return err
 	}
+	if in.ChannelID == strings.TrimSpace(l.Client.Config.TestThreadID) && l.Client.Config.TestThreadID != "" {
+		// Clicks on test-thread buttons can never answer a real ask:
+		// they are answered ephemerally and recorded nowhere.
+		return l.respond(ctx, in, 4, map[string]any{"content": "Test button — this click does nothing.", "flags": 64})
+	}
 	if user.ID != configured {
 		return l.respond(ctx, in, 4, map[string]any{"content": "Only the person this ask is for can answer it.", "flags": 64})
 	}

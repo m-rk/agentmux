@@ -11,6 +11,13 @@ import (
 // fallback refusal is correct and would otherwise fail "allowed" tests.
 func neutralCwd(t *testing.T) {
 	t.Helper()
+	// Clear the identity the guard reads so the suite is hermetic even
+	// when run from inside a task session (which exports exactly these).
+	// AGENTMUX_ALLOW_LIVE is dead (AMUX-39 removed the override) but a
+	// stray export from an older shell is cleared too.
+	t.Setenv(TaskEnv, "")
+	t.Setenv(InstanceEnv, "")
+	t.Setenv("AGENTMUX_ALLOW_LIVE", "")
 	dir := t.TempDir()
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -29,7 +36,7 @@ func neutralCwd(t *testing.T) {
 func TestRefusalFromTaskInstanceEnv(t *testing.T) {
 	t.Setenv(InstanceEnv, "task-17")
 	t.Setenv(TaskEnv, "")
-	t.Setenv(AllowEnv, "")
+	t.Setenv("AGENTMUX_ALLOW_LIVE", "")
 	if Allowed() {
 		t.Fatal("Allowed = true in a task session without the override")
 	}
@@ -41,7 +48,6 @@ func TestRefusalFromTaskInstanceEnv(t *testing.T) {
 func TestAllowedFromNormalSession(t *testing.T) {
 	neutralCwd(t)
 	t.Setenv(InstanceEnv, "site-amp")
-	t.Setenv(AllowEnv, "")
 	if !Allowed() {
 		t.Fatal("Allowed = false outside a task session")
 	}
@@ -50,23 +56,26 @@ func TestAllowedFromNormalSession(t *testing.T) {
 	}
 }
 
-func TestAllowedWithOverride(t *testing.T) {
+// TestNoOverrideInTaskSession pins AMUX-39: the old AGENTMUX_ALLOW_LIVE=1
+// override does nothing in a task session — there is no self-serve way
+// back to live.
+func TestNoOverrideInTaskSession(t *testing.T) {
 	t.Setenv(InstanceEnv, "task-17")
 	t.Setenv(TaskEnv, "")
-	t.Setenv(AllowEnv, "1")
-	if !Allowed() {
-		t.Fatal("Allowed = false in a task session with AGENTMUX_ALLOW_LIVE=1")
+	t.Setenv("AGENTMUX_ALLOW_LIVE", "1")
+	if Allowed() {
+		t.Fatal("Allowed = true in a task session with AGENTMUX_ALLOW_LIVE=1: the override is gone")
 	}
-	if err := Check(); err != nil {
-		t.Fatalf("Check() = %v, want nil", err)
+	if err := Check(); err == nil || err.Error() != Refusal {
+		t.Fatalf("Check() = %v, want the refusal %q", err, Refusal)
 	}
 }
 
-func TestOverrideNeedsExactOne(t *testing.T) {
+func TestOverrideValuesAllRefused(t *testing.T) {
 	t.Setenv(InstanceEnv, "task-17")
 	t.Setenv(TaskEnv, "")
-	for _, v := range []string{"true", "yes", "0", " 1"} {
-		t.Setenv(AllowEnv, v)
+	for _, v := range []string{"1", "true", "yes", "0", " 1"} {
+		t.Setenv("AGENTMUX_ALLOW_LIVE", v)
 		if Allowed() {
 			t.Fatalf("Allowed = true with AGENTMUX_ALLOW_LIVE=%q", v)
 		}
@@ -77,7 +86,6 @@ func TestNonTaskPrefixAllowed(t *testing.T) {
 	neutralCwd(t)
 	t.Setenv(InstanceEnv, "mytask-1")
 	t.Setenv(TaskEnv, "")
-	t.Setenv(AllowEnv, "")
 	if !Allowed() {
 		t.Fatal("Allowed = false for a name that merely contains task-")
 	}

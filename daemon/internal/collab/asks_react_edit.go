@@ -90,14 +90,7 @@ func (c *Client) EditAsk(ctx context.Context, threadID, messageID string, opts E
 		payload["content"] = strings.TrimSpace(opts.Body)
 	}
 	if opts.DisableButtons || opts.Chosen != "" {
-		var current struct {
-			Components []map[string]any `json:"components"`
-		}
-		if err := c.botJSON(ctx, http.MethodGet,
-			"/channels/"+url.PathEscape(threadID)+"/messages/"+url.PathEscape(messageID), &current); err != nil {
-			return fmt.Errorf("reading Discord message %s: %w", messageID, err)
-		}
-		rows, err := settleFetchedComponents(current.Components, opts.Chosen)
+		rows, err := c.settleMessageButtons(ctx, threadID, messageID, opts.Chosen)
 		if err != nil {
 			return err
 		}
@@ -108,6 +101,24 @@ func (c *Client) EditAsk(ctx context.Context, threadID, messageID string, opts E
 		return fmt.Errorf("editing Discord message %s (the bot needs Send Messages in Threads on the forum): %w", messageID, err)
 	}
 	return nil
+}
+
+// settleMessageButtons fetches a message and returns its button rows with
+// every ask button disabled and chosen highlighted. Only ask: buttons are
+// restyled; foreign components are left alone.
+func (c *Client) settleMessageButtons(ctx context.Context, threadID, messageID, chosen string) ([]map[string]any, error) {
+	var current struct {
+		Components []map[string]any `json:"components"`
+	}
+	if err := c.botJSON(ctx, http.MethodGet,
+		"/channels/"+url.PathEscape(threadID)+"/messages/"+url.PathEscape(messageID), &current); err != nil {
+		return nil, fmt.Errorf("reading Discord message %s: %w", messageID, err)
+	}
+	rows, err := settleFetchedComponents(current.Components, chosen)
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 // settleFetchedComponents disables the buttons of a message fetched from
