@@ -265,6 +265,44 @@ agentmux gc -dry-run
 agentmux gc -dry-run -host build-box
 ```
 
+### Sweeping junk amp threads
+
+Retire and gc only reach threads tied to a task instance through a
+retired record — but relay strays (`[relayed by ...]` sends that never
+reached a live worker) and probe threads (`"ok"`, `"reply with
+exactly ..."`) belong to no instance at all, so nothing could ever
+archive them. `agentmux amp sweep` covers that gap: it lists this
+host's amp account threads and archives the clearly-junk ones, never
+deleting anything itself:
+
+- a first message starting `[relayed by` or `[sent by`, older than an
+  hour (a stray owned by no instance);
+- 6 messages or fewer, older than 6 hours, and neither a dispatched
+  worker thread nor a nightly review (an abandoned probe);
+- an untitled thread in error state older than an hour;
+- a nightly review thread older than 3 days.
+
+It never touches a thread with more than 6 messages, a dispatched
+worker of a live task (`[dispatched by ...]` prefix, or recorded for a
+live `task-*` instance), or anything younger than the limits above.
+Archiving is reversible (`amp threads archive --unarchive`), and every
+archived thread is printed with its reason — the same output with
+`-dry-run` lists without archiving. The daily gc timer runs the sweep
+first (remote hosts sweep through their own timer), then this same gc
+deletes the swept threads after the same retention, so archived junk
+of either kind ages out together:
+
+```sh
+agentmux amp sweep -dry-run
+agentmux amp sweep
+```
+
+The local gc pass runs the sweep first (remote hosts sweep through
+their own daily gc timer): junk threads belong to no task instance,
+so no retired record could ever reach them — the sweep archives them,
+records each under `~/.local/state/agentmux/swept/`, and this same gc
+deletes them after the same retention.
+
 ## Running it
 
 ```sh
