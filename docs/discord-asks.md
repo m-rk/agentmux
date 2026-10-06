@@ -57,6 +57,69 @@ or credential.
    and `asks edit` needs **Send Messages in Threads** (message edits go
    through the bot), both as channel overrides on the forum.
 
+## Test thread
+
+Task sessions must never touch live asks, but dry-run can't show emoji
+resolution, tags or buttons as Discord renders them. The answer is one
+reusable thread in the asks forum — `🧪 agent test thread` — that task
+sessions post into instead of the live forum. No new channel, no
+permission changes, no thread litter.
+
+1. Create the thread once (a plain `agentmux asks post` outside a task
+   session, tagged `idea`), and put its id in the host's `discord.yaml`:
+
+   ```yaml
+   collaboration:
+     test_thread: "<thread id from the forum>"
+   ```
+
+   The id stays in host config, never in a repo. Until it is configured,
+   task sessions refuse every sending command.
+
+2. From a task session (any process with `AGENTMUX_TASK_SESSION=1`, with
+   `AGENTMUX_INSTANCE_NAME` starting with `task-`, or inside a
+   `*-worktrees/task-*` directory — see below) the commands reroute:
+   `post` becomes a reply into the test thread, never a new forum post;
+   `reply`, `react` and `edit` act only on messages in that thread;
+   `close`, `tag` and `list` are dry-run style no-ops that print what
+   they would do. Every line of output says `test thread: …`.
+
+   This covers body rendering, custom emoji resolution, buttons,
+   reactions, edits and the settled ✓ state, all as Discord really
+   renders them. It doesn't cover creating a forum post, its tags, or
+   closing it — test those with the fake gateway; `-dry-run` prints the
+   full creation payload.
+
+3. Test sends are harmless by construction: each message is prefixed
+   `[<task id>]` so interleaved workers stay readable, and sent with
+   allowed mentions off (`<@…>`, `@everyone` and `@here` are stripped,
+   so nothing pasted into a test body can ever ping anyone). The bot
+   deletes its own test messages older than 24 hours (`agentmux asks
+   prune`, which the reconcile job calls) but keeps the starter message,
+   and nothing in a task session can retag, rename, close, lock, archive
+   or delete the thread. Clicks on test buttons are answered
+   ephemerally ("test button") and recorded nowhere — they can never
+   answer a real ask.
+
+4. There is deliberately no override. A worker that can set an
+   environment variable on its own command could also set the override,
+   so an override the restrained agent can set itself isn't a guard.
+   Live posting is for non-task callers only (a person, the
+   orchestrator, `asks serve`). This stops well-meaning agents, not a
+   determined one: workers run as the same Unix user and can read the
+   bot token. A real boundary means running task sessions as a separate
+   user without the Discord token (`sessions run -run-user` exists).
+
+   To test Discord rendering from a task session, run `agentmux asks
+   post` as normal — it replies into the test thread. Never set
+   `AGENTMUX_ALLOW_LIVE` (it does nothing).
+
+All test sends go through the bot token, never the webhook, so `post`,
+`reply`, `react` and `edit` act as one Discord identity: a worker that
+posts a test message can edit it afterwards. (A webhook-posted message
+is authored by a different app identity than a bot-posted one, and
+Discord only lets an app edit its own messages.)
+
 ## Commands
 
 ```sh
@@ -83,6 +146,10 @@ agentmux asks tag -thread ID -set "task,working" [-unarchive]
 # replace the thread's tags with exactly these (a retag never posts)
 
 agentmux asks close -thread ID [-tag NAME] [-lock]   # default tag: done
+
+agentmux asks prune [-thread ID] [-older-than DUR] [-dry-run] [-json]
+# delete the bot's own messages older than DUR (default 24h), keeping the
+# starter message; default thread is the test thread
 ```
 
 - `list` shows the asks forum's threads — thread id, title, applied tags
@@ -93,9 +160,9 @@ agentmux asks close -thread ID [-tag NAME] [-lock]   # default tag: done
   (e.g. `24h`) keeps only threads active since then. It reads the guild's
   active threads (filtered to the forum) plus the forum's public archived
   threads, paged to the end, so an old stray post (the "t" post that
-  prompted this command) shows up with its thread id. Like `read`, it only
-  reads Discord — View Channels and Read Message History, no extra
-  permission — and it runs in task sessions too.
+  prompted this command) shows up with its thread id. From a task session
+  it is a no-op that names the test thread instead of enumerating live
+  asks (see above).
 
 - `post` and `reply` take `-dry-run`, which prints the Discord payload
   (title, content with the mention, tags, buttons, reactions) instead of
@@ -105,15 +172,18 @@ agentmux asks close -thread ID [-tag NAME] [-lock]   # default tag: done
   (`post`, `reply`, `react`, `edit`, `close`, `tag`), `sessions send`, `sessions
   run` (except its own `-dry-run`), `deploy`, and `daemon install` refuse
   inside a task session with "task sessions can't touch live Discord or
-  other sessions; use fakes or -dry-run". A task session is any process
-  with `AGENTMUX_TASK_SESSION=1`, with `AGENTMUX_INSTANCE_NAME` starting
-  with `task-`, or running inside a `*-worktrees/task-*` directory —
-  `sessions run` stamps the first two on every amp run child (task
-  claude-code panes get the same pair), so the guard fires inside the
-  agent's own runs even though real `amp -x` processes inherit no
-  agentmux environment of their own. The directory fallback covers runs
-  whose environment was scrubbed. A person can override one command with
-  `AGENTMUX_ALLOW_LIVE=1`; it is never set in task instance environments.
+  other sessions; use fakes or -dry-run" — except that `asks post`,
+  `reply`, `react` and `edit` reroute into the test thread (see above)
+  and `asks close`, `tag` and `list` are no-ops there, so task sessions
+  can test real rendering without touching live asks. A task session is
+  any process with `AGENTMUX_TASK_SESSION=1`, with
+  `AGENTMUX_INSTANCE_NAME` starting with `task-`, or running inside a
+  `*-worktrees/task-*` directory — `sessions run` stamps the first two
+  on every amp run child (task claude-code panes get the same pair), so
+  the guard fires inside the agent's own runs even though real `amp -x`
+  processes inherit no agentmux environment of their own. The directory
+  fallback covers runs whose environment was scrubbed. There is no
+  override: live posting is for non-task callers only.
 
 - `-body-file -` reads the body from stdin. Bodies are limited to 2000
   characters including the mention.
@@ -238,8 +308,9 @@ Gateway connection open: `agentmux asks serve`. It records the click in
 run `serve` and `read` as the same user) and acks by editing the message:
 every button is disabled and the chosen one turns green with a ✓, keeping
 each button's emoji and style. A click
-from anyone else, or a second click on the same ask, gets a private
-(ephemeral) refusal and records nothing. The first click wins. `asks edit
+from anyone else, a second click on the same ask, or any click on a
+test-thread button gets a private (ephemeral) refusal and records
+nothing: test buttons can never answer a real ask. The first click wins. `asks edit
 -disable-buttons` and `-chosen LABEL` settle buttons the same way: only
 `disabled`, `style` and the ✓ prefix change, so emoji survive and clicks
 still map by label.

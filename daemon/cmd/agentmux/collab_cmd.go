@@ -45,7 +45,7 @@ func runCollabCmd(args []string) {
 
 func collabUsage() {
 	fmt.Fprintln(os.Stderr, `usage:
-  agentmux collab setup [-y -bot-token TOKEN -webhook-url URL -forum-channel ID]
+  agentmux collab setup [-y -bot-token TOKEN -webhook-url URL -forum-channel ID [-test-thread ID]]
   agentmux collab configure -instance NAME [-project KEY] [-avatar-url URL]
   agentmux collab read -instance NAME [-thread ID]
   agentmux collab post -instance NAME -topic TOPIC -summary SENTENCE [-shared] [-details FILE.md]
@@ -74,6 +74,7 @@ func runCollabSetup(args []string) error {
 	botToken := fs.String("bot-token", "", "Discord bot token used to read the forum")
 	webhookURL := fs.String("webhook-url", "", "Discord forum webhook URL used to write")
 	forumID := fs.String("forum-channel", "", "Discord forum channel ID")
+	testThread := fs.String("test-thread", "", "reusable asks test thread ID task sessions post into (blank clears it)")
 	avatars := avatarFlags{}
 	fs.Var(avatars, "agent-avatar", "fallback avatar as AGENT=https://…; repeatable")
 	if err := fs.Parse(args); err != nil {
@@ -95,10 +96,14 @@ func runCollabSetup(args []string) error {
 		if *forumID == "" {
 			*forumID = cfg.Collaboration.ForumChannelID
 		}
+		if *testThread == "" {
+			*testThread = cfg.Collaboration.TestThreadID
+		}
 		form := huh.NewForm(huh.NewGroup(
 			huh.NewInput().Title("Discord bot token").Description("Used only to read the collaboration forum").EchoMode(huh.EchoModePassword).Value(botToken),
 			huh.NewInput().Title("Forum webhook URL").Description("Used to post with each session's name and avatar").Value(webhookURL),
 			huh.NewInput().Title("Forum channel ID").Value(forumID),
+			huh.NewInput().Title("Test thread ID").Description("Reusable asks test thread task sessions post into (optional)").Value(testThread),
 		))
 		if err := form.Run(); err != nil {
 			return err
@@ -119,6 +124,16 @@ func runCollabSetup(args []string) error {
 	cfg.Collaboration.BotToken = strings.TrimSpace(*botToken)
 	cfg.Collaboration.WebhookURL = strings.TrimSpace(*webhookURL)
 	cfg.Collaboration.ForumChannelID = strings.TrimSpace(*forumID)
+	seen := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { seen[f.Name] = true })
+	// -test-thread is sticky like the interactive answers: set it when
+	// passed (blank clears it), keep the saved value otherwise.
+	if !*nonInteractive || seen["test-thread"] {
+		cfg.Collaboration.TestThreadID = strings.TrimSpace(*testThread)
+	}
+	if id := cfg.Collaboration.TestThreadID; id != "" && !collab.IsSnowflake(id) {
+		return fmt.Errorf("-test-thread must be a numeric Discord thread id")
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()

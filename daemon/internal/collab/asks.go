@@ -47,6 +47,11 @@ const DefaultOpenTag = "needs me"
 
 var snowflakeRE = regexp.MustCompile(`^[0-9]{1,25}$`)
 
+// IsSnowflake reports whether id looks like a Discord snowflake id.
+func IsSnowflake(id string) bool {
+	return snowflakeRE.MatchString(id)
+}
+
 // AskAnswer is a one-tap answer to an ask, from the configured user only:
 // an emoji reaction (Value is the emoji) or a button click (Value is the
 // button label). MessageID is the message that was reacted to or clicked.
