@@ -60,6 +60,8 @@ type ForumTag struct {
 type ThreadMetadata struct {
 	Archived         bool   `json:"archived"`
 	ArchiveTimestamp string `json:"archive_timestamp"`
+	Locked           bool   `json:"locked"`
+	CreateTimestamp  string `json:"create_timestamp"`
 }
 
 type Author struct {

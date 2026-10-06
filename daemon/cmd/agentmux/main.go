@@ -116,6 +116,7 @@ Usage:
   agentmux asks react -thread ID -message ID -emoji EMOJI
   agentmux asks edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL]
   agentmux asks close -thread ID [-tag NAME]
+  agentmux asks list [-open|-archived|-all] [-tag NAME] [-since DUR] [-json]
   agentmux asks serve                                          record Discord button clicks for asks
   agentmux threadwatch serve [-dry-run] [-once]   follow agent sessions and alert on Discord (see -h)
   agentmux threadwatch status [-since 24h] [-json]   show open intervene signals

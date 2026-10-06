@@ -73,6 +73,18 @@ agentmux asks serve   # long-running: records button clicks (buttons only)
 agentmux asks close -thread ID [-tag NAME] [-lock]   # default tag: answered
 ```
 
+- `list` shows the asks forum's threads — thread id, title, applied tags
+  (by name), created and last-message time, archived and locked flags, and
+  the starter message id (a forum post's first message shares the thread
+  id). `-open` (the default), `-archived`, or `-all` picks the state;
+  `-tag NAME` keeps only threads carrying that tag and `-since DUR`
+  (e.g. `24h`) keeps only threads active since then. It reads the guild's
+  active threads (filtered to the forum) plus the forum's public archived
+  threads, paged to the end, so an old stray post (the "t" post that
+  prompted this command) shows up with its thread id. Like `read`, it only
+  reads Discord — View Channels and Read Message History, no extra
+  permission — and it runs in task sessions too.
+
 - `post` and `reply` take `-dry-run`, which prints the Discord payload
   (title, content with the mention, tags, buttons, reactions) instead of
   sending it — the safe way to check real rendering from a test or task

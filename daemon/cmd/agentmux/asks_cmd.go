@@ -37,6 +37,8 @@ func runAsksCmd(args []string) {
 		err = runAsksEdit(args[1:])
 	case "close":
 		err = runAsksClose(args[1:])
+	case "list":
+		err = runAsksList(args[1:])
 	case "serve":
 		err = runAsksServe(args[1:])
 	default:
@@ -57,6 +59,7 @@ func asksUsage() {
   agentmux asks react -thread ID -message ID -emoji EMOJI
   agentmux asks edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL]
   agentmux asks close -thread ID [-tag NAME] [-lock]
+  agentmux asks list [-open|-archived|-all] [-tag NAME] [-since DUR] [-json]
   agentmux asks serve                      hold the Discord gateway open to record button clicks
 
 -dry-run prints the Discord payload instead of sending it; task sessions
@@ -398,6 +401,78 @@ func runAsksEdit(args []string) error {
 	}
 	fmt.Printf("Edited message %s in ask thread %s.\n", *message, *thread)
 	return nil
+}
+
+// runAsksList prints the asks forum's threads. It only reads Discord, so
+// unlike the sending commands it runs in task sessions too.
+func runAsksList(args []string) error {
+	fs := flag.NewFlagSet("asks list", flag.ContinueOnError)
+	open := fs.Bool("open", false, "only open (unarchived) threads (default)")
+	archived := fs.Bool("archived", false, "only archived threads")
+	all := fs.Bool("all", false, "open and archived threads")
+	tag := fs.String("tag", "", "only threads carrying this forum tag")
+	since := fs.String("since", "", "only threads active since this long ago (e.g. 24h, 30m)")
+	asJSON := fs.Bool("json", false, "print JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	state := "open"
+	switch {
+	case *all:
+		state = "all"
+	case *archived:
+		state = "archived"
+	case *open:
+		state = "open"
+	}
+	if n := boolCount(*open, *archived, *all); n > 1 {
+		return fmt.Errorf("pick at most one of -open, -archived, -all")
+	}
+	var sinceTime time.Time
+	if *since != "" {
+		dur, err := time.ParseDuration(*since)
+		if err != nil {
+			return fmt.Errorf("bad -since: %w", err)
+		}
+		sinceTime = time.Now().Add(-dur)
+	}
+	client, err := asksClient()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	threads, err := client.ListAsks(ctx, collab.ListAsksOptions{State: state, Tag: *tag, Since: sinceTime})
+	if err != nil {
+		return err
+	}
+	if threads == nil {
+		threads = []collab.AskThread{}
+	}
+	if *asJSON {
+		return json.NewEncoder(os.Stdout).Encode(threads)
+	}
+	for _, th := range threads {
+		status := "open"
+		if th.Archived {
+			status = "archived"
+		}
+		if th.Locked {
+			status += ",locked"
+		}
+		fmt.Printf("%s\t%s\t%s\t%s\t%s\n", th.ID, safeCollabOutput(th.Title), status, strings.Join(th.Tags, ","), th.LastMessageTime)
+	}
+	return nil
+}
+
+func boolCount(flags ...bool) int {
+	n := 0
+	for _, f := range flags {
+		if f {
+			n++
+		}
+	}
+	return n
 }
 
 // runAsksServe holds the Discord gateway connection that button clicks need,
