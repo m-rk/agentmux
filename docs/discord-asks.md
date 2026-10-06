@@ -51,7 +51,7 @@ or credential.
 ## Commands
 
 ```sh
-agentmux asks post -title T -body-file F [-tag NAME ...] [-react 1️⃣,2️⃣,⏸️] [-button LABEL ...] -json
+agentmux asks post -title T -body-file F [-tag NAME ...] [-react 1️⃣,2️⃣,⏸️] [-button LABEL ...] [-buttons-json FILE] -json
 # {"thread_id":"…","message_id":"…"}
 
 agentmux asks post -thread ID [-title T] -body-file F [-tag NAME ...] -json
@@ -148,16 +148,42 @@ each emoji in order. The caller supplies the list, so the convention is
 
 ### Buttons
 
-`asks post -button "Ship it" -button "Not now"` (up to 25 labels of 80
-characters) makes the **bot** post the message with buttons, because webhooks
+`-button LABEL` posts a plain grey button; `-buttons-json FILE` (`-` for
+stdin) appends richer buttons from a JSON array of `{label, emoji, style}`
+objects, e.g.:
+
+```json
+[
+  {"label": "amp · medium", "emoji": ":amp:", "style": "primary"},
+  {"label": "claude · medium", "emoji": ":claude:", "style": "primary"},
+  {"label": "Not now", "emoji": "⏸️"}
+]
+```
+
+- **Emoji** is a unicode emoji (⭐, ⏸️) or a custom server emoji by name
+  (`:amp:`, `:claude:`, `:opencode:`, `:muse:`). Custom names resolve
+  against the guild's emoji list on first use and are cached per guild;
+  ids are never hard-coded. An unknown name posts the button without an
+  emoji and logs once.
+- **Style** is `primary` (blue), `secondary` (grey, the default),
+  `success`, or `danger`. An unknown style fails the post.
+- **Labels** allow up to 80 characters (Discord's limit), and duplicate
+  labels on one message fail the post with a clear error rather than
+  falling back to numbers.
+
+With buttons the **bot** posts the message, because webhooks
 can't send interactive components. Discord delivers a click only as an
 interaction that must be acked within 3 seconds, so something must hold a
 Gateway connection open: `agentmux asks serve`. It records the click in
 `~/.local/state/agentmux/asks/clicks.jsonl` (`read` reads the same file, so
 run `serve` and `read` as the same user) and acks by editing the message:
-every button is disabled and the chosen one turns green with a ✓. A click
+every button is disabled and the chosen one turns green with a ✓, keeping
+each button's emoji and style. A click
 from anyone else, or a second click on the same ask, gets a private
-(ephemeral) refusal and records nothing. The first click wins.
+(ephemeral) refusal and records nothing. The first click wins. `asks edit
+-disable-buttons` and `-chosen LABEL` settle buttons the same way: only
+`disabled`, `style` and the ✓ prefix change, so emoji survive and clicks
+still map by label.
 
 - **Permissions:** the bot needs **Create Posts** (new asks) and **Send
   Messages in Threads** (`post -thread`) on the forum, in addition to what

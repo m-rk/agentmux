@@ -164,6 +164,31 @@ func TestEditAskChosenHighlightsOne(t *testing.T) {
 	}
 }
 
+func TestEditAskKeepsButtonEmoji(t *testing.T) {
+	s := &reactEditServer{message: map[string]any{"id": "500", "content": "pick one", "components": []any{
+		map[string]any{"type": 1, "components": []any{
+			map[string]any{"type": 2, "style": 1, "label": "amp medium", "custom_id": "ask:amp medium",
+				"emoji": map[string]any{"id": "emoji-amp-id", "name": "amp"}},
+			map[string]any{"type": 2, "style": 2, "label": "Not now", "custom_id": "ask:Not now",
+				"emoji": map[string]any{"name": "⏸️"}},
+		}},
+	}}}
+	srv := s.server(t)
+	defer srv.Close()
+	if err := asksClientFor(srv.URL).EditAsk(context.Background(), "900", "500",
+		EditAskOptions{Chosen: "amp medium"}); err != nil {
+		t.Fatal(err)
+	}
+	row := s.bodies[0]["components"].([]any)[0].(map[string]any)["components"].([]any)
+	chosen, other := row[0].(map[string]any), row[1].(map[string]any)
+	if chosen["emoji"].(map[string]any)["id"] != "emoji-amp-id" {
+		t.Fatalf("chosen lost emoji: %#v", chosen)
+	}
+	if other["emoji"].(map[string]any)["name"] != "⏸️" || other["style"] != float64(2) {
+		t.Fatalf("other lost emoji or style: %#v", other)
+	}
+}
+
 func TestEditAskChosenMustExist(t *testing.T) {
 	s := &reactEditServer{}
 	srv := s.server(t)

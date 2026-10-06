@@ -173,7 +173,7 @@ func (c *Client) PostAsk(ctx context.Context, title, body string, extraTags []st
 			"message": map[string]any{
 				"content":          content,
 				"allowed_mentions": c.mentionPayload(user, true),
-				"components":       buttonRows(opts.Buttons),
+				"components":       c.buttonRowsWithGuild(ctx, forum.GuildID, opts.Buttons),
 			},
 		}
 		var thread Channel
@@ -236,7 +236,7 @@ func (c *Client) PostAskInThread(ctx context.Context, threadID, title, body stri
 		botPayload := map[string]any{
 			"content":          content,
 			"allowed_mentions": c.mentionPayload(user, true),
-			"components":       buttonRows(opts.Buttons),
+			"components":       c.buttonRowsWithGuild(ctx, forum.GuildID, opts.Buttons),
 		}
 		if err := c.botJSONBody(ctx, http.MethodPost, "/channels/"+url.PathEscape(threadID)+"/messages", botPayload, &message); err != nil {
 			return "", fmt.Errorf("posting ask with buttons into Discord thread (the bot needs Send Messages in Threads): %w", err)

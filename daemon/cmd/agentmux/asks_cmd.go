@@ -50,7 +50,7 @@ func runAsksCmd(args []string) {
 
 func asksUsage() {
 	fmt.Fprintln(os.Stderr, `usage:
-  agentmux asks post (-title T | -thread ID [-title T]) -body-file F [-tag NAME ...] [-react EMOJI,EMOJI,...] [-button LABEL ...] [-json]
+  agentmux asks post (-title T | -thread ID [-title T]) -body-file F [-tag NAME ...] [-react EMOJI,EMOJI,...] [-button LABEL ...] [-buttons-json FILE] [-json]
   agentmux asks reply -thread ID -body-file F [-mention]
   agentmux asks read -thread ID [-after MESSAGE_ID] [-json]
   agentmux asks react -thread ID -message ID -emoji EMOJI
@@ -100,13 +100,24 @@ func runAsksPost(args []string) error {
 	bodyFile := fs.String("body-file", "", "file with the post body ('-' for stdin)")
 	asJSON := fs.Bool("json", false, "print JSON")
 	react := fs.String("react", "", "comma-separated emoji the bot adds as reactions, in order (e.g. 1️⃣,2️⃣,⏸️)")
+	buttonsJSON := fs.String("buttons-json", "", "file with a JSON array of {label, emoji?, style?} buttons ('-' for stdin); appended after -button labels")
 	var tags, buttons tagFlags
 	fs.Var(&tags, "tag", "extra forum tag; repeatable")
 	fs.Var(&buttons, "button", "button label (needs 'asks serve' running to record clicks); repeatable")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	opts := collab.AskOptions{Buttons: buttons}
+	opts := collab.AskOptions{}
+	for _, label := range buttons {
+		opts.Buttons = append(opts.Buttons, collab.AskButton{Label: label})
+	}
+	if *buttonsJSON != "" {
+		rich, err := readButtonsJSON(*buttonsJSON)
+		if err != nil {
+			return err
+		}
+		opts.Buttons = append(opts.Buttons, rich...)
+	}
 	for _, e := range strings.Split(*react, ",") {
 		if e = strings.TrimSpace(e); e != "" {
 			opts.Reactions = append(opts.Reactions, e)
@@ -143,6 +154,27 @@ func runAsksPost(args []string) error {
 	}
 	fmt.Printf("Ask posted in thread %s (message %s).\n", threadID, messageID)
 	return nil
+}
+
+// readButtonsJSON reads a JSON array of {label, emoji?, style?} buttons from
+// a file ('-' for stdin). -button LABEL stays valid for plain labels; this
+// is the richer form for emoji and style.
+func readButtonsJSON(path string) ([]collab.AskButton, error) {
+	var data []byte
+	var err error
+	if path == "-" {
+		data, err = io.ReadAll(os.Stdin)
+	} else {
+		data, err = os.ReadFile(path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	var buttons []collab.AskButton
+	if err := json.Unmarshal(data, &buttons); err != nil {
+		return nil, fmt.Errorf("parsing -buttons-json: %w", err)
+	}
+	return buttons, nil
 }
 
 func runAsksReply(args []string) error {

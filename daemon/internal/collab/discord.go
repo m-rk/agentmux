@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -15,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/m-rk/agentmux/daemon/internal/discordnotify"
@@ -29,6 +31,13 @@ type Client struct {
 	// ClicksPath is where `asks serve` records button clicks; empty disables
 	// reading them.
 	ClicksPath string
+
+	// emojiCache holds guild emoji lists keyed by guild id, resolved on
+	// first use so custom button emoji (:amp:) never hard-code ids.
+	// emojiWarned tracks unknown names already logged, one line each.
+	emojiMu     sync.Mutex
+	emojiCache  map[string][]GuildEmoji
+	emojiWarned map[string]bool
 }
 
 type Channel struct {
@@ -75,6 +84,14 @@ type MessageReaction struct {
 	} `json:"emoji"`
 }
 
+// GuildEmoji is one custom emoji on a Discord guild. IDs are never
+// hard-coded: buttons name them (:amp:) and the client resolves them here
+// at post time.
+type GuildEmoji struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 type Message struct {
 	Reactions   []MessageReaction `json:"reactions"`
 	ID          string            `json:"id"`
@@ -101,6 +118,90 @@ func NewClient(cfg discordnotify.CollaborationConfig) *Client {
 		HTTPClient: &http.Client{Timeout: 10 * time.Second},
 		APIBaseURL: discordAPIBaseURL,
 	}
+}
+
+// guildEmojis lists a guild's custom emoji, cached per guild so a post with
+// several custom-emoji buttons makes one call.
+func (c *Client) guildEmojis(ctx context.Context, guildID string) ([]GuildEmoji, error) {
+	if guildID == "" {
+		return nil, nil
+	}
+	c.emojiMu.Lock()
+	cached, ok := c.emojiCache[guildID]
+	c.emojiMu.Unlock()
+	if ok {
+		return cached, nil
+	}
+	var list []GuildEmoji
+	if err := c.botJSON(ctx, http.MethodGet, "/guilds/"+url.PathEscape(guildID)+"/emojis", &list); err != nil {
+		return nil, fmt.Errorf("listing guild emoji: %w", err)
+	}
+	c.emojiMu.Lock()
+	defer c.emojiMu.Unlock()
+	if c.emojiCache == nil {
+		c.emojiCache = map[string][]GuildEmoji{}
+	}
+	// A concurrent lookup may have filled the cache while we fetched.
+	if cached, ok := c.emojiCache[guildID]; ok {
+		return cached, nil
+	}
+	c.emojiCache[guildID] = list
+	return list, nil
+}
+
+// warnUnknownEmoji logs an unresolvable custom button emoji once per
+// guild+name; the button posts without an emoji.
+func (c *Client) warnUnknownEmoji(guildID, name string) {
+	if c.emojiWarned == nil {
+		c.emojiWarned = map[string]bool{}
+	}
+	key := guildID + "\x00" + strings.ToLower(strings.TrimSpace(name))
+	if c.emojiWarned[key] {
+		return
+	}
+	c.emojiWarned[key] = true
+	log.Printf("asks: unknown custom emoji %q on guild %s; button posts without an emoji", name, guildID)
+}
+
+// buttonRowsWithGuild resolves every custom button emoji against the guild
+// once, warns once per unknown name, and builds the rows. Callers hold no
+// lock; caching and warned-tracking live on the client.
+func (c *Client) buttonRowsWithGuild(ctx context.Context, guildID string, buttons []AskButton) []map[string]any {
+	var guild []GuildEmoji
+	if needsGuildEmojis(buttons) {
+		var err error
+		guild, err = c.guildEmojis(ctx, guildID)
+		if err != nil {
+			log.Printf("asks: %v; buttons post without custom emoji", err)
+			guild = nil
+		}
+		for _, b := range buttons {
+			name := strings.TrimSpace(b.Emoji)
+			if custom, ok := strings.CutPrefix(name, ":"); ok {
+				if custom, ok := strings.CutSuffix(custom, ":"); ok && custom != "" {
+					if _, found := buttonEmoji(b.Emoji, guild); !found {
+						c.emojiMu.Lock()
+						c.warnUnknownEmoji(guildID, b.Emoji)
+						c.emojiMu.Unlock()
+					}
+				}
+			}
+		}
+	}
+	return buttonRows(buttons, guild)
+}
+
+// needsGuildEmojis reports whether any button names a custom server emoji.
+func needsGuildEmojis(buttons []AskButton) bool {
+	for _, b := range buttons {
+		name := strings.TrimSpace(b.Emoji)
+		if custom, ok := strings.CutPrefix(name, ":"); ok {
+			if custom, ok := strings.CutSuffix(custom, ":"); ok && custom != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (c *Client) Validate(ctx context.Context) error {

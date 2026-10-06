@@ -31,10 +31,21 @@ const (
 	buttonStyleGrey = 2
 )
 
+// AskButton is one button on a posted ask. Label is the text and the click
+// identity (carried in the component's custom id). Emoji is either a unicode
+// emoji (⭐) or a custom server emoji by name (:amp:, resolved against the
+// guild at post time). Style is primary, secondary (the default), success,
+// or danger.
+type AskButton struct {
+	Label string `json:"label"`
+	Emoji string `json:"emoji,omitempty"`
+	Style string `json:"style,omitempty"`
+}
+
 // AskOptions are the optional one-tap answer choices on a posted ask.
 type AskOptions struct {
-	Reactions []string // emoji the bot adds, in order
-	Buttons   []string // button labels, in order
+	Reactions []string    // emoji the bot adds, in order
+	Buttons   []AskButton // buttons, in order
 }
 
 // ReactionSeedError means the ask was posted but adding the seed reactions
@@ -45,6 +56,22 @@ func (e *ReactionSeedError) Error() string {
 	return "ask posted but seeding reactions failed (the bot needs Add Reactions on the forum): " + e.Err.Error()
 }
 func (e *ReactionSeedError) Unwrap() error { return e.Err }
+
+// buttonStyles maps the -buttons-json style names to Discord button styles.
+// 1 primary (blue), 2 secondary (grey, the default), 3 success, 4 danger.
+func buttonStyleNumber(name string) (int, error) {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "", "secondary", "grey", "gray":
+		return 2, nil
+	case "primary":
+		return 1, nil
+	case "success":
+		return 3, nil
+	case "danger":
+		return 4, nil
+	}
+	return 0, fmt.Errorf("button style %q must be one of: primary, secondary, success, danger", name)
+}
 
 func (o AskOptions) validate() error {
 	if len(o.Reactions) > maxReactions {
@@ -65,28 +92,59 @@ func (o AskOptions) validate() error {
 	}
 	seen = map[string]bool{}
 	for _, b := range o.Buttons {
-		if strings.TrimSpace(b) == "" || utf8.RuneCountInString(b) > maxButtonLabel {
-			return fmt.Errorf("button label %q must be 1-%d characters", b, maxButtonLabel)
+		if strings.TrimSpace(b.Label) == "" || utf8.RuneCountInString(b.Label) > maxButtonLabel {
+			return fmt.Errorf("button label %q must be 1-%d characters", b.Label, maxButtonLabel)
 		}
-		if seen[b] {
-			return fmt.Errorf("duplicate button %q", b)
+		if seen[b.Label] {
+			return fmt.Errorf("duplicate button %q", b.Label)
 		}
-		seen[b] = true
+		seen[b.Label] = true
+		if _, err := buttonStyleNumber(b.Style); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-// buttonRows lays labels out as action rows of buttons. The custom id carries
-// the label, so a click is self-describing.
-func buttonRows(labels []string) []map[string]any {
-	var rows []map[string]any
-	for i := 0; i < len(labels); i += buttonsPerRow {
-		end := min(i+buttonsPerRow, len(labels))
-		var buttons []map[string]any
-		for _, label := range labels[i:end] {
-			buttons = append(buttons, map[string]any{"type": 2, "style": buttonStyleGrey, "label": label, "custom_id": buttonIDPrefix + label})
+// buttonEmoji is the Discord component emoji payload for a button: a unicode
+// emoji goes in name, a custom server emoji by name (:amp:) is looked up in
+// the guild's emoji list and carries both id and name. Unknown custom names
+// fall back to no emoji; the caller logs once per guild+name.
+func buttonEmoji(name string, guild []GuildEmoji) (map[string]any, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, false
+	}
+	if custom, ok := strings.CutPrefix(name, ":"); ok {
+		if custom, ok = strings.CutSuffix(custom, ":"); ok && custom != "" {
+			for _, e := range guild {
+				if strings.EqualFold(e.Name, custom) {
+					return map[string]any{"id": e.ID, "name": e.Name}, true
+				}
+			}
+			return nil, false
 		}
-		rows = append(rows, map[string]any{"type": 1, "components": buttons})
+	}
+	return map[string]any{"name": name}, true
+}
+
+// buttonRows lays buttons out as action rows of up to five. The custom id
+// carries the label, so a click is self-describing. Emoji keep the button's
+// emoji and style so a click settles to the right look.
+func buttonRows(buttons []AskButton, guild []GuildEmoji) []map[string]any {
+	var rows []map[string]any
+	for i := 0; i < len(buttons); i += buttonsPerRow {
+		end := min(i+buttonsPerRow, len(buttons))
+		var comps []map[string]any
+		for _, b := range buttons[i:end] {
+			style, _ := buttonStyleNumber(b.Style)
+			btn := map[string]any{"type": 2, "style": style, "label": b.Label, "custom_id": buttonIDPrefix + b.Label}
+			if emoji, ok := buttonEmoji(b.Emoji, guild); ok {
+				btn["emoji"] = emoji
+			}
+			comps = append(comps, btn)
+		}
+		rows = append(rows, map[string]any{"type": 1, "components": comps})
 	}
 	return rows
 }

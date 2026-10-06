@@ -110,9 +110,10 @@ func TestAskOptionsValidation(t *testing.T) {
 	for _, o := range []AskOptions{
 		{Reactions: []string{"a b"}},
 		{Reactions: []string{"1️⃣", "1️⃣"}},
-		{Buttons: []string{""}},
-		{Buttons: []string{"x", "x"}},
-		{Buttons: make([]string, 26)},
+		{Buttons: []AskButton{{Label: ""}}},
+		{Buttons: []AskButton{{Label: "x"}, {Label: "x"}}},
+		{Buttons: make([]AskButton, 26)},
+		{Buttons: []AskButton{{Label: "x", Style: "rainbow"}}},
 	} {
 		if o.validate() == nil {
 			t.Errorf("accepted %#v", o)
@@ -124,7 +125,7 @@ func TestPostAskWithButtonsUsesBot(t *testing.T) {
 	a := &answersServer{}
 	s := a.server(t)
 	defer s.Close()
-	thread, msg, err := asksClientFor(s.URL).PostAsk(context.Background(), "T", "pick", nil, AskOptions{Buttons: []string{"Ship it", "Not now"}})
+	thread, msg, err := asksClientFor(s.URL).PostAsk(context.Background(), "T", "pick", nil, AskOptions{Buttons: []AskButton{{Label: "Ship it"}, {Label: "Not now"}}})
 	if err != nil || thread != "900" || msg != "900" {
 		t.Fatalf("got %q %q %v", thread, msg, err)
 	}
@@ -142,7 +143,7 @@ func TestPostAskInThreadWithButtons(t *testing.T) {
 	a := &answersServer{}
 	s := a.server(t)
 	defer s.Close()
-	id, err := asksClientFor(s.URL).PostAskInThread(context.Background(), "900", "", "q", nil, AskOptions{Buttons: []string{"A"}})
+	id, err := asksClientFor(s.URL).PostAskInThread(context.Background(), "900", "", "q", nil, AskOptions{Buttons: []AskButton{{Label: "A"}}})
 	if err != nil || id != "501" || a.botPaths[0] != "/api/channels/900/messages" {
 		t.Fatalf("id = %q err = %v paths = %v", id, err, a.botPaths)
 	}
@@ -250,7 +251,8 @@ func interactionJSON(t *testing.T, user, parent, customID string) json.RawMessag
 		"member":  map[string]any{"user": map[string]any{"id": user}},
 		"data":    map[string]any{"custom_id": customID},
 		"message": map[string]any{"id": "500", "components": []any{map[string]any{"type": 1, "components": []any{
-			map[string]any{"type": 2, "style": 2, "label": "Ship it", "custom_id": "ask:Ship it"},
+			map[string]any{"type": 2, "style": 1, "label": "Ship it", "custom_id": "ask:Ship it",
+				"emoji": map[string]any{"id": "emoji-amp-id", "name": "amp"}},
 			map[string]any{"type": 2, "style": 2, "label": "Not now", "custom_id": "ask:Not now"},
 		}}}},
 	})
@@ -283,6 +285,10 @@ func TestHandleInteractionRecordsAndDisablesButtons(t *testing.T) {
 	chosen, other := row[0].(map[string]any), row[1].(map[string]any)
 	if chosen["disabled"] != true || other["disabled"] != true || chosen["style"] != float64(3) || chosen["label"] != "✓ Ship it" || other["style"] != float64(2) {
 		t.Fatalf("row = %#v", row)
+	}
+	// The click ack keeps the button's emoji; clicks still map by custom id.
+	if chosen["emoji"].(map[string]any)["id"] != "emoji-amp-id" {
+		t.Fatalf("click ack lost emoji: %#v", chosen)
 	}
 }
 
