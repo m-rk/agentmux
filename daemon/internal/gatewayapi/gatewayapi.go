@@ -124,12 +124,18 @@ type CreateResponse = ops.CreateResult
 // RunRequest starts an amp thread on the host (Thread "" in Address) or
 // continues one. Text is the prompt; Title names a new thread and is
 // ignored for a continue. DryRun validates the run without starting any
-// amp thread; the reply carries DryRun and Plan.
+// amp thread; the reply carries DryRun and Plan. Template names an
+// existing amp instance the dry run validates against instead of the
+// target: a dry-run create makes nothing, so the smoke-test target may
+// not exist yet (see AMUX-27). Dry-run only.
 type RunRequest struct {
 	Address string `json:"address"`
 	Text    string `json:"text"`
 	Title   string `json:"title,omitempty"`
 	DryRun  bool   `json:"dry_run,omitempty"`
+	// Template is dry-run only: the instance the run readiness is
+	// validated against when the target need not exist yet.
+	Template string `json:"template,omitempty"`
 }
 
 // RunResponse is the thread plus its state; a refusal is a non-2xx

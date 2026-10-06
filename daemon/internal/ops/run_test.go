@@ -396,3 +396,74 @@ func TestRunDryRunStartsNothing(t *testing.T) {
 	}
 	wantReason(t, rerr, safesend.ReasonInvalid)
 }
+
+// TestRunDryTemplateValidatesMissingTarget covers the deploy smoke shape
+// (AMUX-27): a templated dry run of a name that doesn't exist validates
+// the template's registry, workdir, mode and thread checks without
+// reporting the target as not_found — the dry-run create made nothing,
+// so the smoke name can never exist yet. The plan names the smoke target
+// and the template it was validated against.
+func TestRunDryTemplateValidatesMissingTarget(t *testing.T) {
+	newRunEnv(t)
+	restore, fake := session.AmpSwapForTest("T-44444444-4444-4444-8444-444444444444", nil)
+	defer restore()
+	target := "task-smoke-probe@" + address.LocalHostName()
+	res, rerr := Env{}.Run(context.Background(), RunRequest{
+		Address: target, Text: "smoke check", Template: "probe", DryRun: true,
+	})
+	if rerr != nil {
+		t.Fatalf("templated dry run: %v", rerr)
+	}
+	if !res.OK || !res.DryRun || len(res.Plan) == 0 {
+		t.Fatalf("result = %+v, want ok dry run with a plan", res)
+	}
+	if res.Address != target {
+		t.Fatalf("address = %q, want %q", res.Address, target)
+	}
+	flat := strings.Join(res.Plan, "; ")
+	if !strings.Contains(flat, "task-smoke-probe@") || !strings.Contains(flat, "probe") {
+		t.Fatalf("plan = %q, want the smoke target and template", flat)
+	}
+	if len(fake.Argv) != 0 {
+		t.Fatalf("dry run spawned amp: %q", fake.Argv)
+	}
+}
+
+// TestRunDryTemplateRefusesMissingTemplate keeps the template honest: a
+// templated dry run against a template that doesn't exist refuses as
+// not_found for the template — it must never pass as a missing target.
+func TestRunDryTemplateRefusesMissingTemplate(t *testing.T) {
+	newRunEnv(t)
+	restore, _ := session.AmpSwapForTest("T-44444444-4444-4444-8444-444444444444", nil)
+	defer restore()
+	_, rerr := Env{}.Run(context.Background(), RunRequest{
+		Address: "task-smoke-probe@" + address.LocalHostName(),
+		Text:    "smoke check", Template: "ghost", DryRun: true,
+	})
+	wantReason(t, rerr, safesend.ReasonNotFound)
+	if !strings.Contains(AsError(rerr).Detail, "ghost") {
+		t.Fatalf("refusal names the target, not the template: %v", rerr)
+	}
+}
+
+// TestRunTemplateIsDryRunOnly refuses Template on a real run and on a
+// templated continue: a continue needs the thread's own instance, not a
+// stand-in, and a real run must never validate against someone else's
+// workdir.
+func TestRunTemplateIsDryRunOnly(t *testing.T) {
+	newRunEnv(t)
+	restore, fake := session.AmpSwapForTest("T-44444444-4444-4444-8444-444444444444", nil)
+	defer restore()
+	_, rerr := Env{}.Run(context.Background(), RunRequest{
+		Address: localAddr(""), Text: "hi", Template: "probe",
+	})
+	wantReason(t, rerr, safesend.ReasonInvalid)
+	_, rerr = Env{}.Run(context.Background(), RunRequest{
+		Address: localAddr("T-44444444-4444-4444-8444-444444444444"),
+		Text: "again", Template: "probe", DryRun: true,
+	})
+	wantReason(t, rerr, safesend.ReasonInvalid)
+	if len(fake.Argv) != 0 {
+		t.Fatalf("refused run spawned amp: %q", fake.Argv)
+	}
+}

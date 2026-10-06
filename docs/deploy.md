@@ -53,15 +53,19 @@ The dry-run create names the `task-smoke-deploy` instance, so it fits the
 fleet's gateway create grants (`task-*@<host>`); the grant stays narrow by
 design (AMUX-26). `-smoke-name NAME` picks another name when a host grants
 a different pattern. The dry-run run targets the smoke name too, not the
-template — the fleet's run grants cover `task-*` sessions only (AMUX-27).
-A host whose gateway still refuses the create as forbidden is reported as
+template — the fleet's run grants cover `task-*` sessions only (AMUX-27) —
+and validates against the template: the dry-run create made nothing, so
+the smoke instance can never exist yet, and the run checks what a real
+run of the smoke name would need (the template exists and is amp, its
+workdir/mode/thread path check out, the smoke name is one a create could
+make) without looking the smoke name up. A host whose gateway still
+refuses the create as forbidden is reported as
 skipped — `deploy: smoke <host> skipped (no create grant for a smoke name:
 ...; grant a task-* create or rerun with -smoke-name NAME)` — and its run
 check still runs against the smoke name, rather than failing the deploy.
-A forbidden run skips the same way; a run that finds no smoke session
-after a skipped create skips as well, since the dry-run create made
-nothing. Only a run that finds no session after a passed create fails —
-the smoke name should exist.
+A forbidden run skips the same way. A run refusal for a missing template
+fails — the template must exist — and `not_found` for the smoke name is
+gone: the templated dry run never looks it up.
 
 ```text
 deploy: pinned /usr/local/bin/agentmux (5b7072e48fe8)
@@ -81,7 +85,7 @@ The two dry runs are also available directly, for use outside deploy:
 agentmux sessions create -template web@build-box -instance task-42 \
   -branch feature/task-42 -base main -dry-run
 echo "smoke check" > /tmp/prompt.txt
-agentmux sessions run -dry-run -file /tmp/prompt.txt 'web@build-box'
+agentmux sessions run -dry-run -template web -file /tmp/prompt.txt 'task-42@build-box'
 ```
 
 `-dry-run` on `create` checks names, the template, the instance clash,
@@ -89,5 +93,8 @@ and fetches `origin/<base>` (a stale or missing remote base still
 refuses), but creates no worktree, branch, instance, registry entry or
 env-file. `-dry-run` on `run` validates address, text, instance,
 workdir, host config, mode shape and title, but starts no amp thread
-(the AMUX-22 no-spawn contract, enforced by test). Both need the same
-grants as the real operation.
+(the AMUX-22 no-spawn contract, enforced by test). `-template` (dry-run
+only) validates against an existing amp instance instead of the target,
+for targets a dry-run create just named but never made — a missing
+template refuses as `not_found`, while the missing target never does.
+Both need the same grants as the real operation.

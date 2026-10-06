@@ -27,8 +27,10 @@ type runOutput struct {
 // runSessionsRun is `agentmux sessions run`: start an amp thread on an
 // instance (or continue one with -thread) by running a prompt through the
 // amp CLI in the instance's workdir, locally or through that host's
-// gateway. See docs/amp-run.md and ops.Env.Run. Exit 0 ran, 1 refused or
-// failed, 2 usage.
+// gateway. -template is dry-run only: validate against an existing amp
+// instance instead of the target, for targets that don't exist yet (the
+// deploy smoke test's dry-run create makes nothing). See docs/amp-run.md
+// and ops.Env.Run. Exit 0 ran, 1 refused or failed, 2 usage.
 func runSessionsRun(args []string) {
 	fs := flag.NewFlagSet("sessions run", flag.ExitOnError)
 	jsonOut := fs.Bool("json", false, "print machine-readable JSON (also on refusal)")
@@ -36,11 +38,12 @@ func runSessionsRun(args []string) {
 	thread := fs.String("thread", "", "continue this amp thread id instead of starting a new thread")
 	title := fs.String("title", "", "title a new thread (\"<task id> <task name>\" from the dispatcher); ignored when continuing")
 	dryRun := fs.Bool("dry-run", false, "validate the run without starting any amp thread (deploy smoke test)")
+	template := fs.String("template", "", "dry-run only: validate against this existing amp instance instead of the target, which may not exist yet (deploy smoke test)")
 	socketPath := fs.String("socket", daemoninstall.SocketPath(), "Unix socket of the local agentmuxd")
 	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml with the gateway URL of other hosts")
 	fs.Parse(args)
 	if fs.NArg() != 1 || *file == "" {
-		fmt.Fprintln(os.Stderr, "usage: agentmux sessions run [-json] [-dry-run] [-socket PATH] [-hosts PATH] [-thread THREAD_ID] [-title TEXT] -file PATH|- <instance>@<host>[#<thread>]")
+		fmt.Fprintln(os.Stderr, "usage: agentmux sessions run [-json] [-dry-run] [-socket PATH] [-hosts PATH] [-thread THREAD_ID] [-title TEXT] [-template NAME] -file PATH|- <instance>@<host>[#<thread>]")
 		os.Exit(2)
 	}
 	// Task sessions refuse unless this is itself a dry run (see liveguard),
@@ -69,7 +72,7 @@ func runSessionsRun(args []string) {
 		failRun(*jsonOut, addrText, safesend.ReasonInvalid, err.Error())
 	}
 
-	req := ops.RunRequest{Address: addrText, Text: text, Title: *title, DryRun: *dryRun}
+	req := ops.RunRequest{Address: addrText, Text: text, Title: *title, DryRun: *dryRun, Template: *template}
 	var res ops.RunResult
 	route, rerr := resolveRoute(req.Address, *hostsPath, address.LocalHostName())
 	switch {
@@ -80,7 +83,7 @@ func runSessionsRun(args []string) {
 		ctx, cancel := context.WithTimeout(context.Background(), gatewayclient.RunTimeout+time.Minute)
 		defer cancel()
 		var rerr error
-		res, rerr = route.Remote.Run(ctx, gatewayapi.RunRequest{Address: req.Address, Text: req.Text, Title: req.Title, DryRun: req.DryRun})
+		res, rerr = route.Remote.Run(ctx, gatewayapi.RunRequest{Address: req.Address, Text: req.Text, Title: req.Title, DryRun: req.DryRun, Template: req.Template})
 		if rerr != nil {
 			e := ops.AsError(rerr)
 			failRun(*jsonOut, req.Address, e.Reason, e.Detail)

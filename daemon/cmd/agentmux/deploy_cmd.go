@@ -417,10 +417,12 @@ func deploySmokeTest(ctx context.Context, socketPath, hostsPath, template, base,
 }
 
 // deploySmokeHost runs the smoke check on one host: a dry-run create of
-// the smoke instance from the template, then a dry-run run on the smoke
-// name (not the template — the fleet's run grants cover task-* sessions
-// only; see deploySmokeTest). A forbidden create or run is skipped, not
-// failed; anything else that fails fails the deploy.
+// the smoke instance from the template, then a dry-run run of the smoke
+// name validated against the template — the fleet's run grants cover
+// task-* sessions only (see deploySmokeTest), and the dry-run create
+// made nothing, so the run must not need the smoke instance to exist
+// (AMUX-27). A forbidden create or run is skipped, not failed; anything
+// else that fails fails the deploy.
 //
 // A skipped run after a passed create reports both: the create proved
 // the dispatch path, the run just has no grant for the smoke name yet.
@@ -460,12 +462,12 @@ func deploySmokeHost(ctx context.Context, socketPath string, t deployTarget, loc
 		fmt.Printf("deploy: smoke %-12s skipped (no create grant for a smoke name: %s; grant a task-* create or rerun with -smoke-name NAME)\n", t.name, e.Detail)
 	}
 	rreq := ops.RunRequest{
-		Address: runAddr,
+		Address: runAddr, Template: tmpl,
 		Text:    "deploy smoke test: reply with exactly: ok",
 		DryRun:  true,
 	}
 	rres, rerr := deployRunOn(ctx, socketPath, t, local, rreq)
-	if rerr != nil && smokeRunSkippable(rerr, cerr == nil) {
+	if rerr != nil && smokeRunSkippable(rerr) {
 		e := ops.AsError(rerr)
 		switch {
 		case cerr != nil:
@@ -500,22 +502,15 @@ func smokeCreateSkippable(err error) bool {
 }
 
 // smokeRunSkippable reports whether a failed smoke run is a skip, not a
-// deploy failure. When the dry-run create failed (skipped), the smoke
-// session was never made, so the run against it stops at a not_found:
-// nothing ran, nothing broke, and the host is skipped with the fix. A
-// forbidden run skips on its own: the remote grants run only on task-*
-// sessions, and a grant that doesn't cover the smoke name is not deploy's
-// call to widen. When the create passed, a not_found run is a real
-// failure — the smoke instance should exist.
-func smokeRunSkippable(err error, createPassed bool) bool {
-	switch ops.AsError(err).Reason {
-	case safesend.ReasonForbidden:
-		return true
-	case safesend.ReasonNotFound:
-		return !createPassed
-	default:
-		return false
-	}
+// deploy failure: the remote gateway refused it as forbidden, so no run
+// pattern granted to this host fits the smoke name. The grant is
+// deliberately narrow (task sessions); widening it is not deploy's call.
+// A templated dry run never reports not_found for the smoke name — it
+// validates against the template precisely so the target need not exist
+// yet — so every other refusal, including not_found for a missing
+// template, fails the deploy.
+func smokeRunSkippable(err error) bool {
+	return ops.AsError(err).Reason == safesend.ReasonForbidden
 }
 
 // deployHostTemplate resolves the smoke template for one host: that host's
@@ -653,6 +648,8 @@ func deployCreateOn(ctx context.Context, socketPath string, t deployTarget, loca
 }
 
 // deployRunOn runs a run on one host, locally or through its gateway.
+// A dry-run template names an instance on the target host, so it rides
+// along unchanged: the remote host resolves it against its own registry.
 func deployRunOn(ctx context.Context, socketPath string, t deployTarget, local string, req ops.RunRequest) (ops.RunResult, error) {
 	if t.name != local {
 		if t.gateway == "" {
@@ -661,6 +658,7 @@ func deployRunOn(ctx context.Context, socketPath string, t deployTarget, local s
 		c := &gatewayclient.Client{BaseURL: t.gateway, HTTP: &http.Client{}, Host: t.name}
 		return c.Run(ctx, gatewayapi.RunRequest{
 			Address: req.Address, Text: req.Text, Title: req.Title, DryRun: req.DryRun,
+			Template: req.Template,
 		})
 	}
 	return ops.Env{SocketPath: socketPath}.Run(ctx, req)

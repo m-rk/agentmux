@@ -806,3 +806,23 @@ func TestDryRunFlagsPassThrough(t *testing.T) {
 		t.Errorf("ungranted run: %d %s", rec.Code, rec.Body)
 	}
 }
+
+// TestDryRunTemplatePassesThrough covers the AMUX-27 smoke path through
+// the gateway: a templated dry run carries template to the backend, and a
+// templated dry run still needs the same explicit run grant as the real
+// op — the grant is checked against the smoke target, which is what the
+// fleet's task-* run grants cover.
+func TestDryRunTemplatePassesThrough(t *testing.T) {
+	h := newHarness(t, all("create", "run"))
+	rec := h.post("run", `{"address":"task-smoke-probe@hostA","text":"smoke","template":"probe","dry_run":true}`)
+	if rec.Code != 200 {
+		t.Fatalf("templated dry-run run: %d %s", rec.Code, rec.Body)
+	}
+	if got := h.backend.ran[0]; !got.DryRun || got.Template != "probe" {
+		t.Errorf("backend run request = %+v, want DryRun with Template probe", got)
+	}
+	h2 := newHarness(t, all("list"))
+	if rec := h2.post("run", `{"address":"task-smoke-probe@hostA","text":"smoke","template":"probe","dry_run":true}`); rec.Code != 403 {
+		t.Errorf("ungranted templated run: %d %s", rec.Code, rec.Body)
+	}
+}

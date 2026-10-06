@@ -36,7 +36,9 @@ from amp's own error), `not_found`, `unsupported` (not an amp instance),
 
 `-dry-run` validates everything a real run would — address, text,
 instance, workdir, host config, mode shape, thread id and title — but
-starts no amp thread; see [Deploy](deploy.md).
+starts no amp thread; see [Deploy](deploy.md). `-template NAME`
+(dry-run only) validates against an existing amp instance instead of
+the target, for targets that don't exist yet.
 
 ## Thread titles
 
