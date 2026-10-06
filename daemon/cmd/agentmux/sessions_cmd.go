@@ -38,6 +38,8 @@ const sessionsUsage = `usage:
                            [-base BRANCH] [-worktree NAME] [-allow-file PATH ...]
   agentmux sessions run [-json] [-dry-run] [-hosts PATH] [-thread THREAD_ID] [-title TEXT] [-template NAME] -file PATH|- <instance>@<host>[#<thread>]
   agentmux sessions retire [-json] [-dry-run] [-hosts PATH] <instance>@<host>
+  agentmux amp sweep [-json] [-dry-run] [-run-user USER]
+                               archive junk amp threads that belong to no task instance
   agentmux gc [-json] [-dry-run] [-hosts PATH] [-host NAME]`
 
 // runSessionsCmd is `agentmux sessions`: addressing and transcript access for

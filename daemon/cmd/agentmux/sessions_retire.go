@@ -109,20 +109,25 @@ func failRetire(jsonOut bool, addr string, reason, detail any) {
 }
 
 // runGCCmd is `agentmux gc`: delete the leftovers of retired sessions
-// older than the host retention (retention.yaml, default 14 days). With
-// -dry-run it only lists what would go. The first real gc on each host
-// should be a dry run shown to the operator for approval. Exit 0 done,
-// 1 failed, 2 usage.
+// older than the host retention (retention.yaml, default 14 days), and
+// delete the swept junk threads whose own retention has expired (see
+// the ampsweep package: `amp sweep` records what it archives, gc
+// deletes it after the same retention). With -dry-run it only lists
+// what would go. The first real gc on each host should be a dry run
+// shown to the operator for approval. The -run-user selects whose amp
+// account and swept records the local sweep pass uses (default:
+// auto-detected like doctor). Exit 0 done, 1 failed, 2 usage.
 func runGCCmd(args []string) {
 	fs := flag.NewFlagSet("gc", flag.ExitOnError)
 	jsonOut := fs.Bool("json", false, "print machine-readable JSON")
 	dryRun := fs.Bool("dry-run", false, "list what would go without deleting anything")
+	runUser := fs.String("run-user", "", "OS user whose amp account the local sweep pass uses (default: auto-detected like doctor)")
 	socketPath := fs.String("socket", daemoninstall.SocketPath(), "Unix socket of the local agentmuxd")
 	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml listing agentmuxd hosts to connect to")
 	host := fs.String("host", "all", "host to collect (a name from hosts.yaml, \"local\", or \"all\")")
 	fs.Parse(args)
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: agentmux gc [-json] [-dry-run] [-socket PATH] [-hosts PATH] [-host NAME]")
+		fmt.Fprintln(os.Stderr, "usage: agentmux gc [-json] [-dry-run] [-run-user USER] [-socket PATH] [-hosts PATH] [-host NAME]")
 		os.Exit(2)
 	}
 	hosts, err := loadHosts(*hostsPath, *socketPath)
@@ -151,7 +156,13 @@ func runGCCmd(args []string) {
 	// without a gateway can't run gc — the operation needs the host's
 	// own filesystem (retired records, amp CLI, sqlite), not a daemon
 	// RPC that doesn't exist.
+	//
+	// The local pass also runs the amp sweep first: junk threads belong
+	// to no instance, so no retired record could ever reach them — the
+	// sweep archives them, and the gc pass below deletes them after
+	// retention. Remote hosts sweep through their own daily gc timer.
 	results := make([]hostResult, 0, len(hosts))
+	sweeps := make([]sweepResult, 0, len(hosts))
 	for _, h := range hosts {
 		var res ops.GCResult
 		var rerr error
@@ -161,6 +172,8 @@ func runGCCmd(args []string) {
 			res, rerr = (&gatewayclient.Client{BaseURL: h.Gateway, Host: h.Name}).GC(ctx, gatewayapi.GCRequest{DryRun: *dryRun})
 			cancel()
 		case h.Address == "" || h.Address == "unix://"+*socketPath || address.Canonical(h.Name) == address.LocalHostName():
+			sw := runLocalSweep(*dryRun, *runUser)
+			sweeps = append(sweeps, sweepResult{host: h.Name, res: sw.res, err: sw.err})
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			res, rerr = ops.Env{SocketPath: *socketPath}.GC(ctx, ops.GCRequest{DryRun: *dryRun})
 			cancel()
@@ -177,16 +190,52 @@ func runGCCmd(args []string) {
 			failed = true
 		}
 	}
+	for _, s := range sweeps {
+		if s.err != nil {
+			// The sweep is best-effort inside gc: a broken amp login
+			// must not fail the retired-session collection. The
+			// error still surfaces, and the next daily run retries.
+			fmt.Fprintf(os.Stderr, "amp sweep on %s: %v\n", s.host, s.err)
+		}
+	}
 	if failed {
 		os.Exit(1)
 	}
 	if *jsonOut {
 		out := make([]map[string]any, 0, len(results))
 		for _, r := range results {
-			out = append(out, map[string]any{"host": r.host, "gc": r.res.GCResult})
+			entry := map[string]any{"host": r.host, "gc": r.res.GCResult}
+			for _, s := range sweeps {
+				if s.host == r.host && (s.err != nil || s.res.Examined != 0 || len(s.res.Candidates) != 0) {
+					entry["sweep"] = s.res
+					if s.err != nil {
+						entry["sweep_error"] = s.err.Error()
+					}
+				}
+			}
+			out = append(out, entry)
 		}
 		writeJSON(out)
 		return
+	}
+	for _, s := range sweeps {
+		if s.err != nil {
+			continue
+		}
+		verb := "sweep archived"
+		if s.res.DryRun {
+			verb = "sweep would archive"
+		}
+		if len(s.res.Candidates) == 0 && len(s.res.Warnings) == 0 {
+			continue
+		}
+		fmt.Printf("%s on %s (%d examined):\n", verb, s.host, s.res.Examined)
+		for _, c := range s.res.Candidates {
+			fmt.Printf("  - archived %s: %s\n", c.ID, c.Reason)
+		}
+		for _, w := range s.res.Warnings {
+			fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+		}
 	}
 	for _, r := range results {
 		verb := "collected"

@@ -33,6 +33,8 @@ func main() {
 		runListCmd(args[1:])
 	case "sessions":
 		runSessionsCmd(args[1:])
+	case "amp":
+		runAmpCmd(args[1:])
 	case "gc":
 		runGCCmd(args[1:])
 	case "control":
@@ -93,6 +95,8 @@ Usage:
                                deliver one message with readiness checks, provenance and audit
   agentmux sessions create -template ADDR -instance NAME -branch B [-base BRANCH] [-worktree NAME] [-allow-file PATH ...]
                                start a task session in a new Git worktree on that host (local or through its gateway)
+  agentmux amp sweep [-json] [-dry-run] [-run-user USER]
+                               archive junk amp threads that belong to no task instance
   agentmux control ...         start/stop/restart an instance without an attached terminal
   agentmux view -instance NAME        headless read-only snapshot of an instance's tmux pane
   agentmux send-keys -instance NAME KEY...   headless equivalent of typing into an instance's pane
