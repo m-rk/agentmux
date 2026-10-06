@@ -20,7 +20,13 @@ type buttonStyleServer struct {
 }
 
 func (b *buttonStyleServer) server(t *testing.T) *httptest.Server {
-	forum := Channel{ID: "forum", GuildID: "guild", Type: 15, AvailableTags: []ForumTag{{"t-ask", "ask"}, {"t-pending", "pending"}}}
+	forum := Channel{ID: "forum", GuildID: "guild", Type: 15, AvailableTags: []ForumTag{
+		{"t-task", "task"}, {"t-epic", "epic"}, {"t-idea", "idea"},
+		{"t-needsme", "needs me"}, {"t-working", "working"}, {"t-blocked", "blocked"},
+		{"t-parked", "parked"}, {"t-notnow", "not now"}, {"t-done", "done"}, {"t-failed", "failed"},
+		{"t-ask", "ask"}, {"t-pending", "pending"}, {"t-answered", "answered"}, {"t-launched", "launched"},
+		{"t-proj", "mergentic"},
+	}}
 	if b.emojis == nil {
 		b.emojis = []GuildEmoji{{ID: "emoji-amp-id", Name: "amp"}, {ID: "emoji-claude-id", Name: "claude"}}
 	}

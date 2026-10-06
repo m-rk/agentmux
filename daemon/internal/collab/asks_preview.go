@@ -78,19 +78,29 @@ func (c *Client) PreviewPost(title, body string, extraTags []string, opts AskOpt
 	if err != nil {
 		return AskPreview{}, err
 	}
-	tags := append([]string{AskTagName, "pending"}, extraTags...)
-	for _, name := range tags {
-		found := false
-		for _, have := range forumTags {
-			if strings.EqualFold(have, name) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return AskPreview{}, fmt.Errorf("the forum has no %q tag; create it by hand (Edit Channel → Tags)", name)
+	forum := Channel{AvailableTags: nil}
+	for _, name := range forumTags {
+		forum.AvailableTags = append(forum.AvailableTags, ForumTag{ID: "preview-" + name, Name: name})
+	}
+	tags, err := swapStateTags(forum, nil, "task", extraTags)
+	if err != nil {
+		return AskPreview{}, err
+	}
+	if !hasStateTag(forum, tags) {
+		tags, err = swapStateTags(forum, tags, DefaultOpenTag, nil)
+		if err != nil {
+			return AskPreview{}, err
 		}
 	}
+	names := make([]string, 0, len(tags))
+	byID := map[string]string{}
+	for _, t := range forum.AvailableTags {
+		byID[t.ID] = t.Name
+	}
+	for _, id := range tags {
+		names = append(names, byID[id])
+	}
+	tags = names
 	return AskPreview{
 		Kind:            "post",
 		Title:           clean,

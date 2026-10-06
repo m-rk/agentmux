@@ -19,7 +19,11 @@ type fakeAsks struct {
 
 func (f *fakeAsks) server(t *testing.T, threads map[string]Channel, messages []Message) *httptest.Server {
 	forum := Channel{ID: "forum", GuildID: "guild", Type: 15, AvailableTags: []ForumTag{
-		{"t-ask", "ask"}, {"t-pending", "pending"}, {"t-answered", "answered"}, {"t-failed", "failed"}, {"t-proj", "mergentic"},
+		{"t-task", "task"}, {"t-epic", "epic"}, {"t-idea", "idea"},
+		{"t-needsme", "needs me"}, {"t-working", "working"}, {"t-blocked", "blocked"},
+		{"t-parked", "parked"}, {"t-notnow", "not now"}, {"t-done", "done"}, {"t-failed", "failed"},
+		{"t-ask", "ask"}, {"t-pending", "pending"}, {"t-answered", "answered"}, {"t-launched", "launched"},
+		{"t-proj", "mergentic"},
 	}}
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -75,7 +79,7 @@ func TestPostAskMentionsOnlyConfiguredUser(t *testing.T) {
 		t.Fatalf("allowed_mentions = %#v", am)
 	}
 	tags := p["applied_tags"].([]any)
-	if len(tags) != 3 || tags[0] != "t-ask" || tags[1] != "t-pending" || tags[2] != "t-proj" {
+	if len(tags) != 3 || tags[0] != "t-task" || tags[1] != "t-proj" || tags[2] != "t-needsme" {
 		t.Fatalf("tags = %#v", tags)
 	}
 	if p["thread_name"] != "Launch X?" {
@@ -145,13 +149,13 @@ func TestReadAskFlagsConfiguredUser(t *testing.T) {
 
 func TestCloseAskSwapsOutcomeTagAndArchives(t *testing.T) {
 	f := &fakeAsks{}
-	s := f.server(t, map[string]Channel{"900": {ID: "900", ParentID: "forum", AppliedTags: []string{"t-ask", "t-pending", "t-proj"}}}, nil)
+	s := f.server(t, map[string]Channel{"900": {ID: "900", ParentID: "forum", AppliedTags: []string{"t-task", "t-pending", "t-proj"}}}, nil)
 	defer s.Close()
 	if err := asksClientFor(s.URL).CloseAsk(context.Background(), "900", "failed", true); err != nil {
 		t.Fatal(err)
 	}
 	tags := f.patched["applied_tags"].([]any)
-	if len(tags) != 3 || tags[0] != "t-ask" || tags[1] != "t-proj" || tags[2] != "t-failed" {
+	if len(tags) != 3 || tags[0] != "t-task" || tags[1] != "t-proj" || tags[2] != "t-failed" {
 		t.Fatalf("tags = %#v", tags)
 	}
 	if f.patched["archived"] != true || f.patched["locked"] != true {
@@ -160,13 +164,16 @@ func TestCloseAskSwapsOutcomeTagAndArchives(t *testing.T) {
 	if err := asksClientFor(s.URL).CloseAsk(context.Background(), "900", "bogus", false); err == nil {
 		t.Fatal("unknown outcome accepted")
 	}
+	if err := asksClientFor(s.URL).CloseAsk(context.Background(), "900", "pending", false); err == nil {
+		t.Fatal("retired outcome accepted")
+	}
 }
 
 func TestCloseAskWithoutLockLeavesThreadReopenable(t *testing.T) {
 	f := &fakeAsks{}
-	s := f.server(t, map[string]Channel{"900": {ID: "900", ParentID: "forum", AppliedTags: []string{"t-ask", "t-pending"}}}, nil)
+	s := f.server(t, map[string]Channel{"900": {ID: "900", ParentID: "forum", AppliedTags: []string{"t-task", "t-working"}}}, nil)
 	defer s.Close()
-	if err := asksClientFor(s.URL).CloseAsk(context.Background(), "900", "answered", false); err != nil {
+	if err := asksClientFor(s.URL).CloseAsk(context.Background(), "900", "", false); err != nil {
 		t.Fatal(err)
 	}
 	if f.patched["archived"] != true || f.patched["locked"] != false {
@@ -176,17 +183,17 @@ func TestCloseAskWithoutLockLeavesThreadReopenable(t *testing.T) {
 
 func TestPostAskInThreadReopensAndMentions(t *testing.T) {
 	f := &fakeAsks{}
-	s := f.server(t, map[string]Channel{"900": {ID: "900", ParentID: "forum", AppliedTags: []string{"t-ask", "t-answered", "t-proj"}}}, nil)
+	s := f.server(t, map[string]Channel{"900": {ID: "900", ParentID: "forum", AppliedTags: []string{"t-task", "t-answered", "t-proj"}}}, nil)
 	defer s.Close()
 	id, err := asksClientFor(s.URL).PostAskInThread(context.Background(), "900", "MERG-4 combine tasks", "next question @everyone", nil, AskOptions{})
 	if err != nil || id != "500" {
 		t.Fatalf("got %q %v", id, err)
 	}
 	tags := f.patched["applied_tags"].([]any)
-	if len(tags) != 3 || tags[0] != "t-ask" || tags[1] != "t-proj" || tags[2] != "t-pending" {
+	if len(tags) != 3 || tags[0] != "t-task" || tags[1] != "t-proj" || tags[2] != "t-needsme" {
 		t.Fatalf("tags = %#v", tags)
 	}
-	if f.patched["archived"] != false || f.patched["locked"] != false || f.patched["name"] != "MERG-4 combine tasks" {
+	if f.patched["archived"] != false || f.patched["auto_archive_duration"] != float64(10080) || f.patched["name"] != "MERG-4 combine tasks" {
 		t.Fatalf("patched = %#v", f.patched)
 	}
 	if len(f.hook) != 1 || !strings.Contains(f.hookQ[0], "thread_id=900") || !strings.HasPrefix(f.hook[0]["content"].(string), "<@777>\n") {
@@ -227,7 +234,9 @@ func TestReadAskAfterPassesCursor(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/channels/forum":
-			writeJSON(t, w, Channel{ID: "forum", AvailableTags: []ForumTag{{"t-ask", "ask"}}})
+			writeJSON(t, w, Channel{ID: "forum", AvailableTags: []ForumTag{
+				{"t-task", "task"}, {"t-ask", "ask"},
+			}})
 		case strings.HasSuffix(r.URL.Path, "/messages"):
 			after = r.URL.Query().Get("after")
 			writeJSON(t, w, []Message{})
@@ -248,16 +257,21 @@ func TestCollabSkipsAskThreads(t *testing.T) {
 	s = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/channels/forum":
-			writeJSON(t, w, Channel{ID: "forum", GuildID: "g", AvailableTags: []ForumTag{{"t-ask", "ask"}}})
+			writeJSON(t, w, Channel{ID: "forum", GuildID: "g", AvailableTags: []ForumTag{
+				{"t-task", "task"}, {"t-ask", "ask"},
+			}})
 		case r.URL.Path == "/api/guilds/g/threads/active":
 			writeJSON(t, w, threadList{Threads: []Channel{
 				{ID: "1", ParentID: "forum", Name: "[proj] normal"},
-				{ID: "2", ParentID: "forum", Name: "[proj] an ask", AppliedTags: []string{"t-ask"}},
+				{ID: "2", ParentID: "forum", Name: "AMUX-35 working", AppliedTags: []string{"t-task", "t-working"}},
+				{ID: "3", ParentID: "forum", Name: "[proj] legacy ask", AppliedTags: []string{"t-ask"}},
 			}})
 		case strings.HasSuffix(r.URL.Path, "/threads/archived/public"):
 			writeJSON(t, w, threadList{})
 		case r.URL.Path == "/api/channels/2":
-			writeJSON(t, w, Channel{ID: "2", ParentID: "forum", Name: "[proj] an ask", AppliedTags: []string{"t-ask"}})
+			writeJSON(t, w, Channel{ID: "2", ParentID: "forum", Name: "[proj] an ask", AppliedTags: []string{"t-task", "t-working"}})
+		case r.URL.Path == "/api/channels/3":
+			writeJSON(t, w, Channel{ID: "3", ParentID: "forum", Name: "[proj] legacy ask", AppliedTags: []string{"t-ask"}})
 		default:
 			http.NotFound(w, r)
 		}
@@ -269,6 +283,9 @@ func TestCollabSkipsAskThreads(t *testing.T) {
 		t.Fatalf("threads = %v %v", threads, err)
 	}
 	if _, err := c.RelevantThread(context.Background(), "2", "proj"); err == nil {
-		t.Fatal("ask thread readable via collab read")
+		t.Fatal("task thread readable via collab read")
+	}
+	if _, err := c.RelevantThread(context.Background(), "3", "proj"); err == nil {
+		t.Fatal("legacy ask thread readable via collab read")
 	}
 }

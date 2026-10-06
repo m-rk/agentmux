@@ -27,22 +27,31 @@ or credential.
 
 2. Create these forum tags by hand (**Edit Channel → Tags**). agentmux does
    not create them, because that would need the bot to have Manage Channels,
-   a far broader permission than anything else here:
+   a far broader permission than anything else here. Tags describe the
+   thread, not the ask (see MERG-37): every task thread carries exactly one
+   type tag and exactly one state tag.
 
-   - `ask` (required: it marks ask posts)
-   - `pending`, `launched`, `not now`, `failed`, `answered` (outcome tags)
+   - Type (one per thread, set at creation): `task`, `epic`, `idea`
+   - State (one per thread, kept current): `needs me`, `working`, `blocked`,
+     `parked`, `not now`, `done`, `failed`
    - optionally one per project; pass it with `-tag NAME`
+   - Retired: `ask`, `pending`, `launched`, `answered`. Threads created
+     before the retag may still carry them; agentmux honours the `ask` tag
+     in its forum gate until Mark deletes the old tags from the forum.
 
-   A command that needs a tag the forum lacks fails with a message naming it.
+   A command that needs a tag the forum lacks fails naming it and the valid
+   ones (agentmux re-reads the forum once first, in case the tag was just
+   created).
 
 3. Give the bot **Manage Threads**, on the collaboration forum only, as a
-   channel permission override (not server-wide). This is needed only for
-   `asks close` and `asks post -thread`, which set tags and archive, unarchive
-   or lock the thread. A webhook
+   channel permission override (not server-wide). This is needed for
+   `asks close`, `asks post -thread` and `asks tag`, which set tags and
+   archive, unarchive or lock the thread. A webhook
    can't edit threads, and Manage Threads is the smallest permission that
    can. It lets the bot manage every thread in that forum, so agentmux
-   refuses to touch anything that is not an `ask`-tagged post in the
-   configured forum. Post, reply and read need no extra permission. Posting
+   refuses to touch anything that is not a task thread (a type tag, or the
+   retired `ask` tag) in the configured forum. Post, reply and read need no
+   extra permission. Posting
    and replying use the webhook and reading uses the bot's existing View
    Channels and Read Message History. `asks react` needs **Add Reactions**,
    and `asks edit` needs **Send Messages in Threads** (message edits go
@@ -70,7 +79,10 @@ agentmux asks edit -thread ID -message ID [-body-file F] [-disable-buttons] [-ch
 
 agentmux asks serve   # long-running: records button clicks (buttons only)
 
-agentmux asks close -thread ID [-tag NAME] [-lock]   # default tag: answered
+agentmux asks tag -thread ID -set "task,working" [-unarchive]
+# replace the thread's tags with exactly these (a retag never posts)
+
+agentmux asks close -thread ID [-tag NAME] [-lock]   # default tag: done
 ```
 
 - `list` shows the asks forum's threads — thread id, title, applied tags
@@ -89,8 +101,8 @@ agentmux asks close -thread ID [-tag NAME] [-lock]   # default tag: answered
   (title, content with the mention, tags, buttons, reactions) instead of
   sending it — the safe way to check real rendering from a test or task
   session. `post -thread ID -dry-run` names the target thread without
-  renaming, reopening, or posting into it. All five sending commands
-  (`post`, `reply`, `react`, `edit`, `close`), `sessions send`, `sessions
+  renaming, reopening, or posting into it. The sending commands
+  (`post`, `reply`, `react`, `edit`, `close`, `tag`), `sessions send`, `sessions
   run` (except its own `-dry-run`), `deploy`, and `daemon install` refuse
   inside a task session with "task sessions can't touch live Discord or
   other sessions; use fakes or -dry-run". A task session is any process
@@ -105,14 +117,29 @@ agentmux asks close -thread ID [-tag NAME] [-lock]   # default tag: answered
 
 - `-body-file -` reads the body from stdin. Bodies are limited to 2000
   characters including the mention.
-- `post` applies `ask` and `pending` plus any `-tag`s (Discord allows five
-  per post), and opens the body with `<@user>`.
-- `post -thread ID` adds an ask message to an existing `ask`-tagged thread
+- `post` applies `task` and `needs me` plus any `-tag`s (Discord allows five
+  per post), and opens the body with `<@user>`. A `-tag` naming a state tag
+  (e.g. `-tag blocked`) replaces the default `needs me`; type and project
+  tags are kept alongside. New posts also get the longest auto-archive
+  duration (7 days), so live task threads stay open.
+- `post -thread ID` adds an ask message to an existing task thread
   instead of creating a post. It @-mentions the configured user, unarchives
-  and unlocks the thread if needed, swaps any outcome tag for `pending` (plus
+  the thread if needed (unlocked only; archived threads reopen with the
+  longest auto-archive duration, and are left unlocked so the next ask can
+  reopen them), swaps any state tag for `needs me` (plus
   any `-tag`s), and returns the new `message_id`. `-title` renames the thread;
   without it the name is kept. The thread edit needs Manage Threads. Use the
   returned `message_id` as `read -after` to get the replies to that ask.
+- `tag` replaces the thread's applied tags with exactly `-set` (e.g.
+  `-set "task,working"`), resolved by name from the forum's available tags.
+  An unknown name fails with the list of valid ones. The thread must be open:
+  applying tags to an archived thread fails (Discord error 50083), so add
+  `-unarchive` to unarchive it first (a retag posts nothing, so this needs
+  Manage Threads) and re-archive after. A locked thread can't be unarchived
+  this way — unlock it by hand first. Without Manage Threads the only way to
+  unarchive an unlocked thread is to post a reply in it (Send Messages in
+  Threads auto-unarchives); `asks post -thread` already does this, and
+  mergentic's reconciler uses reply-then-close for archived orphans.
 - On create, `-title` is the thread name (up to 100 characters), e.g.
   `MERG-4 combine related ready tasks…`.
 - `reply` only mentions with `-mention`.
@@ -120,12 +147,14 @@ agentmux asks close -thread ID [-tag NAME] [-lock]   # default tag: answered
   `author_is_configured_user` is true only for a real message from the
   configured user, so mergentic can pick out replies after the opening post
   with `-after <message_id>`.
-- `close` swaps any existing outcome tag (`pending`, `launched`, `not now`,
-  `failed`, `answered`) for the one given, keeps other tags, then archives
+- `close` swaps any existing state tag (or retired outcome tag) for the one
+  given — any state tag by name, default `done` — keeps type and project
+  tags, then archives
   the thread. It does not lock it, so the next `post -thread` can reopen it;
   add `-lock` for a task that's finished.
-- `post -thread`, `reply`, `read`, `react`, `edit` and `close` refuse threads
-  that aren't `ask`-tagged posts in the configured forum.
+- `post -thread`, `reply`, `read`, `react`, `edit`, `close` and `tag` refuse
+  threads that aren't task threads (a type tag, or the retired `ask` tag) in
+  the configured forum.
 - `react` has the bot add one emoji to a posted message (e.g. 🤖 once an
   autopilot or orchestrator has answered the ask outside Discord), so the
   post shows the choice with no person clicking. Needs Add Reactions, like
@@ -243,9 +272,11 @@ still map by label.
 
 ## Keeping asks out of session context
 
-`agentmux collab read` and the collaboration digest skip any thread tagged
-`ask`, and `collab read -thread` refuses one, so sessions never pick asks up
-as project context. This only works while the forum has an `ask` tag.
+`agentmux collab read` and the collaboration digest skip every thread
+carrying a task type tag (`task`, `epic`, `idea`, or the retired `ask` tag),
+and `collab read -thread` refuses one, so sessions never pick asks up
+as project context. Collab threads share the same forum but carry no type
+tag, so they still flow through.
 
 ## Not included
 

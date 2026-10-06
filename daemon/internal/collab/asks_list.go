@@ -60,8 +60,6 @@ func (c *Client) ListAsks(ctx context.Context, opts ListAsksOptions) ([]AskThrea
 	for _, t := range forum.AvailableTags {
 		names[t.ID] = t.Name
 	}
-	askTag := tagID(forum.AvailableTags, AskTagName)
-
 	var wantTag string
 	if opts.Tag != "" {
 		wantTag = tagID(forum.AvailableTags, opts.Tag)
@@ -115,7 +113,7 @@ func (c *Client) ListAsks(ctx context.Context, opts ListAsksOptions) ([]AskThrea
 			continue
 		}
 		seen[th.ID] = true
-		if askTag == "" || !hasTag(th.AppliedTags, askTag) {
+		if !isAskThread(forum, th) {
 			continue
 		}
 		if wantTag != "" && !hasTag(th.AppliedTags, wantTag) {

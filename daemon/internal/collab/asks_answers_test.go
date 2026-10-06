@@ -30,7 +30,13 @@ type answersServer struct {
 }
 
 func (a *answersServer) server(t *testing.T) *httptest.Server {
-	forum := Channel{ID: "forum", GuildID: "guild", Type: 15, AvailableTags: []ForumTag{{"t-ask", "ask"}, {"t-pending", "pending"}}}
+	forum := Channel{ID: "forum", GuildID: "guild", Type: 15, AvailableTags: []ForumTag{
+		{"t-task", "task"}, {"t-epic", "epic"}, {"t-idea", "idea"},
+		{"t-needsme", "needs me"}, {"t-working", "working"}, {"t-blocked", "blocked"},
+		{"t-parked", "parked"}, {"t-notnow", "not now"}, {"t-done", "done"}, {"t-failed", "failed"},
+		{"t-ask", "ask"}, {"t-pending", "pending"}, {"t-answered", "answered"}, {"t-launched", "launched"},
+		{"t-proj", "mergentic"},
+	}}
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
 		defer a.mu.Unlock()
@@ -211,7 +217,9 @@ func TestReadAskAfterIncludesAnsweredAnchor(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
 		case "/api/channels/forum":
-			writeJSON(t, w, Channel{ID: "forum", AvailableTags: []ForumTag{{"t-ask", "ask"}}})
+			writeJSON(t, w, Channel{ID: "forum", AvailableTags: []ForumTag{
+				{"t-task", "task"}, {"t-ask", "ask"},
+			}})
 		case "/api/channels/900":
 			writeJSON(t, w, Channel{ID: "900", ParentID: "forum", AppliedTags: []string{"t-ask"}})
 		case "/api/channels/900/messages/500":

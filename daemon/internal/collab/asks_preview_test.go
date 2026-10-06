@@ -11,7 +11,7 @@ func previewClient() *Client {
 	return c
 }
 
-var previewTags = []string{"ask", "pending", "mergentic", "answered"}
+var previewTags = []string{"task", "needs me", "mergentic", "done"}
 
 func TestPreviewPostPrintsPayload(t *testing.T) {
 	p, err := previewClient().PreviewPost("Launch X?", "Please decide", []string{"mergentic"}, AskOptions{}, previewTags)
@@ -25,7 +25,7 @@ func TestPreviewPostPrintsPayload(t *testing.T) {
 		t.Fatalf("content = %q, want the mention first", p.Content)
 	}
 	out := p.Format()
-	for _, want := range []string{"dry-run: would send post", "title: Launch X?", "<@777>", "tags: ask, pending, mergentic"} {
+	for _, want := range []string{"dry-run: would send post", "title: Launch X?", "<@777>", "tags: task, mergentic, needs me"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("formatted preview missing %q:\n%s", want, out)
 		}

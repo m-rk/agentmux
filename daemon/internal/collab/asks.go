@@ -2,27 +2,48 @@ package collab
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
 
-// Asks are forum posts in the collaboration forum that @-mention one
-// configured user. They carry the `ask` tag, which collab read and the
-// digest use to keep them out of session context.
+// Asks are messages in threads in the collaboration forum that @-mention
+// one configured user. Thread tags describe the thread, not the ask: every
+// task thread carries exactly one type tag and exactly one state tag (see
+// MERG-37). Collab read and the digest use the type tags to keep task
+// threads out of session context.
 const (
-	AskTagName      = "ask"
-	DefaultCloseTag = "answered"
+	// AskTagName is the retired marker tag. Threads created before the
+	// MERG-37 retag still carry it; the forum gate and the digest filter
+	// honour it until Mark deletes it from the forum.
+	AskTagName = "ask"
+	// DefaultCloseTag leaves a closed thread as done.
+	DefaultCloseTag = "done"
 	asksUsername    = "agentmux asks"
 	maxAppliedTags  = 5
 )
 
-// OutcomeTags are the mutually exclusive status tags: close replaces any of
-// these already on the thread with the requested one.
-var OutcomeTags = []string{"pending", "launched", "not now", "failed", "answered"}
+// AskTypeTags marks a thread as a task thread: exactly one per thread, set
+// at creation. The asks gate, `asks list`, and the collab digest filter all
+// key on these (plus the retired `ask` tag while migration is in flight).
+var AskTypeTags = []string{"task", "epic", "idea"}
+
+// AskStateTags is the thread's current state: exactly one per thread, kept
+// current by whoever owns the thread. Close and post-in-thread swap these.
+var AskStateTags = []string{"needs me", "working", "blocked", "parked", "not now", "done", "failed"}
+
+// RetiredAskTags are the pre-retag outcome tags. They are stripped wherever
+// state tags are swapped, so partially migrated threads converge.
+var RetiredAskTags = []string{"ask", "pending", "launched", "answered"}
+
+// DefaultOpenTag is the state a new ask in an existing thread leaves it in
+// when the caller passes no state tag: a fresh question needs Mark.
+const DefaultOpenTag = "needs me"
 
 var snowflakeRE = regexp.MustCompile(`^[0-9]{1,25}$`)
 
@@ -86,18 +107,75 @@ func hasTag(applied []string, id string) bool {
 	return false
 }
 
+// tagNames lists the forum's available tag names for error messages.
+func tagNames(forum Channel) []string {
+	names := make([]string, 0, len(forum.AvailableTags))
+	for _, t := range forum.AvailableTags {
+		names = append(names, t.Name)
+	}
+	return names
+}
+
+// resolveTags resolves tag names (case-insensitive) to their ids,
+// deduplicated. An unknown name fails naming the valid ones, so the caller
+// can refresh the forum (a tag created after the first fetch) and retry.
 func resolveTags(forum Channel, names []string) ([]string, error) {
 	var ids []string
+	var missing []string
 	for _, name := range names {
 		id := tagID(forum.AvailableTags, name)
 		if id == "" {
-			return nil, fmt.Errorf("the forum has no %q tag; create it by hand (Edit Channel → Tags)", name)
+			missing = append(missing, name)
+			continue
 		}
 		if !hasTag(ids, id) {
 			ids = append(ids, id)
 		}
 	}
+	if len(missing) > 0 {
+		return nil, &UnknownTagError{Names: missing, Valid: tagNames(forum)}
+	}
 	return ids, nil
+}
+
+// UnknownTagError is a tag name the forum has no tag for. Callers refresh
+// the forum and retry once (the tag may have been created since), then
+// surface this with the valid names.
+type UnknownTagError struct {
+	Names []string
+	Valid []string
+}
+
+func (e *UnknownTagError) Error() string {
+	return fmt.Sprintf("the forum has no %s tag; valid tags: %s (create it by hand under Edit Channel → Tags)",
+		quoteAll(e.Names), strings.Join(e.Valid, ", "))
+}
+
+func quoteAll(names []string) string {
+	quoted := make([]string, 0, len(names))
+	for _, n := range names {
+		quoted = append(quoted, strconv.Quote(n))
+	}
+	return strings.Join(quoted, ", ")
+}
+
+// isAskThread reports whether the thread is a task thread: it lives in the
+// asks forum and carries a type tag (or the retired `ask` tag while
+// migration is in flight). Collab threads share the same forum but never
+// carry these tags.
+func isAskThread(forum Channel, thread Channel) bool {
+	if thread.ParentID == "" {
+		return false
+	}
+	if forum.ID != "" && thread.ParentID != forum.ID {
+		return false
+	}
+	for _, name := range append([]string{AskTagName}, AskTypeTags...) {
+		if hasTag(thread.AppliedTags, tagID(forum.AvailableTags, name)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) mentionPayload(user string, mention bool) map[string]any {
@@ -121,8 +199,11 @@ func askContent(user string, mention bool, body string) (string, error) {
 	return body, nil
 }
 
-// PostAsk creates a forum post tagged `ask` (plus `pending` and extraTags)
-// whose body opens with a mention of the configured user.
+// PostAsk creates a forum post tagged `task` (plus `needs me` and extraTags)
+// whose body opens with a mention of the configured user. Extra tags are
+// free-form: a project tag, or a state override such as `blocked` (which
+// replaces the default `needs me`; at most one state tag survives —
+// swapStateTags drops the rest).
 //
 // With opts.Buttons the bot posts the message (webhooks can't carry
 // components); otherwise the webhook does. opts.Reactions are seeded by the
@@ -147,12 +228,21 @@ func (c *Client) PostAsk(ctx context.Context, title, body string, extraTags []st
 	if err != nil {
 		return "", "", err
 	}
-	forum, err := c.forum(ctx)
-	if err != nil {
-		return "", "", err
-	}
-	tags, err := resolveTags(forum, append([]string{AskTagName, "pending"}, extraTags...))
-	if err != nil {
+	var tags []string
+	var guildID string
+	if _, err := c.withRefreshedForum(ctx, func(f Channel) ([]string, error) {
+		var err error
+		guildID = f.GuildID
+		tags, err = swapStateTags(f, nil, "task", extraTags)
+		if err != nil {
+			return nil, err
+		}
+		// A lone state extra would leave the thread stateless; default it.
+		if !hasStateTag(f, tags) {
+			tags, err = swapStateTags(f, tags, DefaultOpenTag, nil)
+		}
+		return tags, err
+	}); err != nil {
 		return "", "", err
 	}
 	if len(tags) > maxAppliedTags {
@@ -173,7 +263,7 @@ func (c *Client) PostAsk(ctx context.Context, title, body string, extraTags []st
 			"message": map[string]any{
 				"content":          content,
 				"allowed_mentions": c.mentionPayload(user, true),
-				"components":       c.buttonRowsWithGuild(ctx, forum.GuildID, opts.Buttons),
+				"components":       c.buttonRowsWithGuild(ctx, guildID, opts.Buttons),
 			},
 		}
 		var thread Channel
@@ -195,11 +285,11 @@ func (c *Client) PostAsk(ctx context.Context, title, body string, extraTags []st
 	return message.ChannelID, message.ID, c.seedReactions(ctx, message.ChannelID, message.ID, opts.Reactions)
 }
 
-// PostAskInThread adds an ask message to an existing ask thread instead of
-// creating a post. It unarchives and unlocks the thread, swaps any outcome
-// tag for `pending` (adding extraTags), optionally renames it, then posts the
-// message with a mention of the configured user. Like close, the thread edit
-// needs the bot (Manage Threads on the forum).
+// PostAskInThread adds an ask message to an existing task thread instead of
+// creating a post. It unarchives the thread (unlocked only), swaps any state
+// tag for `needs me` (adding extraTags), optionally renames it, then posts
+// the message with a mention of the configured user. Like close, the thread
+// edit needs the bot (Manage Threads on the forum).
 func (c *Client) PostAskInThread(ctx context.Context, threadID, title, body string, extraTags []string, opts AskOptions) (string, error) {
 	if err := opts.validate(); err != nil {
 		return "", err
@@ -220,11 +310,15 @@ func (c *Client) PostAskInThread(ctx context.Context, threadID, title, body stri
 	if err != nil {
 		return "", err
 	}
-	tags, err := replaceOutcomeTag(forum, thread.AppliedTags, "pending", extraTags)
-	if err != nil {
+	var tags []string
+	if _, err := c.withRefreshedForum(ctx, func(f Channel) ([]string, error) {
+		var err error
+		tags, err = swapStateTags(f, thread.AppliedTags, DefaultOpenTag, extraTags)
+		return tags, err
+	}); err != nil {
 		return "", err
 	}
-	patch := map[string]any{"applied_tags": tags, "archived": false, "locked": false}
+	patch := map[string]any{"applied_tags": tags, "archived": false, "auto_archive_duration": 10080}
 	if title != "" {
 		patch["name"] = title
 	}
@@ -255,6 +349,36 @@ func (c *Client) PostAskInThread(ctx context.Context, threadID, title, body stri
 	return message.ID, c.seedReactions(ctx, threadID, message.ID, opts.Reactions)
 }
 
+// hasStateTag reports whether any of the applied ids is a state tag.
+func hasStateTag(forum Channel, applied []string) bool {
+	for _, name := range AskStateTags {
+		if hasTag(applied, tagID(forum.AvailableTags, name)) {
+			return true
+		}
+	}
+	return false
+}
+
+// withRefreshedForum runs resolve with the forum, and on an unknown tag
+// re-reads the forum once (a tag created after the first fetch) before
+// retrying. Anything else returns as-is.
+func (c *Client) withRefreshedForum(ctx context.Context, resolve func(Channel) ([]string, error)) ([]string, error) {
+	forum, err := c.forum(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tags, err := resolve(forum)
+	var unknown *UnknownTagError
+	if errors.As(err, &unknown) {
+		forum, ferr := c.forum(ctx)
+		if ferr != nil {
+			return nil, err
+		}
+		return resolve(forum)
+	}
+	return tags, err
+}
+
 // ForumForPreview fetches the forum channel for -dry-run tag resolution.
 // It is a read (no post, reply, reaction, or edit), so -dry-run never
 // touches live Discord even though it needs the network.
@@ -262,15 +386,16 @@ func (c *Client) ForumForPreview(ctx context.Context) (Channel, error) {
 	return c.forum(ctx)
 }
 
-// replaceOutcomeTag returns the applied tag IDs with every outcome tag
-// removed, then outcome and extra appended (without duplicates).
-func replaceOutcomeTag(forum Channel, applied []string, outcome string, extra []string) ([]string, error) {
+// swapStateTags returns the applied tag IDs with every state tag (and the
+// retired outcome tags) removed, then outcome and extra appended (without
+// duplicates). Type and project tags survive untouched.
+func swapStateTags(forum Channel, applied []string, outcome string, extra []string) ([]string, error) {
 	add, err := resolveTags(forum, append([]string{outcome}, extra...))
 	if err != nil {
 		return nil, err
 	}
 	drop := map[string]bool{}
-	for _, name := range OutcomeTags {
+	for _, name := range append(append([]string{}, AskStateTags...), RetiredAskTags...) {
 		if id := tagID(forum.AvailableTags, name); id != "" {
 			drop[id] = true
 		}
@@ -306,7 +431,7 @@ func (c *Client) askThread(ctx context.Context, threadID string) (Channel, Chann
 	if err != nil {
 		return Channel{}, Channel{}, err
 	}
-	if thread.ParentID != c.Config.ForumChannelID || !hasTag(thread.AppliedTags, tagID(forum.AvailableTags, AskTagName)) {
+	if thread.ParentID != c.Config.ForumChannelID || !isAskThread(forum, thread) {
 		return Channel{}, Channel{}, fmt.Errorf("thread %s isn't an ask post", threadID)
 	}
 	return thread, forum, nil
@@ -407,12 +532,13 @@ func (c *Client) askMessage(ctx context.Context, threadID string, m Message, use
 	return am, nil
 }
 
-// CloseAsk replaces the thread's outcome tag with outcome, then archives it,
-// and locks it only when lock is true so a later ask can reopen the thread.
-// This is the one write that needs the bot (Manage Threads on the forum):
-// webhooks can't edit threads.
+// CloseAsk replaces the thread's state tag with outcome (any state tag by
+// name; empty means `done`), then archives it, and locks it only when lock
+// is true so a later ask can reopen the thread. Thread edits (this, tag,
+// and post-in-thread) need the bot (Manage Threads on the forum): webhooks
+// can't edit threads.
 func (c *Client) CloseAsk(ctx context.Context, threadID, outcome string, lock bool) error {
-	thread, forum, err := c.askThread(ctx, threadID)
+	thread, _, err := c.askThread(ctx, threadID)
 	if err != nil {
 		return err
 	}
@@ -420,19 +546,77 @@ func (c *Client) CloseAsk(ctx context.Context, threadID, outcome string, lock bo
 		outcome = DefaultCloseTag
 	}
 	known := false
-	for _, name := range OutcomeTags {
+	for _, name := range AskStateTags {
 		known = known || strings.EqualFold(name, outcome)
 	}
 	if !known {
-		return fmt.Errorf("outcome tag must be one of: %s", strings.Join(OutcomeTags, ", "))
+		return fmt.Errorf("unknown state tag %q; valid tags: %s", outcome, strings.Join(AskStateTags, ", "))
 	}
-	tags, err := replaceOutcomeTag(forum, thread.AppliedTags, outcome, nil)
-	if err != nil {
+	var tags []string
+	if _, err := c.withRefreshedForum(ctx, func(f Channel) ([]string, error) {
+		var err error
+		tags, err = swapStateTags(f, thread.AppliedTags, outcome, nil)
+		return tags, err
+	}); err != nil {
 		return err
 	}
 	body := map[string]any{"applied_tags": tags, "archived": true, "locked": lock}
 	if err := c.botJSONBody(ctx, http.MethodPatch, "/channels/"+url.PathEscape(threadID), body, nil); err != nil {
 		return fmt.Errorf("closing Discord ask (the bot needs Manage Threads on the forum): %w", err)
+	}
+	return nil
+}
+
+// TagOptions changes how TagAsk touches an archived thread.
+type TagOptions struct {
+	// Unarchive unarchives the thread first (a retag never posts, so it
+	// needs Manage Threads, not just Send Messages in Threads), applies the
+	// tags, then re-archives when the thread started archived.
+	Unarchive bool
+}
+
+// TagAsk replaces the thread's applied tags with exactly names, resolved by
+// name from the forum's available tags. An unknown name fails with the valid
+// ones. Discord allows at most five tags per thread. Applying tags to an
+// archived thread fails (Discord error 50083); pass TagOptions{Unarchive:
+// true} to unarchive first and re-archive after.
+func (c *Client) TagAsk(ctx context.Context, threadID string, names []string, opts TagOptions) error {
+	thread, _, err := c.askThread(ctx, threadID)
+	if err != nil {
+		return err
+	}
+	var tags []string
+	if _, err := c.withRefreshedForum(ctx, func(f Channel) ([]string, error) {
+		var err error
+		tags, err = resolveTags(f, names)
+		return tags, err
+	}); err != nil {
+		return err
+	}
+	if len(tags) > maxAppliedTags {
+		return fmt.Errorf("a forum post takes at most %d tags", maxAppliedTags)
+	}
+	if thread.ThreadMeta.Archived && !opts.Unarchive {
+		return fmt.Errorf("thread %s is archived; pass -unarchive to retag it (unarchives, applies tags, re-archives)", threadID)
+	}
+	patch := func(archived bool) map[string]any {
+		return map[string]any{"applied_tags": tags, "archived": archived}
+	}
+	if thread.ThreadMeta.Archived {
+		if thread.ThreadMeta.Locked {
+			return fmt.Errorf("thread %s is archived and locked; unlock it by hand before retagging", threadID)
+		}
+		if err := c.botJSONBody(ctx, http.MethodPatch, "/channels/"+url.PathEscape(threadID), patch(false), nil); err != nil {
+			return fmt.Errorf("unarchiving Discord thread %s for retag (the bot needs Manage Threads on the forum): %w", threadID, err)
+		}
+	}
+	if err := c.botJSONBody(ctx, http.MethodPatch, "/channels/"+url.PathEscape(threadID), patch(false), nil); err != nil {
+		return fmt.Errorf("retagging Discord thread %s (the bot needs Manage Threads on the forum): %w", threadID, err)
+	}
+	if thread.ThreadMeta.Archived {
+		if err := c.botJSONBody(ctx, http.MethodPatch, "/channels/"+url.PathEscape(threadID), patch(true), nil); err != nil {
+			return fmt.Errorf("re-archiving Discord thread %s after retag (the bot needs Manage Threads on the forum): %w", threadID, err)
+		}
 	}
 	return nil
 }

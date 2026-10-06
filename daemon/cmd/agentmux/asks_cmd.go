@@ -35,6 +35,8 @@ func runAsksCmd(args []string) {
 		err = runAsksReact(args[1:])
 	case "edit":
 		err = runAsksEdit(args[1:])
+	case "tag":
+		err = runAsksTag(args[1:])
 	case "close":
 		err = runAsksClose(args[1:])
 	case "list":
@@ -58,6 +60,7 @@ func asksUsage() {
   agentmux asks read -thread ID [-after MESSAGE_ID] [-json]
   agentmux asks react -thread ID -message ID -emoji EMOJI
   agentmux asks edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL]
+  agentmux asks tag -thread ID -set "task,working" [-unarchive]
   agentmux asks close -thread ID [-tag NAME] [-lock]
   agentmux asks list [-open|-archived|-all] [-tag NAME] [-since DUR] [-json]
   agentmux asks serve                      hold the Discord gateway open to record button clicks
@@ -317,10 +320,48 @@ func runAsksRead(args []string) error {
 	return nil
 }
 
+// runAsksTag replaces a task thread's tags with exactly -set, resolved by
+// name from the forum's available tags. A retag never posts.
+func runAsksTag(args []string) error {
+	fs := flag.NewFlagSet("asks tag", flag.ContinueOnError)
+	thread := fs.String("thread", "", "task thread ID")
+	set := fs.String("set", "", `comma-separated tag names, e.g. "task,working"`)
+	unarchive := fs.Bool("unarchive", false, "unarchive an archived thread first, re-archive after")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *thread == "" {
+		return fmt.Errorf("-thread is required")
+	}
+	var names []string
+	for _, name := range strings.Split(*set, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return fmt.Errorf(`-set is required, e.g. -set "task,working"`)
+	}
+	client, err := asksClient()
+	if err != nil {
+		return err
+	}
+	if err := liveguard.Check(); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := client.TagAsk(ctx, *thread, names, collab.TagOptions{Unarchive: *unarchive}); err != nil {
+		return err
+	}
+	fmt.Printf("Retagged thread %s as %s.\n", *thread, strings.Join(names, ","))
+	return nil
+}
+
 func runAsksClose(args []string) error {
 	fs := flag.NewFlagSet("asks close", flag.ContinueOnError)
 	thread := fs.String("thread", "", "ask thread ID")
-	tag := fs.String("tag", collab.DefaultCloseTag, "outcome tag")
+	tag := fs.String("tag", collab.DefaultCloseTag, "state tag (any forum state tag by name)")
 	lock := fs.Bool("lock", false, "also lock the thread (default: archive only, so a later ask can reopen it)")
 	if err := fs.Parse(args); err != nil {
 		return err

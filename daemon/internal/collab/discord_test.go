@@ -108,12 +108,16 @@ func TestBuildDeliveryRoutingAndCursors(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/channels/forum":
-			writeJSON(t, w, Channel{ID: "forum", GuildID: "guild", Type: 15})
+			writeJSON(t, w, Channel{ID: "forum", GuildID: "guild", Type: 15, AvailableTags: []ForumTag{
+				{"t-task", "task"}, {"t-working", "working"},
+			}})
 		case "/api/guilds/guild/threads/active":
 			writeJSON(t, w, threadList{Threads: []Channel{
 				{ID: "20", ParentID: "forum", Name: "[shared github.com/other/repo] cross-project", LastMessageID: "21"},
 				{ID: "10", ParentID: "forum", Name: "[github.com/m-rk/agentmux] local", LastMessageID: "11"},
 				{ID: "30", ParentID: "forum", Name: "[github.com/other/repo] irrelevant", LastMessageID: "31"},
+				{ID: "40", ParentID: "forum", Name: "AMUX-35 working", LastMessageID: "41",
+					AppliedTags: []string{"t-task", "t-working"}},
 			}})
 		case "/api/channels/forum/threads/archived/public":
 			writeJSON(t, w, threadList{})

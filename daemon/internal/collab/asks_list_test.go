@@ -22,7 +22,11 @@ type fakeAsksList struct {
 
 func (f *fakeAsksList) server(t *testing.T) *httptest.Server {
 	forum := Channel{ID: "forum", GuildID: "guild", Type: 15, AvailableTags: []ForumTag{
-		{"t-ask", "ask"}, {"t-pending", "pending"}, {"t-answered", "answered"}, {"t-proj", "mergentic"},
+		{"t-task", "task"}, {"t-epic", "epic"}, {"t-idea", "idea"},
+		{"t-needsme", "needs me"}, {"t-working", "working"}, {"t-blocked", "blocked"},
+		{"t-parked", "parked"}, {"t-notnow", "not now"}, {"t-done", "done"}, {"t-failed", "failed"},
+		{"t-ask", "ask"}, {"t-pending", "pending"}, {"t-answered", "answered"}, {"t-launched", "launched"},
+		{"t-proj", "mergentic"},
 	}}
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -159,7 +163,9 @@ func TestListAsksRetriesOnceOnRateLimit(t *testing.T) {
 		defer mu.Unlock()
 		switch {
 		case r.URL.Path == "/api/channels/forum":
-			writeJSON(t, w, Channel{ID: "forum", GuildID: "guild", AvailableTags: []ForumTag{{"t-ask", "ask"}}})
+			writeJSON(t, w, Channel{ID: "forum", GuildID: "guild", AvailableTags: []ForumTag{
+				{"t-task", "task"}, {"t-ask", "ask"},
+			}})
 		case r.URL.Path == "/api/guilds/guild/threads/active":
 			calls++
 			if calls == 1 {
