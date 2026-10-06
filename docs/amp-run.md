@@ -141,14 +141,15 @@ suffix never widens access. See [Gateway](gateway.md).
 
 ## The amp mode
 
-Every run uses one amp mode (`amp -m`), chosen per host and kept out of
-the repo. The value is a built-in (`low`, `medium`, `high`, `ultra`) or a
+No amp process starts without `-m` (AMUX-36): every thread — `sessions
+run` and continues, the runner unit, the nightly review, the doctor
+escalation — carries the host mode, and a missing mode everywhere is a
+refusal, never a silent run on amp's default model. The value is a
+built-in (`low`, `medium`, `high`, `ultra`) or a
 plugin mode by key or label. Malformed values (overlong, or carrying line
 breaks or NUL bytes) are refused before anything spawns; anything else
 rides the real run's `-m`, and an unknown mode fails there — the run is
 refused quoting amp's own error, with no throwaway check thread first.
-With no mode configured anywhere, runs omit `-m` and amp uses whatever it
-would by default.
 
 - Host default: `~/.config/agentmux/amp.yaml`, with `mode: <amp mode key or
   label>`. Docs and tests use placeholders such as `high` — never put a
@@ -157,12 +158,26 @@ would by default.
   `agentmux new -amp-mode <mode>`. A task instance created by
   `sessions create` copies the template's override. Wins over the host
   file.
+- Per-run override: `sessions run -mode <mode>`, for one run only. Wins
+  over both; a person can always name the mode explicitly.
 
 `sessions status -json` on an amp instance reports the effective mode as
 `amp_mode: {"mode": ..., "source": "instance"|"host"}` (absent when none is
 configured anywhere); the human-readable status prints it as
 `amp_mode <mode> (from <source>)`.
 
-The long-lived `--no-tui` runners do not get `-m`: amp has no default-mode
-setting for remote threads (its `--no-tui` takes no `-m`), so runs start
-their own CLI with the mode rather than reconfiguring the runner.
+The long-lived `--no-tui` runners also carry `-m` (the unit's command
+line includes it): every runner process starts with the host/instance
+mode. Whether threads created from that runner's terminal inherit it is
+unconfirmed from the runner side — verify with `amp threads export` and
+rely on `sessions run` continues, which always pass `-m` themselves.
+
+Task sessions cannot run amp directly: a stub `amp` sits first on PATH
+in task workers' panes and refuses (`agentmux starts amp for you; test
+with fakes or -dry-run`). Real runs are started by agentmux, not by the
+worker.
+
+amp has no default-mode setting (checked 2026-10-06: only
+`amp.updates.mode` and `amp.defaultVisibility` exist in its settings
+file, and `-m` is per run). Re-check after each amp upgrade, and use a
+default setting if one appears.

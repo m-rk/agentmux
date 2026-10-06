@@ -68,7 +68,10 @@ runner you've configured with permissions you trust against pane content.
 
 Every `-checker amp` run creates a real, visible amp thread on
 ampcode.com (labeled by `review.amp.label`, default `agentmux-review`) —
-that is intentional, not a leak to guard against.
+that is intentional, not a leak to guard against. The escalation thread
+always carries `-m` (AMUX-36): `review.amp.mode` overrides, else the
+host mode from `~/.config/agentmux/amp.yaml` applies, and a missing
+mode everywhere refuses before amp spawns.
 
 On Linux, root-run doctor drops privileges for the amp subprocess exactly
 like it does for claude: via `runas`, as the same session owner

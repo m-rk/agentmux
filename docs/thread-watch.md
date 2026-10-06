@@ -90,7 +90,7 @@ review:
     executor: local        # local (default, tools disabled) | runner:<id> (see below)
     workdir:                # local executor's cwd; default the run user's home
     runner_dir:              # runner executor's --runner-dir; optional
-    mode:                    # optional amp -m/--mode override
+    mode:                    # optional amp -m/--mode override; empty inherits the host mode from ~/.config/agentmux/amp.yaml (AMUX-36), and a missing mode everywhere refuses rather than running on amp's default model
     label: agentmux-review  # amp thread label
     # At most one of the two below; AMP_API_KEY in the environment, if set,
     # overrides both — same pattern as jev's key above.
@@ -328,6 +328,12 @@ Both get the identical stats/clusters payload and the identical
   `agentmux doctor -checker amp` reuses this exact `review.amp` block (see
   [docs/doctor.md](doctor.md)) rather than having its own separate amp
   config.
+
+  The review thread always carries `-m` (AMUX-36): `review.amp.mode` is
+  an optional override, and an empty one inherits the host mode from
+  `~/.config/agentmux/amp.yaml`. A missing mode everywhere refuses
+  before amp spawns, rather than running the review on amp's default
+  model.
 
 Per-instance `review: false` in `~/.config/agentmux/threadwatch.yaml`
 excludes an instance from the review entirely (same file, same per-instance
