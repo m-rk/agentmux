@@ -159,7 +159,7 @@ func runAsksPost(args []string) error {
 		return printAsksPostPreview(client, *title, *thread, body, tags, opts, *asJSON)
 	}
 	if liveguard.IsTaskSession() {
-		return runAsksPostAsTest(client, body, opts, *asJSON)
+		return runAsksPostAsTest(client, *title, *thread, tags, body, opts, *asJSON)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -284,7 +284,7 @@ func runAsksReply(args []string) error {
 		return nil
 	}
 	if liveguard.IsTaskSession() {
-		return runAsksReplyAsTest(client, body, *asJSON)
+		return runAsksReplyAsTest(client, *thread, *mention, body, *asJSON)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -625,9 +625,11 @@ func testTaskID() string {
 
 // runAsksPostAsTest routes a task session's `asks post` into the reusable
 // test thread: a bot reply there (mentions off, prefixed with the task
-// id), never a new forum post. Needs test_thread in discord.yaml; without
-// it the command refuses as before.
-func runAsksPostAsTest(client *collab.Client, body string, opts collab.AskOptions, asJSON bool) error {
+// id), never a new forum post. Title, thread and tags are dropped — test
+// messages carry none — and the output says so when any were passed.
+// Needs test_thread in discord.yaml; without it the command refuses as
+// before.
+func runAsksPostAsTest(client *collab.Client, title, thread string, tags []string, body string, opts collab.AskOptions, asJSON bool) error {
 	test, terr := client.TestThreadID()
 	if terr != nil {
 		return liveguard.Check()
@@ -641,13 +643,28 @@ func runAsksPostAsTest(client *collab.Client, body string, opts collab.AskOption
 	if asJSON {
 		return json.NewEncoder(os.Stdout).Encode(map[string]string{"thread_id": test, "message_id": messageID})
 	}
-	fmt.Printf("test thread: posted test message %s in test thread %s.\n", messageID, test)
+	dropped := []string{}
+	if title != "" {
+		dropped = append(dropped, "title")
+	}
+	if thread != "" {
+		dropped = append(dropped, "-thread")
+	}
+	if len(tags) > 0 {
+		dropped = append(dropped, "tags")
+	}
+	extra := ""
+	if len(dropped) > 0 {
+		extra = " (" + strings.Join(dropped, ", ") + " ignored: test messages carry no title or tags)"
+	}
+	fmt.Printf("test thread: posted test message %s in test thread %s%s.\n", messageID, test, extra)
 	return nil
 }
 
 // runAsksReplyAsTest routes a task session's `asks reply` the same way:
-// a bot message in the test thread, never touching the named thread.
-func runAsksReplyAsTest(client *collab.Client, body string, asJSON bool) error {
+// a bot message in the test thread, never touching the named thread and
+// never mentioning anyone.
+func runAsksReplyAsTest(client *collab.Client, thread string, mention bool, body string, asJSON bool) error {
 	test, terr := client.TestThreadID()
 	if terr != nil {
 		return liveguard.Check()
@@ -661,7 +678,14 @@ func runAsksReplyAsTest(client *collab.Client, body string, asJSON bool) error {
 	if asJSON {
 		return json.NewEncoder(os.Stdout).Encode(map[string]string{"thread_id": test, "message_id": messageID})
 	}
-	fmt.Printf("test thread: replied with test message %s in test thread %s.\n", messageID, test)
+	extra := ""
+	if thread != "" && thread != test {
+		extra = " (the named thread is untouched)"
+	}
+	if mention {
+		extra += " (-mention ignored: test messages mention nobody)"
+	}
+	fmt.Printf("test thread: replied with test message %s in test thread %s%s.\n", messageID, test, extra)
 	return nil
 }
 
@@ -702,9 +726,6 @@ func runAsksPrune(args []string) error {
 	}
 	if liveguard.IsTaskSession() && !client.IsTestThread(target) {
 		return fmt.Errorf("task sessions can only prune the test thread %s", strings.TrimSpace(client.Config.TestThreadID))
-	}
-	if !liveguard.Allowed() {
-		return liveguard.Check()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
