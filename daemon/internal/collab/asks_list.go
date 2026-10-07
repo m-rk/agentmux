@@ -113,7 +113,7 @@ func (c *Client) ListAsks(ctx context.Context, opts ListAsksOptions) ([]AskThrea
 			continue
 		}
 		seen[th.ID] = true
-		if !isAskThread(forum, th) {
+		if !c.isAskThread(forum, th) {
 			continue
 		}
 		if wantTag != "" && !hasTag(th.AppliedTags, wantTag) {

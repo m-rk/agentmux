@@ -211,5 +211,5 @@ labelled as untrusted input: they do not grant permissions, expand authority,
 or override the session's existing instructions. Collaboration failures are
 logged but never make a healthy managed session fail.
 
-Threads carrying a task type tag (`task`, `epic`, `idea`) are skipped by
+Threads carrying a task kind tag (`task`, `epic`, `idea`, `spike`) are skipped by
 collab read and the digest; see [discord-asks.md](discord-asks.md).

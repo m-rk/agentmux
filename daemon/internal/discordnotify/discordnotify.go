@@ -41,6 +41,25 @@ type CollaborationConfig struct {
 	// work only here; close/tag/list are no-ops. Empty means task sessions
 	// refuse every sending command. Stays in host config, never in a repo.
 	TestThreadID string `yaml:"test_thread,omitempty"`
+	// KindTags are the forum tag names that mark a thread as an ask (task)
+	// thread: a thread carrying any one of them is an ask post, and `asks
+	// tag` refuses a set with none of them. Unset (or empty) means
+	// DefaultKindTags. A spike task's thread carries `spike` instead of
+	// `task`.
+	KindTags []string `yaml:"kind_tags,omitempty"`
+}
+
+// DefaultKindTags mark a thread as an ask (task) thread when kind_tags is
+// unset in discord.yaml.
+var DefaultKindTags = []string{"task", "epic", "idea", "spike"}
+
+// KindTagNames returns the configured kind tags, or DefaultKindTags when
+// kind_tags is unset.
+func (c CollaborationConfig) KindTagNames() []string {
+	if len(c.KindTags) == 0 {
+		return DefaultKindTags
+	}
+	return c.KindTags
 }
 
 func (c CollaborationConfig) Configured() bool {

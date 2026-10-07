@@ -29,9 +29,10 @@ or credential.
    not create them, because that would need the bot to have Manage Channels,
    a far broader permission than anything else here. Tags describe the
    thread, not the ask (see MERG-37): every task thread carries exactly one
-   type tag and exactly one state tag.
+   kind tag and exactly one state tag.
 
-   - Type (one per thread, set at creation): `task`, `epic`, `idea`
+   - Kind (one per thread, set at creation): `task`, `epic`, `idea`, `spike`
+     (a spike task's thread carries `spike` instead of `task`)
    - State (one per thread, kept current): `needs me`, `working`, `blocked`,
      `parked`, `not now`, `done`, `failed`
    - optionally one per project; pass it with `-tag NAME`
@@ -49,7 +50,7 @@ or credential.
    archive, unarchive or lock the thread. A webhook
    can't edit threads, and Manage Threads is the smallest permission that
    can. It lets the bot manage every thread in that forum, so agentmux
-   refuses to touch anything that is not a task thread (a type tag, or the
+   refuses to touch anything that is not a task thread (a kind tag, or the
    retired `ask` tag) in the configured forum. Post, reply and read need no
    extra permission. Posting
    and replying use the webhook and reading uses the bot's existing View
@@ -204,7 +205,15 @@ agentmux asks prune [-thread ID] [-older-than DUR] [-dry-run] [-json]
   returned `message_id` as `read -after` to get the replies to that ask.
 - `tag` replaces the thread's applied tags with exactly `-set` (e.g.
   `-set "task,working"`), resolved by name from the forum's available tags.
-  An unknown name fails with the list of valid ones. The thread must be open:
+  An unknown name fails with the list of valid ones. The set must keep one
+  kind tag, so a retag can never strip a thread of the tag that makes it an
+  ask post; a set without one is refused with a one-line reason. `-force`
+  recovers a thread that already lost its kind tag (e.g. retagged by hand
+  to `spike,working` before `spike` was a kind tag): it skips the ask-post
+  gate, but the new set must still carry a kind tag. Console and
+  orchestrator only — `tag` is already a no-op in task sessions.
+  The kind tag names come from `kind_tags` under `collaboration:` in
+  `discord.yaml`, defaulting to `task, epic, idea, spike`. The thread must be open:
   applying tags to an archived thread fails (Discord error 50083), so add
   `-unarchive` to unarchive it first (a retag posts nothing, so this needs
   Manage Threads) and re-archive after. A locked thread can't be unarchived
@@ -225,7 +234,7 @@ agentmux asks prune [-thread ID] [-older-than DUR] [-dry-run] [-json]
   the thread. It does not lock it, so the next `post -thread` can reopen it;
   add `-lock` for a task that's finished.
 - `post -thread`, `reply`, `read`, `react`, `edit`, `close` and `tag` refuse
-  threads that aren't task threads (a type tag, or the retired `ask` tag) in
+  threads that aren't task threads (a kind tag, or the retired `ask` tag) in
   the configured forum.
 - `react` has the bot add one emoji to a posted message (e.g. 🤖 once an
   autopilot or orchestrator has answered the ask outside Discord), so the
@@ -351,7 +360,8 @@ still map by label.
 ## Keeping asks out of session context
 
 `agentmux collab read` and the collaboration digest skip every thread
-carrying a task type tag (`task`, `epic`, `idea`, or the retired `ask` tag),
+carrying a task kind tag (`task`, `epic`, `idea`, `spike`, or the retired
+`ask` tag),
 and `collab read -thread` refuses one, so sessions never pick asks up
 as project context. Collab threads share the same forum but carry no type
 tag, so they still flow through.

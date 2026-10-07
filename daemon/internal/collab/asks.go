@@ -14,8 +14,8 @@ import (
 
 // Asks are messages in threads in the collaboration forum that @-mention
 // one configured user. Thread tags describe the thread, not the ask: every
-// task thread carries exactly one type tag and exactly one state tag (see
-// MERG-37). Collab read and the digest use the type tags to keep task
+// task thread carries exactly one kind tag and exactly one state tag (see
+// MERG-37). Collab read and the digest use the kind tags to keep task
 // threads out of session context.
 const (
 	// AskTagName is the retired marker tag. Threads created before the
@@ -28,10 +28,13 @@ const (
 	maxAppliedTags  = 5
 )
 
-// AskTypeTags marks a thread as a task thread: exactly one per thread, set
-// at creation. The asks gate, `asks list`, and the collab digest filter all
-// key on these (plus the retired `ask` tag while migration is in flight).
-var AskTypeTags = []string{"task", "epic", "idea"}
+// AskTypeTags is the default kind-tag set: one per thread, set at
+// creation. The live gate (isAskThread) keys on the configured kind_tags
+// from discord.yaml instead, which defaults to these; this stays for
+// callers that need the default names without a config loaded. The asks
+// gate, `asks list`, and the collab digest filter all key on the kind tags
+// (plus the retired `ask` tag while migration is in flight).
+var AskTypeTags = []string{"task", "epic", "idea", "spike"}
 
 // AskStateTags is the thread's current state: exactly one per thread, kept
 // current by whoever owns the thread. Close and post-in-thread swap these.
@@ -165,9 +168,29 @@ func quoteAll(names []string) string {
 }
 
 // isAskThread reports whether the thread is a task thread: it lives in the
-// asks forum and carries a type tag (or the retired `ask` tag while
-// migration is in flight). Collab threads share the same forum but never
-// carry these tags.
+// asks forum and carries a kind tag (or the retired `ask` tag while
+// migration is in flight). The kind tag names come from the configured
+// kind_tags in discord.yaml, defaulting to task, epic, idea, spike.
+// Collab threads share the same forum but never carry these tags.
+func (c *Client) isAskThread(forum Channel, thread Channel) bool {
+	if thread.ParentID == "" {
+		return false
+	}
+	if forum.ID != "" && thread.ParentID != forum.ID {
+		return false
+	}
+	for _, name := range append([]string{AskTagName}, c.Config.KindTagNames()...) {
+		if hasTag(thread.AppliedTags, tagID(forum.AvailableTags, name)) {
+			return true
+		}
+	}
+	return false
+}
+
+// isAskThread is the config-free form: it keys on the default kind tags,
+// so callers without a loaded discord.yaml (tests, digest filters on raw
+// channels) keep working. Reads of live threads should go through
+// Client.isAskThread, which honours kind_tags.
 func isAskThread(forum Channel, thread Channel) bool {
 	if thread.ParentID == "" {
 		return false
@@ -428,7 +451,13 @@ func swapStateTags(forum Channel, applied []string, outcome string, extra []stri
 
 // askThread fetches a thread and refuses anything that isn't an ask post in
 // the configured forum, so asks commands can't touch collaboration threads.
+// TagAsk with -force bypasses the kind-tag check for a thread that already
+// lost its kind tag (recovery for a bad retag); everything else keeps it.
 func (c *Client) askThread(ctx context.Context, threadID string) (Channel, Channel, error) {
+	return c.askThreadForce(ctx, threadID, false)
+}
+
+func (c *Client) askThreadForce(ctx context.Context, threadID string, force bool) (Channel, Channel, error) {
 	if !snowflakeRE.MatchString(threadID) {
 		return Channel{}, Channel{}, fmt.Errorf("thread id must be numeric")
 	}
@@ -440,10 +469,20 @@ func (c *Client) askThread(ctx context.Context, threadID string) (Channel, Chann
 	if err != nil {
 		return Channel{}, Channel{}, err
 	}
-	if thread.ParentID != c.Config.ForumChannelID || !isAskThread(forum, thread) {
+	if thread.ParentID != c.Config.ForumChannelID || (!force && !c.isAskThread(forum, thread)) {
 		return Channel{}, Channel{}, fmt.Errorf("thread %s isn't an ask post", threadID)
 	}
 	return thread, forum, nil
+}
+
+// hasKindTag reports whether any of the resolved ids is a kind tag.
+func (c *Client) hasKindTag(forum Channel, ids []string) bool {
+	for _, name := range c.Config.KindTagNames() {
+		if hasTag(ids, tagID(forum.AvailableTags, name)) {
+			return true
+		}
+	}
+	return false
 }
 
 // ReplyAsk posts into an existing ask thread, mentioning the configured user
@@ -584,23 +623,40 @@ type TagOptions struct {
 	// needs Manage Threads, not just Send Messages in Threads), applies the
 	// tags, then re-archives when the thread started archived.
 	Unarchive bool
+	// Force re-applies a kind tag to a thread that already lost its kind
+	// tag: it skips the ask-post gate (a kindless thread fails it by
+	// design) but the new set must still carry exactly one kind tag.
+	// Recovery only (console and orchestrator); task sessions never reach
+	// it — TagAsk is already a no-op there.
+	Force bool
 }
 
 // TagAsk replaces the thread's applied tags with exactly names, resolved by
 // name from the forum's available tags. An unknown name fails with the valid
-// ones. Discord allows at most five tags per thread. Applying tags to an
-// archived thread fails (Discord error 50083); pass TagOptions{Unarchive:
-// true} to unarchive first and re-archive after.
+// ones. The set must keep one kind tag (task, epic, idea, spike by default;
+// kind_tags in discord.yaml), so a retag can never strip a thread of the
+// tag that makes it an ask post; -force re-applies one after a thread
+// already lost it. Discord allows at most five tags per thread. Applying
+// tags to an archived thread fails (Discord error 50083); pass
+// TagOptions{Unarchive: true} to unarchive first and re-archive after.
 func (c *Client) TagAsk(ctx context.Context, threadID string, names []string, opts TagOptions) error {
-	thread, _, err := c.askThread(ctx, threadID)
+	thread, _, err := c.askThreadForce(ctx, threadID, opts.Force)
 	if err != nil {
 		return err
 	}
 	var tags []string
+	var kindOK bool
 	if _, err := c.withRefreshedForum(ctx, func(f Channel) ([]string, error) {
 		var err error
 		tags, err = resolveTags(f, names)
-		return tags, err
+		if err != nil {
+			return nil, err
+		}
+		kindOK = c.hasKindTag(f, tags)
+		if !kindOK {
+			return nil, fmt.Errorf("retag keeps one kind tag (%s); pass -force with a kind tag to recover a thread that lost it", strings.Join(c.Config.KindTagNames(), ", "))
+		}
+		return tags, nil
 	}); err != nil {
 		return err
 	}

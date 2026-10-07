@@ -251,7 +251,7 @@ func (c *Client) ListRelevantThreads(ctx context.Context, project string) ([]Cha
 
 	byID := map[string]Channel{}
 	for _, thread := range append(active.Threads, archived.Threads...) {
-		if isAskThread(forum, thread) {
+		if c.isAskThread(forum, thread) {
 			continue // task threads are for the configured user, never session context
 		}
 		if thread.ParentID == c.Config.ForumChannelID && ThreadRelevant(thread.Name, project) {
@@ -284,7 +284,7 @@ func (c *Client) RelevantThread(ctx context.Context, threadID, project string) (
 		if err := c.botJSON(ctx, http.MethodGet, "/channels/"+url.PathEscape(c.Config.ForumChannelID), &forum); err != nil {
 			return Channel{}, fmt.Errorf("reading Discord forum channel: %w", err)
 		}
-		if isAskThread(forum, thread) {
+		if c.isAskThread(forum, thread) {
 			return Channel{}, fmt.Errorf("thread %s isn't relevant to project %s", threadID, project)
 		}
 	}

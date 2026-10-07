@@ -22,7 +22,7 @@ type tagServer struct {
 
 func fullForum() Channel {
 	return Channel{ID: "forum", GuildID: "guild", Type: 15, AvailableTags: []ForumTag{
-		{"t-task", "task"}, {"t-epic", "epic"}, {"t-idea", "idea"},
+		{"t-task", "task"}, {"t-epic", "epic"}, {"t-idea", "idea"}, {"t-spike", "spike"},
 		{"t-needsme", "needs me"}, {"t-working", "working"}, {"t-blocked", "blocked"},
 		{"t-parked", "parked"}, {"t-notnow", "not now"}, {"t-done", "done"}, {"t-failed", "failed"},
 		{"t-ask", "ask"}, {"t-pending", "pending"}, {"t-answered", "answered"}, {"t-launched", "launched"},
@@ -249,5 +249,80 @@ func TestListAsksFindsTypeTaggedThreads(t *testing.T) {
 	}
 	if len(got[0].Tags) != 2 || got[0].Tags[0] != "task" || got[0].Tags[1] != "working" {
 		t.Fatalf("tags = %#v", got[0].Tags)
+	}
+}
+
+func TestTagAskSpikeThreadIsAskPost(t *testing.T) {
+	// The AMUX-52 retag: a spike-tagged thread must keep working as an ask
+	// post, so follow-up post/reply calls don't fail the gate.
+	s := &tagServer{forum: fullForum(), threads: map[string]Channel{
+		"900": {ID: "900", ParentID: "forum", AppliedTags: []string{"t-spike", "t-working"}},
+	}}
+	srv := s.server(t)
+	defer srv.Close()
+	if err := asksClientFor(srv.URL).TagAsk(context.Background(), "900", []string{"spike", "working"}, TagOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := appliedIDs(t, s.patches[0]); len(got) != 2 || got[0] != "t-spike" {
+		t.Fatalf("tags = %#v", got)
+	}
+}
+
+func TestTagAskRefusesSetWithoutKindTag(t *testing.T) {
+	s := &tagServer{forum: fullForum()}
+	srv := s.server(t)
+	defer srv.Close()
+	err := asksClientFor(srv.URL).TagAsk(context.Background(), "900", []string{"working"}, TagOptions{})
+	if err == nil || !strings.Contains(err.Error(), "keeps one kind tag") {
+		t.Fatalf("err = %v, want the kind-tag refusal", err)
+	}
+	if len(s.patches) != 0 {
+		t.Fatalf("patches = %d, want none", len(s.patches))
+	}
+}
+
+func TestTagAskForceRecoversKindlessThread(t *testing.T) {
+	// A thread that already lost its kind tag fails the ask-post gate, so
+	// the plain retag can't fix it — -force skips the gate but still
+	// requires the new set to carry a kind tag.
+	s := &tagServer{forum: fullForum(), threads: map[string]Channel{
+		"900": {ID: "900", ParentID: "forum", AppliedTags: []string{"t-working"}},
+	}}
+	srv := s.server(t)
+	defer srv.Close()
+	c := asksClientFor(srv.URL)
+	if err := c.TagAsk(context.Background(), "900", []string{"spike", "working"}, TagOptions{}); err == nil {
+		t.Fatal("plain retag of a kindless thread accepted")
+	}
+	if err := c.TagAsk(context.Background(), "900", []string{"working"}, TagOptions{Force: true}); err == nil {
+		t.Fatal("force retag without a kind tag accepted")
+	}
+	if err := c.TagAsk(context.Background(), "900", []string{"spike", "working"}, TagOptions{Force: true}); err != nil {
+		t.Fatalf("force retag: %v", err)
+	}
+	if got := appliedIDs(t, s.patches[len(s.patches)-1]); len(got) != 2 || got[0] != "t-spike" {
+		t.Fatalf("tags = %#v", got)
+	}
+}
+
+func TestTagAskKindTagsFromConfig(t *testing.T) {
+	// kind_tags in discord.yaml overrides the default kind set: with only
+	// "spike" configured, task is no longer a kind tag.
+	s := &tagServer{forum: fullForum(), threads: map[string]Channel{
+		"900": {ID: "900", ParentID: "forum", AppliedTags: []string{"t-spike", "t-working"}},
+	}}
+	srv := s.server(t)
+	defer srv.Close()
+	c := asksClientFor(srv.URL)
+	c.Config.KindTags = []string{"spike"}
+	err := c.TagAsk(context.Background(), "900", []string{"task", "working"}, TagOptions{})
+	if err == nil || !strings.Contains(err.Error(), "keeps one kind tag") {
+		t.Fatalf("err = %v, want the kind-tag refusal under the override", err)
+	}
+	if len(s.patches) != 0 {
+		t.Fatalf("patches = %d, want none", len(s.patches))
+	}
+	if err := c.TagAsk(context.Background(), "900", []string{"spike", "working"}, TagOptions{}); err != nil {
+		t.Fatalf("spike retag under the override: %v", err)
 	}
 }

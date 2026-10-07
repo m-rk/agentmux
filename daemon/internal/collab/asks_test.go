@@ -19,7 +19,7 @@ type fakeAsks struct {
 
 func (f *fakeAsks) server(t *testing.T, threads map[string]Channel, messages []Message) *httptest.Server {
 	forum := Channel{ID: "forum", GuildID: "guild", Type: 15, AvailableTags: []ForumTag{
-		{"t-task", "task"}, {"t-epic", "epic"}, {"t-idea", "idea"},
+		{"t-task", "task"}, {"t-epic", "epic"}, {"t-idea", "idea"}, {"t-spike", "spike"},
 		{"t-needsme", "needs me"}, {"t-working", "working"}, {"t-blocked", "blocked"},
 		{"t-parked", "parked"}, {"t-notnow", "not now"}, {"t-done", "done"}, {"t-failed", "failed"},
 		{"t-ask", "ask"}, {"t-pending", "pending"}, {"t-answered", "answered"}, {"t-launched", "launched"},

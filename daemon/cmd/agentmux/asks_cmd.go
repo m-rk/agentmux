@@ -62,7 +62,7 @@ func asksUsage() {
   agentmux asks read -thread ID [-after MESSAGE_ID] [-json]
   agentmux asks react -thread ID -message ID -emoji EMOJI
   agentmux asks edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL] [-embeds]
-  agentmux asks tag -thread ID -set "task,working" [-unarchive]
+  agentmux asks tag -thread ID -set "task,working" [-unarchive] [-force]
   agentmux asks close -thread ID [-tag NAME] [-lock]
   agentmux asks list [-open|-archived|-all] [-tag NAME] [-since DUR] [-json]
   agentmux asks serve                      hold the Discord gateway open to record button clicks
@@ -336,12 +336,16 @@ func runAsksRead(args []string) error {
 }
 
 // runAsksTag replaces a task thread's tags with exactly -set, resolved by
-// name from the forum's available tags. A retag never posts.
+// name from the forum's available tags. The set must keep one kind tag
+// (task, epic, idea, spike by default); -force re-applies one after a
+// thread already lost it (console and orchestrator only — TagAsk is already
+// a no-op in task sessions). A retag never posts.
 func runAsksTag(args []string) error {
 	fs := flag.NewFlagSet("asks tag", flag.ContinueOnError)
 	thread := fs.String("thread", "", "task thread ID")
 	set := fs.String("set", "", `comma-separated tag names, e.g. "task,working"`)
 	unarchive := fs.Bool("unarchive", false, "unarchive an archived thread first, re-archive after")
+	force := fs.Bool("force", false, "recover a thread that already lost its kind tag: skip the ask-post gate, the set must still carry a kind tag")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -370,7 +374,7 @@ func runAsksTag(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := client.TagAsk(ctx, *thread, names, collab.TagOptions{Unarchive: *unarchive}); err != nil {
+	if err := client.TagAsk(ctx, *thread, names, collab.TagOptions{Unarchive: *unarchive, Force: *force}); err != nil {
 		return err
 	}
 	fmt.Printf("Retagged thread %s as %s.\n", *thread, strings.Join(names, ","))
