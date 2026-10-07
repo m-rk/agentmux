@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"@THREAD@"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"synthetic non-fatal error item"}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"@MESSAGE@"}}
+{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":5}}

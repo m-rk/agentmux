@@ -331,6 +331,9 @@ func taskAmpStubArgs(name string, fields map[string]string) []string {
 		fmt.Fprintf(os.Stderr, "%s: task amp wrapper: %v\n", name, err)
 		return nil
 	}
+	if err := ensureTaskCodexStub(dir); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: task codex wrapper: %v\n", name, err)
+	}
 	return []string{"-e", "PATH=" + dir + ":$PATH", "-e", ampconfig.EnvOverride + "=" + mode}
 }
 

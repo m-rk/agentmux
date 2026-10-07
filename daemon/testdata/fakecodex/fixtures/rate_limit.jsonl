@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"@THREAD@"}
+{"type":"turn.started"}
+{"type":"error","message":"{\"type\":\"error\",\"status\":429,\"error\":{\"type\":\"rate_limit_error\",\"message\":\"synthetic rate limit, retry later\"}}"}
+{"type":"turn.failed","error":{"message":"{\"type\":\"error\",\"status\":429,\"error\":{\"type\":\"rate_limit_error\",\"message\":\"synthetic rate limit, retry later\"}}"}}

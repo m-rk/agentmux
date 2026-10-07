@@ -154,3 +154,8 @@ sandbox bypass flag.
   (success, failure, rate limit, resume, hang) and honours the same flags.
   The wrapper refuses real `codex exec` in task instances unless
   `AGENTMUX_ALLOW_LIVE_CODEX=1` (like AMUX-49). No live calls in `go test`.
+  Implemented (AMUX-55): the fake and its synthetic fixtures are in
+  `daemon/testdata/fakecodex/` (scenarios via `FAKE_CODEX_SCENARIO`), and the
+  refusing wrapper is `daemon/internal/session/codexguard.go`, installed next
+  to the amp wrapper for `task-*` instances. A refusal is one line on stderr
+  and in `$AGENTMUX_TASK_LOG`.

@@ -1,0 +1,85 @@
+#!/bin/sh
+# Fake codex for tests (AMUX-55). Never talks to a network or a model: it
+# prints canned `--json` JSONL from fixtures/ and exits like codex does.
+#
+#   FAKE_CODEX_SCENARIO   success (default) | turn_failed | error_item |
+#                         rate_limit | hang   -> fixtures/<scenario>.jsonl
+#   FAKE_CODEX_THREAD_ID  thread id for a new thread (synthetic default)
+#   FAKE_CODEX_MESSAGE    agent message text (default "fake codex done")
+#   FAKE_CODEX_ARGV_LOG   if set, argv is written there, one arg per line
+#   FAKE_CODEX_HANG_SECONDS  how long `hang` sleeps (default 3600)
+#
+# Honours `exec`, `exec resume <id>|--last`, -C, -s, -m, -c, -o, --json.
+# `exec resume <id>` emits the same thread id in a new thread.started
+# segment, as the real CLI does. Anything but exec (login status,
+# --version) answers with a canned line.
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+[ -n "$FAKE_CODEX_ARGV_LOG" ] && printf '%s\n' "$@" > "$FAKE_CODEX_ARGV_LOG"
+# Global flags before the subcommand (e.g. -C DIR) are folded into the
+# exec flag loop below by moving them behind it.
+PRE=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-C|-s|-m|-c|-p|-a) PRE="$PRE $1 $2"; shift 2 ;;
+	*) break ;;
+	esac
+done
+if [ "$1" = exec ] && [ -n "$PRE" ]; then
+	shift
+	set -- exec $PRE "$@"
+fi
+case "$1" in
+--version) echo "codex-cli 0.0.0-fake"; exit 0 ;;
+login) echo "Logged in using fake credentials"; exit 0 ;;
+exec) shift ;;
+*) echo "fake codex: unsupported command: $1" >&2; exit 2 ;;
+esac
+THREAD=${FAKE_CODEX_THREAD_ID:-00000000-0000-4000-8000-000000000001}
+MESSAGE=${FAKE_CODEX_MESSAGE:-fake codex done}
+OUT=""
+DIR=""
+JSON=0
+if [ "$1" = resume ]; then
+	shift
+	case "$1" in
+	--last) THREAD=${FAKE_CODEX_THREAD_ID:-00000000-0000-4000-8000-000000000001}; shift ;;
+	-*) ;;
+	?*) THREAD=$1; shift ;;
+	esac
+fi
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-C|--cd) DIR=$2; shift 2 ;;
+	-s|--sandbox)
+		case "$2" in
+		read-only|workspace-write|danger-full-access) ;;
+		*) echo "fake codex: invalid sandbox mode: $2" >&2; exit 2 ;;
+		esac
+		shift 2 ;;
+	-m|--model|-c|--config|-p|--profile|-a|--ask-for-approval|--add-dir) shift 2 ;;
+	-o|--output-last-message) OUT=$2; shift 2 ;;
+	--json) JSON=1; shift ;;
+	*) shift ;;
+	esac
+done
+if [ -n "$DIR" ] && [ ! -d "$DIR" ]; then
+	echo "fake codex: no such directory: $DIR" >&2
+	exit 1
+fi
+SCENARIO=${FAKE_CODEX_SCENARIO:-success}
+FIXTURE="$HERE/fixtures/$SCENARIO.jsonl"
+if [ ! -f "$FIXTURE" ]; then
+	echo "fake codex: unknown scenario: $SCENARIO" >&2
+	exit 2
+fi
+if [ "$JSON" = 1 ]; then
+	sed -e "s|@THREAD@|$THREAD|g" -e "s|@MESSAGE@|$MESSAGE|g" "$FIXTURE"
+else
+	echo "$MESSAGE"
+fi
+case "$SCENARIO" in
+hang) sleep "${FAKE_CODEX_HANG_SECONDS:-3600}"; exit 1 ;;
+turn_failed|rate_limit) exit 1 ;;
+esac
+[ -n "$OUT" ] && printf '%s\n' "$MESSAGE" > "$OUT"
+exit 0
