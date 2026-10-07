@@ -2,9 +2,12 @@ package provision
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 )
 
 // claudeJSONPath returns the on-disk credentials/config file Claude Code
@@ -76,22 +79,54 @@ func preacceptWorkspaceTrust(claudeJSON, workdir string, chown func(path string)
 	return os.Rename(tmp, claudeJSON)
 }
 
-// claudeLoggedInVia runs `claude auth status --json` via an
+// claudeLoginRetryDelay is how long createClaudeCode waits before checking
+// login a second time. A credentials refresh or a racing `claude` process can
+// make `claude auth status` report logged-out for a few seconds on a host
+// that is in fact logged in; one retry rides that out.
+var claudeLoginRetryDelay = 20 * time.Second
+
+// claudeLoginProbe runs `claude auth status --json` via an
 // already-configured *exec.Cmd — each OS builds that differently (a
 // privilege-dropped runas.Command on Linux, a same-user
 // runas.CurrentUserCommand on macOS) — and parses the JSON result. Shared so
-// both platforms parse the same response shape the same way instead of each
-// keeping its own copy to drift out of sync.
-func claudeLoggedInVia(cmd *exec.Cmd) bool {
+// both platforms parse the same response shape the same way. The returned
+// string says what was seen, for the error when login is not confirmed.
+func claudeLoginProbe(cmd *exec.Cmd) (bool, string) {
 	out, err := cmd.Output()
 	if err != nil {
-		return false
+		detail := err.Error()
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
+			detail += ": " + firstLine(string(ee.Stderr), 200)
+		}
+		return false, "`claude auth status --json` failed (" + detail + ")"
 	}
 	var status struct {
 		LoggedIn bool `json:"loggedIn"`
 	}
 	if err := json.Unmarshal(out, &status); err != nil {
-		return false
+		return false, "`claude auth status --json` printed unparseable output (" + firstLine(string(out), 200) + ")"
 	}
-	return status.LoggedIn
+	if !status.LoggedIn {
+		return false, "`claude auth status --json` reported loggedIn=false"
+	}
+	return true, ""
+}
+
+// checkClaudeLogin probes login, and on failure waits claudeLoginRetryDelay
+// and probes once more before giving up. newCmd builds a fresh command per
+// attempt (an *exec.Cmd runs once). The error names both checks, so a
+// transient failure is distinguishable from a real logout.
+func checkClaudeLogin(who string, newCmd func() *exec.Cmd) error {
+	ok, first := claudeLoginProbe(newCmd())
+	if ok {
+		return nil
+	}
+	time.Sleep(claudeLoginRetryDelay)
+	ok, second := claudeLoginProbe(newCmd())
+	if ok {
+		return nil
+	}
+	return fmt.Errorf("Claude Code does not appear to be logged in%s: checked twice, %s apart; first: %s; second: %s; if it is logged in this may be a credentials refresh in progress, so retry; otherwise run 'claude' once%s to log in",
+		who, claudeLoginRetryDelay, first, second, who)
 }

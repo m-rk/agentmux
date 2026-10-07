@@ -382,6 +382,8 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 	}
 	if baseCommit != "" {
 		res.Base, res.BaseCommit = req.Base, baseCommit
+	} else if req.Base != "" {
+		res.Warnings = append(res.Warnings, "could not determine the commit the branch started from origin/"+req.Base+": the branch already existed and shares no history with the fetched origin/"+req.Base)
 	}
 	return res, nil
 }
@@ -455,7 +457,7 @@ func (e Env) ensureWorktree(ctx context.Context, repo, wtPath, branch, base stri
 		for _, wt := range wts {
 			if samePath(wt.path, wtPath) {
 				if wt.branch == "refs/heads/"+branch {
-					return "", nil
+					return e.reusedStart(ctx, repo, branch, base), nil
 				}
 				return "", Refuse(safesend.ReasonInvalid, "worktree %s exists on %s, not branch %s", wtPath, strings.TrimPrefix(wt.branch, "refs/heads/"), branch)
 			}
@@ -470,12 +472,12 @@ func (e Env) ensureWorktree(ctx context.Context, repo, wtPath, branch, base stri
 			}
 		}
 		if dryRun {
-			return "", nil
+			return e.reusedStart(ctx, repo, branch, base), nil
 		}
 		if _, err := e.git(ctx, repo, "worktree", "add", wtPath, branch); err != nil {
 			return "", Refuse(safesend.ReasonFailed, "%v", err)
 		}
-		return "", nil
+		return e.reusedStart(ctx, repo, branch, base), nil
 	}
 
 	start := ""
@@ -515,6 +517,22 @@ func (e Env) ensureWorktree(ctx context.Context, repo, wtPath, branch, base stri
 		return "", nil
 	}
 	return start, nil
+}
+
+// reusedStart is the commit an already-existing branch started from, for a
+// create that was retried after an earlier attempt made the worktree but
+// failed later (a failed login check, say): the merge-base of the branch and
+// the last fetched origin/base. "" when no base was asked for or it can't be
+// resolved, which Create then reports as a warning rather than silently.
+func (e Env) reusedStart(ctx context.Context, repo, branch, base string) string {
+	if base == "" {
+		return ""
+	}
+	mb, err := e.git(ctx, repo, "merge-base", "refs/heads/"+branch, "refs/remotes/origin/"+base)
+	if err != nil {
+		return ""
+	}
+	return mb
 }
 
 type worktree struct{ path, branch string }

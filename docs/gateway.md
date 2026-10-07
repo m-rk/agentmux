@@ -119,8 +119,18 @@ poll `status`.
 ```
 
 `base` and `base_commit` (the commit the worktree started from) are present
-only when the request had a `base` and this call made the branch from it; a
-reused instance, worktree or existing branch reports neither.
+when the request had a `base`. When this call made the branch it is the fetched
+`origin/<base>` commit; when the branch already existed (typically a retry
+after an earlier create made the worktree but failed later) it is the
+merge-base of the branch and `origin/<base>`. If that cannot be determined the
+result carries a `warnings` entry saying so instead of silently omitting it.
+
+A claude instance create checks `claude auth status --json` as the run user
+and, if that does not report `loggedIn`, checks once more after about 20
+seconds (a credentials refresh can make a logged-in host look logged out for a
+moment). If both checks fail the `failed` detail names what each one saw
+(command failure, unparseable output, or `loggedIn=false`), and callers should
+show that detail, retry once, then ask rather than switch runner.
 
 `created` is false when an existing instance was reused. A refusal is a non-2xx
 `{"error": {"reason", "detail"}}`: `invalid` (names, branch, base name, worktree

@@ -713,3 +713,35 @@ func TestCreatePinRefusedForOtherAgents(t *testing.T) {
 	_, err := c.env.Create(context.Background(), req)
 	wantReason(t, err, safesend.ReasonUnsupported)
 }
+
+// TestCreateRetryAfterFailureStillReportsBaseCommit: the first create makes
+// the worktree and branch, then the daemon refuses (e.g. a transient login
+// check). The retry finds the branch already there and must still report the
+// commit it started from, with the first error having reached the caller.
+func TestCreateRetryAfterFailureStillReportsBaseCommit(t *testing.T) {
+	c := newCreateEnv(t)
+	_, pusher := originFor(t, c)
+	git(t, pusher, "commit", "-q", "--allow-empty", "-m", "more")
+	git(t, pusher, "push", "-q", "origin", "main")
+	want := git(t, pusher, "rev-parse", "HEAD")
+
+	r := c.req()
+	r.Base = "main"
+	c.d.failWith = "Claude Code does not appear to be logged in"
+	_, err := c.env.Create(context.Background(), r)
+	if err == nil || !strings.Contains(err.Error(), "does not appear to be logged in") {
+		t.Fatalf("first create error = %v, want the daemon's message", err)
+	}
+
+	c.d.failWith = ""
+	res, err := c.env.Create(context.Background(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Base != "main" || res.BaseCommit != want {
+		t.Fatalf("retry base = %q @ %q, want main @ %s", res.Base, res.BaseCommit, want)
+	}
+	if len(res.Warnings) != 0 {
+		t.Fatalf("unexpected warnings %v", res.Warnings)
+	}
+}

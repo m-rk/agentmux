@@ -145,8 +145,8 @@ func createClaudeCode(opts Options) (string, error) {
 	claudeJSON := claudeJSONPath(u.HomeDir)
 	displayName := DisplayNameForHost(u.Username, hostName, workdir)
 
-	if !claudeLoggedIn() {
-		return "", fmt.Errorf("Claude Code does not appear to be logged in; run 'claude' once to log in, then retry")
+	if err := claudeLoggedIn(); err != nil {
+		return "", err
 	}
 
 	if err := os.MkdirAll(workdir, 0o755); err != nil {
@@ -199,12 +199,13 @@ func createClaudeCode(opts Options) (string, error) {
 		name, regPath, name, sessionName), nil
 }
 
-// claudeLoggedIn checks login as the current user, since a macOS instance
-// always runs as whoever invoked `agentmux new` — no privilege drop needed,
-// unlike Linux's runas.Command(runUser, ...); see claudeLoggedInVia for the
-// shared response parsing.
-func claudeLoggedIn() bool {
-	return claudeLoggedInVia(runas.CurrentUserCommand("claude", "auth", "status", "--json"))
+// claudeLoggedIn checks login (with one retry) as the current user, since a
+// macOS instance always runs as whoever invoked `agentmux new` — no privilege
+// drop needed; see checkClaudeLogin.
+func claudeLoggedIn() error {
+	return checkClaudeLogin("", func() *exec.Cmd {
+		return runas.CurrentUserCommand("claude", "auth", "status", "--json")
+	})
 }
 
 func installClaudeCodeAgents(name, label, updateLabel, binPath string) error {

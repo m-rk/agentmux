@@ -179,8 +179,8 @@ func createClaudeCode(opts Options) (string, error) {
 	claudeJSON := claudeJSONPath(u.HomeDir)
 	displayName := DisplayNameForHost(runUser, hostName, workdir)
 
-	if !claudeLoggedIn(runUser) {
-		return "", fmt.Errorf("Claude Code does not appear to be logged in for user %q; run 'claude' once as %s to log in, then retry", runUser, runUser)
+	if err := claudeLoggedIn(runUser); err != nil {
+		return "", err
 	}
 
 	if err := ensureWorkdirForUser(workdir, u); err != nil {
@@ -241,11 +241,12 @@ func createClaudeCode(opts Options) (string, error) {
 		name, regPath, runUser, name, sessionName), nil
 }
 
-// claudeLoggedIn checks login by dropping privileges to runUser, since this
-// provisioner runs as root; see claudeLoggedInVia for the shared response
-// parsing.
-func claudeLoggedIn(runUser string) bool {
-	return claudeLoggedInVia(runas.Command(runUser, "claude", "auth", "status", "--json"))
+// claudeLoggedIn checks login (with one retry) by dropping privileges to
+// runUser, since this provisioner runs as root; see checkClaudeLogin.
+func claudeLoggedIn(runUser string) error {
+	return checkClaudeLogin(fmt.Sprintf(" for user %q", runUser), func() *exec.Cmd {
+		return runas.Command(runUser, "claude", "auth", "status", "--json")
+	})
 }
 
 func installClaudeCodeUnits(name, sessionName, runUser, binPath, serviceName, updateServiceName, timerName, tickServiceName, tickTimerName string) error {
