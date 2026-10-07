@@ -639,3 +639,7 @@ func codexRunCmdlineMatch(cmdlinePath string) bool {
 	}
 	return false
 }
+
+// CodexErrorIsRateLimit reports whether a turn.failed error message is a
+// 429 or rate/usage limit.
+func CodexErrorIsRateLimit(msg string) bool { return codexRateLimited(msg) }

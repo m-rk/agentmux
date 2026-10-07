@@ -439,6 +439,8 @@ func newCollectorForAgent(agent string) Collector {
 		return &AmpCollector{}
 	case "opencode":
 		return &OpencodeCollector{}
+	case "codex":
+		return &CodexCollector{}
 	default:
 		return nil
 	}

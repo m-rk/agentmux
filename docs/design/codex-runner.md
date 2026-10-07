@@ -211,3 +211,31 @@ create copies from the template. Note codex's workspace-write also makes
 the system temp directory writable. `-allow-file` stays unsupported for
 codex: create returns a warning. Auth is one shared `CODEX_HOME` per run
 user; `agentmux auth status` reports it via `codex login status`.
+
+## Implemented: send, nudge, stall, status (AMUX-58)
+
+- **Send** to a codex worker (`ops.Send`) never terminal-pastes. On the
+  thread's state: a healthy running turn gets the message through `codex
+  queue` and is left running (`queued: true`, audit outcome `queued`); a
+  stalled turn (log silent 10 minutes) is stopped and replaced by `codex exec
+  resume` (like AMUX-46); an idle/done/failed thread is simply resumed.
+  `-doorbell` stays unsupported.
+- **`codex queue` result (codex-cli 0.160.1, probed headless).** `codex queue
+  --thread ID --message TEXT` works with no TUI and no running app-server: it
+  exits 0 with `Queued message <id> for thread <id>.` for a real thread, and
+  exits 1 with `no rollout found for thread id` for an unknown one. The
+  message is persisted for the thread and was delivered with the *next* turn:
+  a following `codex exec resume` answered the queued text in the same turn.
+  Not proved: whether an already-running `codex exec` picks up a queued
+  message mid-turn. So a queued nudge is guaranteed to arrive with the next
+  continue, not necessarily before the current turn ends; the sender should
+  poll `sessions status` and continue when it is done. The text is argv (no
+  stdin form), unlike run prompts.
+- **Status**: `sessions status <inst>@<host>#<thread>` reports
+  running/done/failed/stalled from the log (AMUX-56). **Transcript**: the
+  codex reader over the same log. **Thread watch**: `CodexCollector` maps the
+  log to turn, assistant-message, api-error/usage-limit and exit events;
+  silence is left to the stall detector.
+- **TUI codex instances** are not supported, so the `safesend` footer markers,
+  a `dailycheck` pane check and `processIdentityIssue` work are not needed
+  yet; the placeholder pane already carries `codex` in its process tree.
