@@ -169,6 +169,10 @@ func settleFetchedComponents(rows []map[string]any, chosen string) ([]map[string
 				if label, ok := btn["label"].(string); ok {
 					btn["label"] = settleLabel(label)
 				}
+			} else if label, ok := btn["label"].(string); ok {
+				// A check belongs only on the selected option: drop a stale
+				// one left by an earlier settle of a different button.
+				btn["label"] = settleBase(label)
 			}
 		}
 	}

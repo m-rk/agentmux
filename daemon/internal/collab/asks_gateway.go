@@ -284,19 +284,15 @@ func settleLabel(label string) string {
 	return settleBase(label) + " ✓"
 }
 
-// settleBase strips any existing check marks (leading or trailing ✓, any
-// count) so re-settling a settled label stays at exactly one check.
+// checkMarks are the glyphs treated as a settle check: ✓, ✔, and either with
+// the emoji variation selector.
+const checkMarks = "\u2713\u2714\ufe0f"
+
+// settleBase strips any existing check marks (leading or trailing, any
+// count, any variant in checkMarks) so re-settling a settled label stays at
+// exactly one check.
 func settleBase(label string) string {
-	for {
-		trimmed := strings.TrimSpace(label)
-		changed := trimmed
-		changed = strings.TrimSpace(strings.TrimPrefix(changed, "✓"))
-		changed = strings.TrimSpace(strings.TrimSuffix(changed, "✓"))
-		if changed == trimmed {
-			return trimmed
-		}
-		label = changed
-	}
+	return strings.TrimSpace(strings.Trim(strings.TrimSpace(label), checkMarks+" \t"))
 }
 
 // settleComponents disables every button and marks the chosen one with a
@@ -316,6 +312,8 @@ func settleComponents(rows []map[string]any, chosen string) []map[string]any {
 				if label, ok := btn["label"].(string); ok {
 					btn["label"] = settleLabel(label)
 				}
+			} else if label, ok := btn["label"].(string); ok {
+				btn["label"] = settleBase(label)
 			}
 		}
 	}

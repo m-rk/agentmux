@@ -10,13 +10,16 @@ import (
 // trailing check, so the click handler and `asks edit -chosen` commute.
 func TestSettleLabelIdempotent(t *testing.T) {
 	for in, want := range map[string]string{
-		"Ship it":        "Ship it ✓",
-		"Ship it ✓":      "Ship it ✓",
-		"✓ Ship it":      "Ship it ✓",
-		"✓✓ Ship it":     "Ship it ✓",
-		"Ship it ✓✓":     "Ship it ✓",
-		"✓ Ship it ✓":    "Ship it ✓",
+		"Ship it":      "Ship it ✓",
+		"Ship it ✓":    "Ship it ✓",
+		"✓ Ship it":    "Ship it ✓",
+		"✓✓ Ship it":   "Ship it ✓",
+		"Ship it ✓✓":   "Ship it ✓",
+		"✓ Ship it ✓":  "Ship it ✓",
 		"✓✓⭐ ▶ Resume": "⭐ ▶ Resume ✓",
+		"amp ⭐ ✓ ✓":    "amp ⭐ ✓",
+		"amp ⭐ ✔️":     "amp ⭐ ✓",
+		"amp ⭐ ✓️ ✓":   "amp ⭐ ✓",
 	} {
 		if got := settleLabel(in); got != want {
 			t.Errorf("settleLabel(%q) = %q, want %q", in, got, want)
@@ -99,5 +102,26 @@ func TestSendsSuppressEmbeds(t *testing.T) {
 	}
 	if _, ok := f.hook[3]["flags"]; ok {
 		t.Fatalf("-embeds post kept flags: %#v", f.hook[3])
+	}
+}
+
+// TestSettleChecksOnlySelected pins that re-settling with a different chosen
+// button moves the check instead of leaving one on each option.
+func TestSettleChecksOnlySelected(t *testing.T) {
+	rows := []map[string]any{{"components": []any{
+		map[string]any{"type": 2, "style": 2, "label": "amp ⭐", "custom_id": "ask:amp ⭐"},
+		map[string]any{"type": 2, "style": 2, "label": "Not now", "custom_id": "ask:Not now"},
+	}}}
+	settleComponents(rows, "ask:amp ⭐")
+	got, err := settleFetchedComponents(rows, "Not now")
+	if err != nil {
+		t.Fatal(err)
+	}
+	btns := got[0]["components"].([]any)
+	if l := btns[0].(map[string]any)["label"]; l != "amp ⭐" {
+		t.Errorf("unselected label = %q, want no check", l)
+	}
+	if l := btns[1].(map[string]any)["label"]; l != "Not now ✓" {
+		t.Errorf("selected label = %q", l)
 	}
 }
