@@ -221,3 +221,51 @@ func TestRunCodexBadLaunchIsRefused(t *testing.T) {
 		t.Fatalf("launch failure: %v", err)
 	}
 }
+
+// A send to a healthy running turn queues the message and leaves the turn
+// alone; to a stalled one it replaces the turn.
+func TestSendCodexQueuesOnHealthyTurnAndReplacesStalled(t *testing.T) {
+	home, _ := newCodexEnv(t)
+	queueLog := filepath.Join(t.TempDir(), "queue")
+	t.Setenv("FAKE_CODEX_QUEUE_LOG", queueLog)
+	t.Setenv("FAKE_CODEX_SCENARIO", "hang")
+	t.Setenv("FAKE_CODEX_HANG_SECONDS", "30")
+	if _, err := (Env{}).Run(context.Background(), RunRequest{Address: codexAddr(""), Text: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { session.StopCodexRuns("cx", "") })
+	src, _, err := Source(address.Address{Instance: "cx"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res SendResult
+	if err := sendCodexResume(context.Background(), src, address.Address{Instance: "cx", Host: address.LocalHostName(), Thread: codexTestThread}, "nudge", &res); err != nil {
+		t.Fatalf("send to healthy turn: %v", err)
+	}
+	if !res.Queued || res.Confirmed {
+		t.Fatalf("result = %+v, want queued", res)
+	}
+	if data, _ := os.ReadFile(queueLog); !strings.Contains(string(data), codexTestThread+"\tnudge") {
+		t.Fatalf("queue log = %q", data)
+	}
+	if st := session.CodexRunStateOf(session.CodexRunLogPath(home, "cx", codexTestThread)); st.State != "running" {
+		t.Fatalf("healthy turn was disturbed: %+v", st)
+	}
+	logPath := session.CodexRunLogPath(home, "cx", codexTestThread)
+	old := time.Now().Add(-session.CodexRunStalledAfter - time.Minute)
+	if err := os.Chtimes(logPath, old, old); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_CODEX_SCENARIO", "success")
+	res = SendResult{}
+	if err := sendCodexResume(context.Background(), src, address.Address{Instance: "cx", Host: address.LocalHostName(), Thread: codexTestThread}, "nudge2", &res); err != nil {
+		t.Fatalf("send to stalled turn: %v", err)
+	}
+	if res.Queued {
+		t.Fatalf("stalled turn was queued, not replaced: %+v", res)
+	}
+	waitCodexState(t, home, codexTestThread, "done")
+	if data, _ := os.ReadFile(queueLog); strings.Contains(string(data), "nudge2") {
+		t.Fatalf("stalled nudge went to the queue: %q", data)
+	}
+}

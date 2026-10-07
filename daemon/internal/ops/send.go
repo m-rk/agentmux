@@ -46,6 +46,9 @@ type SendResult struct {
 	// submit (or an amp resume's run reports the worker running). False
 	// means submitted but not observed, not that it failed.
 	Confirmed bool `json:"confirmed"`
+	// Queued is true when a codex send found the turn healthy and queued
+	// the message for the thread's next turn instead of interrupting it.
+	Queued bool `json:"queued,omitempty"`
 	// Coalesced is true when a doorbell send succeeded without sending
 	// because the session was busy or already had a doorbell waiting.
 	Coalesced   bool   `json:"coalesced,omitempty"`
@@ -170,6 +173,9 @@ func (e Env) Send(ctx context.Context, req SendRequest) SendResult {
 	outcome, detail := "delivered", ""
 	if (src.Agent == "amp" || src.Agent == "codex") && err == nil {
 		outcome = "resumed"
+		if res.Queued {
+			outcome = "queued"
+		}
 	}
 	if err != nil {
 		r := AsError(err)

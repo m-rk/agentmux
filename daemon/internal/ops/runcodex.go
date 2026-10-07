@@ -126,6 +126,20 @@ func sendCodexResume(ctx context.Context, src transcript.Source, addr address.Ad
 			return err
 		}
 	}
+	// A healthy turn is never killed: the message is queued on the thread
+	// and codex delivers it with the thread's next turn. A stalled turn
+	// falls through to Run, which stops it and starts a new one.
+	if st := session.CodexRunStateOf(session.CodexRunLogPath(src.Home, addr.Instance, thread)); st.State == "running" && !st.Stalled {
+		if err := session.QueueCodexMessage(ctx, addr.Instance, thread, message); err != nil {
+			return Refuse(safesend.ReasonFailed, "%v", err)
+		}
+		res.Address = address.Address{Instance: addr.Instance, Host: addr.Host, Thread: thread}.String()
+		res.Thread = thread
+		res.Queued = true
+		now := time.Now().UTC()
+		res.SubmittedAt = &now
+		return nil
+	}
 	runRes, err := Env{}.Run(ctx, RunRequest{Address: address.Address{Instance: addr.Instance, Host: addr.Host, Thread: thread}.String(), Text: message, InterruptStalled: true})
 	if err != nil {
 		return err

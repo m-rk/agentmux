@@ -8,6 +8,7 @@
 #   FAKE_CODEX_MESSAGE    agent message text (default "fake codex done")
 #   FAKE_CODEX_ARGV_LOG   if set, argv is written there, one arg per line
 #   FAKE_CODEX_STDIN_LOG  if set and the prompt arg is `-`, stdin is copied there
+#   FAKE_CODEX_QUEUE_LOG  `codex queue` appends "thread<TAB>message" here
 #   FAKE_CODEX_HANG_SECONDS  how long `hang` sleeps (default 3600)
 #
 # Honours `exec`, `exec resume <id>|--last`, -C, -s, -m, -c, -o, --json.
@@ -32,6 +33,22 @@ fi
 case "$1" in
 --version) echo "codex-cli 0.0.0-fake"; exit 0 ;;
 login) echo "Logged in using fake credentials"; exit 0 ;;
+queue)
+	# `queue --thread ID --message TEXT`: the real one persists the message
+	# for the thread's next turn. FAKE_CODEX_QUEUE_LOG gets "ID<TAB>TEXT".
+	QT=""; QM=""
+	shift
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--thread) QT=$2; shift 2 ;;
+		--message) QM=$2; shift 2 ;;
+		*) shift ;;
+		esac
+	done
+	[ -z "$QT" ] || [ -z "$QM" ] && { echo "fake codex: queue needs --thread and --message" >&2; exit 2; }
+	[ -n "$FAKE_CODEX_QUEUE_LOG" ] && printf '%s\t%s\n' "$QT" "$QM" >> "$FAKE_CODEX_QUEUE_LOG"
+	echo "Queued message fake-id for thread $QT."
+	exit 0 ;;
 exec) shift ;;
 *) echo "fake codex: unsupported command: $1" >&2; exit 2 ;;
 esac

@@ -260,6 +260,27 @@ func StartCodexRun(ctx context.Context, instance string, argv []string, prompt, 
 	return waitCodexThread(ctx, logPath, runID, offset)
 }
 
+// QueueCodexMessage runs `codex queue --thread T --message TEXT`: codex
+// persists the message for the thread and delivers it with that thread's
+// next turn (proved headless, see docs/design/codex-runner.md). The text is
+// argv because queue has no stdin form, so it is limited to what a nudge
+// carries. It never touches a running `codex exec`.
+func QueueCodexMessage(ctx context.Context, instance, thread, message string) error {
+	if !ValidCodexThreadID(thread) {
+		return fmt.Errorf("%q is not a codex thread id", thread)
+	}
+	cmd := codexRunCommand(ctx, instance, []string{"queue", "--thread", thread, "--message", message})
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if len(msg) > 300 {
+			msg = msg[:300]
+		}
+		return fmt.Errorf("codex queue: %v: %s", err, msg)
+	}
+	return nil
+}
+
 // codexRunCommand builds the run child: plain `codex` as the current user
 // with the task identity stamped on its environment (see AmpRunEnv).
 func codexRunCommand(ctx context.Context, instance string, argv []string) *exec.Cmd {
