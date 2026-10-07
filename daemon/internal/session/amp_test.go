@@ -699,6 +699,7 @@ func readArgv(t *testing.T, argvFile string) []string {
 // (here fake) amp with the host mode as -m.
 func TestTaskAmpWrapperAddsHostMode(t *testing.T) {
 	wrapper, _, argvFile, env := wrapperHarness(t, "high")
+	env = append(env, AllowLiveAmpEnv+"=1")
 	for _, args := range [][]string{
 		{"-x", "reply with exactly: MODE-PROBE-OK and nothing else"},
 		{"--execute", "probe"},
@@ -745,6 +746,7 @@ func TestTaskAmpWrapperPassesReadsThrough(t *testing.T) {
 // through untouched — the worker's (or agentmux's) choice wins.
 func TestTaskAmpWrapperNeverDoublesMode(t *testing.T) {
 	wrapper, _, argvFile, env := wrapperHarness(t, "high")
+	env = append(env, AllowLiveAmpEnv+"=1")
 	for _, args := range [][]string{
 		{"-m", "custom", "-x", "probe"},
 		{"--mode", "custom", "threads", "new"},
@@ -765,7 +767,7 @@ func TestTaskAmpWrapperNeverDoublesMode(t *testing.T) {
 // wrapper exits non-zero before any amp runs.
 func TestTaskAmpWrapperRefusesWithoutMode(t *testing.T) {
 	wrapper, _, argvFile, env := wrapperHarness(t, "")
-	envNoMode := []string{"PATH=" + strings.Split(env[0], "=")[1]}
+	envNoMode := []string{"PATH=" + strings.Split(env[0], "=")[1], AllowLiveAmpEnv + "=1"}
 	out, err := runWrapper(t, wrapper, envNoMode, "-x", "probe")
 	if err == nil {
 		t.Fatal("wrapper ran with no mode configured")
@@ -841,5 +843,83 @@ func TestRunAmpStampsStubPathOnTaskLaunch(t *testing.T) {
 	}
 	if mi < 0 || mi+1 >= len(got) || got[mi+1] != "high" {
 		t.Fatalf("runner carries no -m high: %v", got)
+	}
+}
+
+var ampLiveCalls = [][]string{
+	{"-x", "probe"},
+	{"--execute", "probe"},
+	{"threads", "continue", "-x", "go on", "T-01a1119c-1111-4111-8111-111111111111"},
+	{"-m", "custom", "-x", "probe"},
+}
+
+// TestTaskAmpWrapperRefusesLiveExecute: -x never reaches amp without the
+// opt-in, and the refusal is one line on stderr and one in the task log.
+func TestTaskAmpWrapperRefusesLiveExecute(t *testing.T) {
+	for _, args := range ampLiveCalls {
+		wrapper, _, argvFile, env := wrapperHarness(t, "high")
+		taskLog := filepath.Join(t.TempDir(), "task.log")
+		env = append(env, "AGENTMUX_TASK_LOG="+taskLog)
+		out, err := runWrapper(t, wrapper, env, args...)
+		if err == nil {
+			t.Fatalf("wrapper %v ran a live execute without the opt-in", args)
+		}
+		if !strings.Contains(out, taskAmpLiveRefusal) || strings.Count(strings.TrimSpace(out), "\n") != 0 {
+			t.Fatalf("refusal = %q, want the one-line text", out)
+		}
+		if !strings.Contains(out, "fakeamp") {
+			t.Fatalf("refusal = %q, want a pointer at the fake", out)
+		}
+		logged, _ := os.ReadFile(taskLog)
+		if strings.TrimSpace(string(logged)) != "amp: "+taskAmpLiveRefusal {
+			t.Fatalf("task log = %q, want exactly the refusal line", logged)
+		}
+		if _, serr := os.Stat(argvFile); !os.IsNotExist(serr) {
+			t.Fatalf("amp ran despite the refusal (%v)", args)
+		}
+	}
+}
+
+// TestTaskAmpWrapperAllowsLiveWithFlag: with the opt-in the call reaches
+// amp (the fake here) and nothing is logged.
+func TestTaskAmpWrapperAllowsLiveWithFlag(t *testing.T) {
+	for _, args := range ampLiveCalls {
+		wrapper, _, argvFile, env := wrapperHarness(t, "high")
+		taskLog := filepath.Join(t.TempDir(), "task.log")
+		env = append(env, AllowLiveAmpEnv+"=1", "AGENTMUX_TASK_LOG="+taskLog)
+		if out, err := runWrapper(t, wrapper, env, args...); err != nil {
+			t.Fatalf("wrapper %v with the flag: %v: %s", args, err, out)
+		}
+		if got := readArgv(t, argvFile); len(got) == 0 {
+			t.Fatalf("amp did not run for %v", args)
+		}
+		if _, serr := os.Stat(taskLog); !os.IsNotExist(serr) {
+			t.Fatalf("task log written for an allowed call (%v)", args)
+		}
+	}
+}
+
+// TestTaskAmpWrapperLiveGuardLeavesRunnerAlone: the guard touches only -x.
+// The runner's own launch args (--no-tui, no -x) and non-executing calls
+// reach amp as before with no flag set and nothing logged.
+func TestTaskAmpWrapperLiveGuardLeavesRunnerAlone(t *testing.T) {
+	for _, args := range [][]string{
+		{"--no-tui", "--runner-id", "r1", "--remote-control-terminal", "-m", "high"},
+		{"threads", "list"},
+		{"threads", "continue", "T-01a1119c-1111-4111-8111-111111111111"},
+		{"--version"},
+	} {
+		wrapper, _, argvFile, env := wrapperHarness(t, "high")
+		taskLog := filepath.Join(t.TempDir(), "task.log")
+		env = append(env, "AGENTMUX_TASK_LOG="+taskLog)
+		if out, err := runWrapper(t, wrapper, env, args...); err != nil {
+			t.Fatalf("wrapper %v: %v: %s", args, err, out)
+		}
+		if got := readArgv(t, argvFile); len(got) == 0 {
+			t.Fatalf("amp did not run for %v", args)
+		}
+		if _, serr := os.Stat(taskLog); !os.IsNotExist(serr) {
+			t.Fatalf("task log written for %v", args)
+		}
 	}
 }

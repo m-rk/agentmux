@@ -220,6 +220,16 @@ func taskAmpStubDir() string {
 // so the wrapper script and the tests quote the same text.
 const taskAmpStubRefusal = "agentmux starts amp for you; test with fakes or -dry-run"
 
+// AllowLiveAmpEnv is the opt-in that lets a task instance run a real
+// `amp -x` or `threads continue -x` (AMUX-49). Unset, the wrapper refuses:
+// those calls run a model turn on a real thread and spend real money.
+// Only the console or the operator sets it.
+const AllowLiveAmpEnv = "AGENTMUX_ALLOW_LIVE_AMP"
+
+// taskAmpLiveRefusal is the one line the wrapper prints and logs when it
+// refuses a live execute; the script and the tests quote the same text.
+const taskAmpLiveRefusal = "refusing live amp -x in a task instance (" + AllowLiveAmpEnv + "=1 to allow); tests use daemon/testdata/fakeamp or sessions run -dry-run"
+
 // taskAmpWrapper is the amp wrapper installed first on PATH in task-*
 // instances' panes (AMUX-45). A worker that runs `amp` by hand bypasses
 // `sessions run`, so without this the thread starts on amp's default
@@ -227,7 +237,10 @@ const taskAmpStubRefusal = "agentmux starts amp for you; test with fakes or -dry
 // thread-creating call instead. Read-only calls (threads list/export,
 // version, ...) pass through untouched, and an explicit -m/--mode is
 // never doubled. With no mode the wrapper refuses rather than starting a
-// thread on the default model.
+// thread on the default model. `-x` (also `threads continue -x`) runs a
+// real model turn, so it is refused unless AGENTMUX_ALLOW_LIVE_AMP=1
+// (AMUX-49); the refusal is one line on stderr and in $AGENTMUX_TASK_LOG
+// (default amp-refused.log beside the wrapper).
 //
 // The mode rides AGENTMUX_AMP_MODE, stamped per session by taskAmpStubArgs
 // from the same Require resolution the runner itself uses; the wrapper
@@ -238,13 +251,25 @@ const taskAmpWrapper = `#!/bin/sh
 # agentmux task wrapper (AMUX-45): manual amp calls in a task pane get
 # the host mode. Generated - do not hand-edit; RunAmp rewrites it when
 # its content drifts.
+SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ "${@@ALLOW_ENV@@:-}" != 1 ]; then
+	for a in "$@"; do
+		case "$a" in
+		--) break ;;
+		-x|--execute|--orb-execute|-ox)
+			MSG="amp: @@LIVE_REFUSAL@@"
+			echo "$MSG" >&2
+			echo "$MSG" >> "${AGENTMUX_TASK_LOG:-$SELF_DIR/amp-refused.log}" 2>/dev/null
+			exit 1 ;;
+		esac
+	done
+fi
 MODE="${@@MODE_ENV@@:-}"
 if [ -z "$MODE" ]; then
 	echo "amp: no amp mode configured (@@MODE_ENV@@ unset): @@REFUSAL@@" >&2
 	exit 1
 fi
 REAL=""
-SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REST="$PATH:"
 while [ -n "$REST" ]; do
 	d=${REST%%:*}
@@ -295,6 +320,8 @@ exec "$REAL" "$@"
 // carries shell %% expansions that a format string would eat.
 func taskAmpWrapperFor() string {
 	s := strings.ReplaceAll(taskAmpWrapper, "@@MODE_ENV@@", ampconfig.EnvOverride)
+	s = strings.ReplaceAll(s, "@@ALLOW_ENV@@", AllowLiveAmpEnv)
+	s = strings.ReplaceAll(s, "@@LIVE_REFUSAL@@", taskAmpLiveRefusal)
 	return strings.ReplaceAll(s, "@@REFUSAL@@", taskAmpStubRefusal)
 }
 

@@ -205,6 +205,18 @@ real thread. A probe run through the wrapper shows the contributor
 mode in the thread's export (`meta.threadAgent.definition`), which is
 what the back-test asserts with a fake amp.
 
+The wrapper also refuses a live model turn: `amp -x` and `threads
+continue -x` exit 1 unless `AGENTMUX_ALLOW_LIVE_AMP=1`, which only the
+console or the operator sets (AMUX-49). The refusal is one line on
+stderr and the same line appended to `$AGENTMUX_TASK_LOG` (default
+`amp-refused.log` beside the wrapper), which is the task's agent log.
+The runner's own `--no-tui` launch and non-executing calls are
+unaffected. Tests that need `-x` put `daemon/testdata/fakeamp` on `PATH`
+(it records argv to `FAKE_AMP_ARGV_LOG` and prints canned text) or use
+`sessions run -dry-run`. Dispatch briefs for tasks that touch amp
+messaging carry one line: no live model calls; the dry run and the fake
+amp cover the tests.
+
 amp has no default-mode setting (checked 2026-10-06: only
 `amp.updates.mode` and `amp.defaultVisibility` exist in its settings
 file, and `-m` is per run). Re-check after each amp upgrade, and use a

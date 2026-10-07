@@ -1,0 +1,17 @@
+#!/bin/sh
+# Fake amp for tests (AMUX-49). Never talks to a network or a model: it
+# records argv and prints canned output, so a test can exercise -x and
+# `threads continue -x` without spending a live turn.
+#
+#   FAKE_AMP_ARGV_LOG  if set, argv is written there, one arg per line
+#   FAKE_AMP_MESSAGE   reply text for -x (default "fake amp done")
+#   FAKE_AMP_THREAD_ID thread id for a new thread (synthetic default)
+[ -n "$FAKE_AMP_ARGV_LOG" ] && printf '%s\n' "$@" > "$FAKE_AMP_ARGV_LOG"
+for a in "$@"; do
+	case "$a" in
+	--version|version) echo "0.0.0-fake"; exit 0 ;;
+	-x|--execute|--orb-execute|-ox)
+		echo "${FAKE_AMP_MESSAGE:-fake amp done}"; exit 0 ;;
+	esac
+done
+echo "${FAKE_AMP_THREAD_ID:-T-00000000-0000-4000-8000-000000000001}"
