@@ -45,6 +45,7 @@ type Channel struct {
 	GuildID       string         `json:"guild_id"`
 	ParentID      string         `json:"parent_id"`
 	Name          string         `json:"name"`
+	OwnerID       string         `json:"owner_id"`
 	Type          int            `json:"type"`
 	LastMessageID string         `json:"last_message_id"`
 	ThreadMeta    ThreadMetadata `json:"thread_metadata"`

@@ -62,8 +62,8 @@ func asksUsage() {
   agentmux asks read -thread ID [-after MESSAGE_ID] [-json]
   agentmux asks react -thread ID -message ID -emoji EMOJI
   agentmux asks edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL] [-embeds]
-  agentmux asks tag -thread ID -set "task,working" [-unarchive] [-force]
-  agentmux asks close -thread ID [-tag NAME] [-lock]
+  agentmux asks tag -thread ID -set "task,working" [-unarchive] [-force] [-unlock]
+  agentmux asks close -thread ID [-tag NAME] [-lock] [-unlock]
   agentmux asks list [-open|-archived|-all] [-tag NAME] [-since DUR] [-json]
   agentmux asks serve                      hold the Discord gateway open to record button clicks
   agentmux asks prune [-thread ID] [-older-than DUR] [-dry-run] [-json]
@@ -346,11 +346,17 @@ func runAsksTag(args []string) error {
 	set := fs.String("set", "", `comma-separated tag names, e.g. "task,working"`)
 	unarchive := fs.Bool("unarchive", false, "unarchive an archived thread first, re-archive after")
 	force := fs.Bool("force", false, "recover a thread that already lost its kind tag: skip the ask-post gate, the set must still carry a kind tag")
+	unlock := fs.Bool("unlock", false, "unlock (and unarchive) a locked thread, retag, then archive and lock it again; console/orchestrator only")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *thread == "" {
 		return fmt.Errorf("-thread is required")
+	}
+	if *unlock {
+		if err := refuseUnlockInTaskSession(); err != nil {
+			return err
+		}
 	}
 	var names []string
 	for _, name := range strings.Split(*set, ",") {
@@ -374,7 +380,7 @@ func runAsksTag(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := client.TagAsk(ctx, *thread, names, collab.TagOptions{Unarchive: *unarchive, Force: *force}); err != nil {
+	if err := client.TagAsk(ctx, *thread, names, collab.TagOptions{Unarchive: *unarchive, Force: *force, Unlock: *unlock, Actor: unlockActor()}); err != nil {
 		return err
 	}
 	fmt.Printf("Retagged thread %s as %s.\n", *thread, strings.Join(names, ","))
@@ -386,8 +392,14 @@ func runAsksClose(args []string) error {
 	thread := fs.String("thread", "", "ask thread ID")
 	tag := fs.String("tag", collab.DefaultCloseTag, "state tag (any forum state tag by name)")
 	lock := fs.Bool("lock", false, "also lock the thread (default: archive only, so a later ask can reopen it)")
+	unlock := fs.Bool("unlock", false, "unlock a locked thread first so it can be closed; console/orchestrator only")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *unlock {
+		if err := refuseUnlockInTaskSession(); err != nil {
+			return err
+		}
 	}
 	client, err := asksClient()
 	if err != nil {
@@ -402,7 +414,7 @@ func runAsksClose(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := client.CloseAsk(ctx, *thread, *tag, *lock); err != nil {
+	if err := client.CloseAskWith(ctx, *thread, *tag, *lock, collab.UnlockOptions{Unlock: *unlock, Actor: unlockActor()}); err != nil {
 		return err
 	}
 	fmt.Printf("Closed ask thread %s as %q.\n", *thread, *tag)
@@ -759,4 +771,25 @@ func runAsksPrune(args []string) error {
 	}
 	fmt.Printf("test thread: %s %d message(s) in thread %s: %s.\n", verb, len(pruned), target, strings.Join(pruned, ", "))
 	return nil
+}
+
+// refuseUnlockInTaskSession keeps -unlock away from workers: task sessions
+// (and anything running as a task-* instance) never unlock a thread.
+func refuseUnlockInTaskSession() error {
+	if liveguard.IsTaskSession() {
+		return fmt.Errorf("-unlock refused: task sessions and workers can't unlock threads")
+	}
+	return nil
+}
+
+// unlockActor names the caller for the unlock log: the instance name when
+// there is one, else the OS user.
+func unlockActor() string {
+	if name := strings.TrimSpace(os.Getenv(liveguard.InstanceEnv)); name != "" {
+		return name
+	}
+	if u := strings.TrimSpace(os.Getenv("USER")); u != "" {
+		return u
+	}
+	return "unknown"
 }

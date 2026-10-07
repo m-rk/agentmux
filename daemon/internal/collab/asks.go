@@ -588,6 +588,12 @@ func (c *Client) askMessage(ctx context.Context, threadID string, m Message, use
 // and post-in-thread) need the bot (Manage Threads on the forum): webhooks
 // can't edit threads.
 func (c *Client) CloseAsk(ctx context.Context, threadID, outcome string, lock bool) error {
+	return c.CloseAskWith(ctx, threadID, outcome, lock, UnlockOptions{})
+}
+
+// CloseAskWith is CloseAsk that can first unlock an archived, locked
+// thread (opts.Unlock; see UnlockOptions for the guard).
+func (c *Client) CloseAskWith(ctx context.Context, threadID, outcome string, lock bool, opts UnlockOptions) error {
 	thread, _, err := c.askThread(ctx, threadID)
 	if err != nil {
 		return err
@@ -610,6 +616,11 @@ func (c *Client) CloseAsk(ctx context.Context, threadID, outcome string, lock bo
 	}); err != nil {
 		return err
 	}
+	if opts.Unlock && thread.ThreadMeta.Locked {
+		if err := c.unlockThread(ctx, thread, opts); err != nil {
+			return err
+		}
+	}
 	body := map[string]any{"applied_tags": tags, "archived": true, "locked": lock}
 	if err := c.botJSONBody(ctx, http.MethodPatch, "/channels/"+url.PathEscape(threadID), body, nil); err != nil {
 		return fmt.Errorf("closing Discord ask (the bot needs Manage Threads on the forum): %w", err)
@@ -629,6 +640,12 @@ type TagOptions struct {
 	// Recovery only (console and orchestrator); task sessions never reach
 	// it — TagAsk is already a no-op there.
 	Force bool
+	// Unlock also unlocks an archived-and-locked thread (and unarchives
+	// it), applies the tags, then archives and locks it again. Implies
+	// Unarchive. Guarded: see UnlockOptions.
+	Unlock bool
+	// Actor names who asked, for the unlock log line and the worker check.
+	Actor string
 }
 
 // TagAsk replaces the thread's applied tags with exactly names, resolved by
@@ -663,6 +680,9 @@ func (c *Client) TagAsk(ctx context.Context, threadID string, names []string, op
 	if len(tags) > maxAppliedTags {
 		return fmt.Errorf("a forum post takes at most %d tags", maxAppliedTags)
 	}
+	if opts.Unlock {
+		opts.Unarchive = true
+	}
 	if thread.ThreadMeta.Archived && !opts.Unarchive {
 		return fmt.Errorf("thread %s is archived; pass -unarchive to retag it (unarchives, applies tags, re-archives)", threadID)
 	}
@@ -671,7 +691,12 @@ func (c *Client) TagAsk(ctx context.Context, threadID string, names []string, op
 	}
 	if thread.ThreadMeta.Archived {
 		if thread.ThreadMeta.Locked {
-			return fmt.Errorf("thread %s is archived and locked; unlock it by hand before retagging", threadID)
+			if !opts.Unlock {
+				return fmt.Errorf("thread %s is archived and locked; pass -unlock to unlock it (console and orchestrator only)", threadID)
+			}
+			if err := c.unlockThread(ctx, thread, UnlockOptions{Unlock: true, Actor: opts.Actor}); err != nil {
+				return err
+			}
 		}
 		if err := c.botJSONBody(ctx, http.MethodPatch, "/channels/"+url.PathEscape(threadID), patch(false), nil); err != nil {
 			return fmt.Errorf("unarchiving Discord thread %s for retag (the bot needs Manage Threads on the forum): %w", threadID, err)
@@ -681,7 +706,11 @@ func (c *Client) TagAsk(ctx context.Context, threadID string, names []string, op
 		return fmt.Errorf("retagging Discord thread %s (the bot needs Manage Threads on the forum): %w", threadID, err)
 	}
 	if thread.ThreadMeta.Archived {
-		if err := c.botJSONBody(ctx, http.MethodPatch, "/channels/"+url.PathEscape(threadID), patch(true), nil); err != nil {
+		again := patch(true)
+		if thread.ThreadMeta.Locked {
+			again["locked"] = true
+		}
+		if err := c.botJSONBody(ctx, http.MethodPatch, "/channels/"+url.PathEscape(threadID), again, nil); err != nil {
 			return fmt.Errorf("re-archiving Discord thread %s after retag (the bot needs Manage Threads on the forum): %w", threadID, err)
 		}
 	}

@@ -40,6 +40,8 @@ func (s *tagServer) server(t *testing.T) *httptest.Server {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		switch {
+		case r.URL.Path == "/api/users/@me":
+			writeJSON(t, w, map[string]string{"id": "bot1"})
 		case r.URL.Path == "/api/channels/forum":
 			writeJSON(t, w, s.forum)
 		case strings.HasPrefix(r.URL.Path, "/api/channels/") && r.Method == http.MethodPatch:

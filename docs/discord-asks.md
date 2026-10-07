@@ -145,10 +145,10 @@ agentmux asks edit -thread ID -message ID [-body-file F] [-disable-buttons] [-ch
 
 agentmux asks serve   # long-running: records button clicks (buttons only)
 
-agentmux asks tag -thread ID -set "task,working" [-unarchive]
+agentmux asks tag -thread ID -set "task,working" [-unarchive] [-unlock]
 # replace the thread's tags with exactly these (a retag never posts)
 
-agentmux asks close -thread ID [-tag NAME] [-lock]   # default tag: done
+agentmux asks close -thread ID [-tag NAME] [-lock] [-unlock]   # default tag: done
 
 agentmux asks prune [-thread ID] [-older-than DUR] [-dry-run] [-json]
 # delete the bot's own messages older than DUR (default 24h), keeping the
@@ -217,10 +217,19 @@ agentmux asks prune [-thread ID] [-older-than DUR] [-dry-run] [-json]
   applying tags to an archived thread fails (Discord error 50083), so add
   `-unarchive` to unarchive it first (a retag posts nothing, so this needs
   Manage Threads) and re-archive after. A locked thread can't be unarchived
-  this way — unlock it by hand first. Without Manage Threads the only way to
+  this way; use `-unlock` (below). Without Manage Threads the only way to
   unarchive an unlocked thread is to post a reply in it (Send Messages in
   Threads auto-unarchives); `asks post -thread` already does this, and
   mergentic's reconciler uses reply-then-close for archived orphans.
+- `-unlock` (on `tag` and `close`) unlocks and unarchives an archived,
+  locked thread, applies the tags (or closes it), then archives and locks it
+  again. For threads nobody can reach in Discord. Console, orchestrator and
+  Mark only: it is refused in task sessions and for any `task-*` identity,
+  and it only touches threads the bot created in the asks forum — never the
+  agent test thread, never a thread a person started. A refusal says why in
+  one line. Each unlock appends `- <time> asks unlock thread <id> by <who>`
+  to the file named by `unlock_log` under `collaboration:` in `discord.yaml`
+  (the autopilot log); unset, the line goes to the process log.
 - On create, `-title` is the thread name (up to 100 characters), e.g.
   `MERG-4 combine related ready tasks…`.
 - `reply` only mentions with `-mention`.

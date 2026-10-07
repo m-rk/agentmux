@@ -248,3 +248,24 @@ func TestPersonPostStaysLive(t *testing.T) {
 		t.Fatalf("hooks = %d test-posts = %d, want the forum post through the webhook", f.hooks, len(f.posts))
 	}
 }
+
+// -unlock is never for workers: a task session is refused before any
+// Discord call, on both tag and close.
+func TestTaskSessionRefusesUnlock(t *testing.T) {
+	f := &cliFakeDiscord{}
+	gw := f.server(t)
+	defer gw.Close()
+	taskAsksHome(t, gw.URL, "4242")
+	for name, run := range map[string]func() error{
+		"tag":   func() error { return runAsksTag([]string{"-thread", "900", "-set", "task,working", "-unlock"}) },
+		"close": func() error { return runAsksClose([]string{"-thread", "900", "-unlock"}) },
+	} {
+		err := run()
+		if err == nil || !strings.Contains(err.Error(), "can't unlock") {
+			t.Fatalf("%s: err = %v, want the unlock refusal", name, err)
+		}
+	}
+	if len(f.posts) != 0 || f.patches != 0 || f.puts != 0 {
+		t.Fatal("a refused unlock touched Discord")
+	}
+}

@@ -41,6 +41,10 @@ type CollaborationConfig struct {
 	// work only here; close/tag/list are no-ops. Empty means task sessions
 	// refuse every sending command. Stays in host config, never in a repo.
 	TestThreadID string `yaml:"test_thread,omitempty"`
+	// UnlockLog is a file `asks tag/close -unlock` appends one line to per
+	// unlock (thread, who, time) — the autopilot log. Empty falls back to
+	// the process log. Stays in host config.
+	UnlockLog string `yaml:"unlock_log,omitempty"`
 	// KindTags are the forum tag names that mark a thread as an ask (task)
 	// thread: a thread carrying any one of them is an ask post, and `asks
 	// tag` refuses a set with none of them. Unset (or empty) means
