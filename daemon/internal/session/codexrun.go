@@ -226,12 +226,12 @@ func StartCodexRun(ctx context.Context, instance string, argv []string, prompt, 
 	if info, err := os.Stat(logPath); err == nil {
 		offset = info.Size()
 	}
-	proc, err := codexStartNew(ctx, instance, argv, prompt, workdir, logPath)
+	proc, runID, err := codexStartNew(ctx, instance, argv, prompt, workdir, logPath)
 	if err != nil {
 		return "", err
 	}
 	_ = proc.Release()
-	return waitCodexThread(ctx, logPath, offset)
+	return waitCodexThread(ctx, logPath, runID, offset)
 }
 
 // codexRunCommand builds the run child: plain `codex` as the current user
@@ -242,9 +242,9 @@ func codexRunCommand(ctx context.Context, instance string, argv []string) *exec.
 	return cmd
 }
 
-func startCodexProcessDetached(ctx context.Context, instance string, argv []string, prompt, workdir, logPath string) (*os.Process, error) {
+func startCodexProcessDetached(ctx context.Context, instance string, argv []string, prompt, workdir, logPath string) (*os.Process, string, error) {
 	if len(argv) == 0 {
-		return nil, fmt.Errorf("codex run needs a command")
+		return nil, "", fmt.Errorf("codex run needs a command")
 	}
 	if instance == "" {
 		instance = instanceForRun()
@@ -254,28 +254,28 @@ func startCodexProcessDetached(ctx context.Context, instance string, argv []stri
 	if !filepath.IsAbs(bin) {
 		var err error
 		if bin, err = runas.CurrentUserLookPath(bin); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
-		return nil, fmt.Errorf("creating codex run state dir: %w", err)
+		return nil, "", fmt.Errorf("creating codex run state dir: %w", err)
 	}
 	// The prompt lives in a private file next to the log, never in argv
 	// (world-readable process table) and never on a pipe that could block.
 	// The launcher deletes it once codex has exited.
 	promptFile, err := os.CreateTemp(filepath.Dir(logPath), "codex-prompt-*.txt")
 	if err != nil {
-		return nil, fmt.Errorf("writing codex prompt: %w", err)
+		return nil, "", fmt.Errorf("writing codex prompt: %w", err)
 	}
 	promptPath := promptFile.Name()
 	if _, err := promptFile.WriteString(prompt); err != nil {
 		promptFile.Close()
 		os.Remove(promptPath)
-		return nil, fmt.Errorf("writing codex prompt: %w", err)
+		return nil, "", fmt.Errorf("writing codex prompt: %w", err)
 	}
 	if err := promptFile.Close(); err != nil {
 		os.Remove(promptPath)
-		return nil, fmt.Errorf("writing codex prompt: %w", err)
+		return nil, "", fmt.Errorf("writing codex prompt: %w", err)
 	}
 	// Double fork through sh as for amp: the middle child backgrounds a
 	// subshell and exits, so codex is reparented to init. The subshell holds
@@ -286,22 +286,26 @@ func startCodexProcessDetached(ctx context.Context, instance string, argv []stri
 	// the start record begins a segment even if codex dies before printing
 	// thread.started. API-key variables are dropped so a run can never
 	// silently switch the account to metered billing. Positionals after -c's
-	// script: $0=bin, $1=log, $2=prompt file, $3=workdir, $4...=codex args.
-	launch := "f=\"$1\"; p=\"$2\"; d=\"$3\"; shift 3; cd \"$d\" || exit 1; unset OPENAI_API_KEY CODEX_API_KEY; " +
-		"( exec 3>>\"$f\"; echo '{\"type\":\"agentmux.start\"}' >&3; \"$0\" \"$@\" <\"$p\" >&3 2>&3; c=$?; " +
-		"rm -f \"$p\"; echo \"{\\\"type\\\":\\\"agentmux.exit\\\",\\\"code\\\":$c}\" >&3 ) & exit 0"
-	midArgs := append([]string{"-c", launch, bin, logPath, promptPath, workdir}, rest...)
+	// script: $0=bin, $1=log, $2=prompt file, $3=workdir, $4=run id (the prompt
+	// file's random suffix, which tells this run's records from those of an
+	// older run still being killed), $5...=codex args.
+	runID := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(promptPath), "codex-prompt-"), ".txt")
+	launch := "f=\"$1\"; p=\"$2\"; d=\"$3\"; r=\"$4\"; shift 4; cd \"$d\" || exit 1; unset OPENAI_API_KEY CODEX_API_KEY; " +
+		"( exec 3>>\"$f\"; echo \"{\\\"type\\\":\\\"agentmux.start\\\",\\\"run\\\":\\\"$r\\\"}\" >&3; \"$0\" \"$@\" <\"$p\" >&3 2>&3; c=$?; " +
+		"rm -f \"$p\"; echo \"{\\\"type\\\":\\\"agentmux.exit\\\",\\\"run\\\":\\\"$r\\\",\\\"code\\\":$c}\" >&3 ) & exit 0"
+	midArgs := append([]string{"-c", launch, bin, logPath, promptPath, workdir, runID}, rest...)
 	mid := runas.CurrentUserCommandContext(ctx, "sh", midArgs...)
 	mid.Env = cmd.Env
 	mid.Stdin = strings.NewReader("")
 	if err := mid.Start(); err != nil {
-		return nil, fmt.Errorf("spawning codex run: %w", err)
+		return nil, "", fmt.Errorf("spawning codex run: %w", err)
 	}
-	return mid.Process, nil
+	return mid.Process, runID, nil
 }
 
 type codexEvent struct {
 	Type     string `json:"type"`
+	Run      string `json:"run"`
 	Code     int    `json:"code"`
 	ThreadID string `json:"thread_id"`
 	Message  string `json:"message"`
@@ -314,13 +318,13 @@ type codexEvent struct {
 	} `json:"item"`
 }
 
-func waitCodexThread(ctx context.Context, logPath string, offset int64) (string, error) {
+func waitCodexThread(ctx context.Context, logPath, runID string, offset int64) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, codexRunStartTimeout)
 	defer cancel()
 	tick := time.NewTicker(200 * time.Millisecond)
 	defer tick.Stop()
 	for {
-		id, done, err := scanCodexThread(logPath, offset)
+		id, done, err := scanCodexThread(logPath, runID, offset)
 		if err != nil {
 			return "", err
 		}
@@ -339,8 +343,8 @@ func waitCodexThread(ctx context.Context, logPath string, offset int64) (string,
 }
 
 // scanCodexThread reads the log from offset for this run's thread.started,
-// or its agentmux.exit record (done: the child exited without one).
-func scanCodexThread(logPath string, offset int64) (id string, done bool, err error) {
+// or this run's agentmux.exit record (done: the child exited without one).
+func scanCodexThread(logPath, runID string, offset int64) (id string, done bool, err error) {
 	f, err := os.Open(logPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -365,7 +369,9 @@ func scanCodexThread(logPath string, offset int64) (id string, done bool, err er
 				return ev.ThreadID, false, nil
 			}
 		case "agentmux.exit":
-			return "", true, nil
+			if ev.Run == runID {
+				return "", true, nil
+			}
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -410,7 +416,7 @@ func CodexRunStateOf(logPath string) CodexRunState {
 	defer f.Close()
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
-	var lastErr string
+	var lastErr, curRun string
 	var exited bool
 	var exitCode int
 	for sc.Scan() {
@@ -420,6 +426,7 @@ func CodexRunStateOf(logPath string) CodexRunState {
 		}
 		switch ev.Type {
 		case "agentmux.start":
+			curRun = ev.Run
 			st.State, st.Reason, st.RateLimited, lastErr = "running", "", false, ""
 			exited = false
 		case "thread.started":
@@ -444,7 +451,11 @@ func CodexRunStateOf(logPath string) CodexRunState {
 		case "error":
 			lastErr = ev.Message
 		case "agentmux.exit":
-			exited, exitCode = true, ev.Code
+			// An older run still being killed can land its exit record
+			// inside a newer segment; only the current run's counts.
+			if ev.Run == curRun {
+				exited, exitCode = true, ev.Code
+			}
 		}
 	}
 	if err := sc.Err(); err != nil {
