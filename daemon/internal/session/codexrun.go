@@ -15,7 +15,7 @@ import (
 	"github.com/m-rk/agentmux/daemon/internal/runas"
 )
 
-// Codex headless runs follow the amp pattern (docs/design/codex-runner.md
+// Codex headless runs follow the amp pattern (docs/codex-run.md
 // section 3): `codex exec --json` runs detached in the worktree, its JSONL
 // stream is appended to a log under the run user's state dir, and the run
 // state is read back from that log. Continuing a thread is
@@ -262,7 +262,7 @@ func StartCodexRun(ctx context.Context, instance string, argv []string, prompt, 
 
 // QueueCodexMessage runs `codex queue --thread T --message TEXT`: codex
 // persists the message for the thread and delivers it with that thread's
-// next turn (proved headless, see docs/design/codex-runner.md). The text is
+// next turn (proved headless, see docs/codex-run.md). The text is
 // argv because queue has no stdin form, so it is limited to what a nudge
 // carries. It never touches a running `codex exec`.
 func QueueCodexMessage(ctx context.Context, instance, thread, message string) error {

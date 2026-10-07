@@ -98,3 +98,12 @@ only) validates against an existing amp instance instead of the target,
 for targets a dry-run create just named but never made — a missing
 template refuses as `not_found`, while the missing target never does.
 Both need the same grants as the real operation.
+
+## Codex smoke
+
+After the amp check, each host with a codex instance also gets a dry-run
+`sessions run` of the smoke name validated against that instance (nothing
+starts, nothing is spent); hosts without one are skipped. `agentmux deploy
+-codex-live` additionally runs one tiny read-only, low-effort turn on the
+local host's first codex instance and waits for it to end `done` — the only
+deploy step that uses model quota. See [Codex runner](codex-run.md).

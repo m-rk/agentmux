@@ -137,6 +137,9 @@ Every backend here aims for:
   starts an amp thread in the instance's workdir (or continues one with
   `-thread`), using the host's configured amp mode. See [Starting amp
   threads](docs/amp-run.md).
+- **Codex runs** — codex instances are headless runners like amp:
+  `sessions run` starts or continues a `codex exec` thread in the worktree
+  under a sandbox. See [Codex runner](docs/codex-run.md).
 - **Discord** — one outbound channel for everything agentmux needs to tell
   you: doctor findings and repairs plus Claude token-expiry warnings
   (`agentmux notify discord setup`), and cross-session collaboration through

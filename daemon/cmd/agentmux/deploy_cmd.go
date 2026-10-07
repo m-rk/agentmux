@@ -52,9 +52,10 @@ func runDeployCmd(args []string) {
 	smokeName := fs.String("smoke-name", defaultSmokeName, "instance name the smoke test's dry-run create uses (default: "+defaultSmokeName+")")
 	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml listing the fleet (every host is smoke-tested)")
 	socketPath := fs.String("socket", daemoninstall.SocketPath(), "Unix socket of the local agentmuxd")
+	codexLive := fs.Bool("codex-live", false, "also run one tiny live codex turn on the local host's first codex instance (uses model quota; default: dry run only)")
 	fs.Parse(args)
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: agentmux deploy [-doctor-time HH:MM] [-template INSTANCE] [-base BRANCH] [-smoke-name NAME] [-hosts PATH] [-socket PATH]")
+		fmt.Fprintln(os.Stderr, "usage: agentmux deploy [-doctor-time HH:MM] [-template INSTANCE] [-base BRANCH] [-smoke-name NAME] [-hosts PATH] [-socket PATH] [-codex-live]")
 		os.Exit(2)
 	}
 	// Deploy restarts the whole fleet's services: never from a task session
@@ -121,7 +122,7 @@ func runDeployCmd(args []string) {
 		}
 	}
 
-	if err := deploySmokeTest(ctx, *socketPath, *hostsPath, *template, *base, *smokeName); err != nil {
+	if err := deploySmokeTest(ctx, *socketPath, *hostsPath, *template, *base, *smokeName, *codexLive); err != nil {
 		log.Fatalf("deploy: %v", err)
 	}
 	fmt.Println("deploy: smoke test passed on every host")
@@ -425,7 +426,7 @@ const defaultSmokeName = "task-smoke-deploy"
 // fits the smoke name, and widening the grant is not deploy's call. The
 // skip names the fix: add a grant for a name deploy may use, or pick one
 // with -smoke-name.
-func deploySmokeTest(ctx context.Context, socketPath, hostsPath, template, base, smokeName string) error {
+func deploySmokeTest(ctx context.Context, socketPath, hostsPath, template, base, smokeName string, codexLive bool) error {
 	hostsPath, source := deployHostsPath(hostsPath)
 	fmt.Printf("deploy: hosts file %s (from %s)\n", hostsPath, source)
 	hosts, err := loadHosts(hostsPath, socketPath)
@@ -447,6 +448,9 @@ func deploySmokeTest(ctx context.Context, socketPath, hostsPath, template, base,
 
 	for _, t := range deployTargets(hosts) {
 		if err := deploySmokeHost(ctx, socketPath, t, local, template, base, smokeName); err != nil {
+			return err
+		}
+		if err := deploySmokeCodex(ctx, socketPath, t, local, smokeName, codexLive); err != nil {
 			return err
 		}
 	}

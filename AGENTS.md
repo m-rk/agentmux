@@ -43,6 +43,9 @@ another computer, and needs no pasted code back, so skip steps 4-5's
 send-keys and just wait for the command to exit. Confirm with
 `agentmux auth status -instance NAME`.
 
+Setup, sandbox, spend, retire and the fake codex used in tests are in
+[docs/codex-run.md](docs/codex-run.md).
+
 ## Reading secrets from 1Password
 
 Secrets (Discord tokens, API keys, etc.) live in 1Password and must be
