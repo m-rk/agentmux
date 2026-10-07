@@ -641,10 +641,12 @@ func TestCreateCodexCarriesAddDirsAndWarnsOnAllowFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fields[session.CodexAddDirsKey] != "/vault/tasks" {
-		t.Errorf("add-dirs = %q, want the template's", fields[session.CodexAddDirsKey])
+	// The template's dirs plus the repo's shared git dir (commits need it).
+	wantDirs := "/vault/tasks," + filepath.Join(c.repo, ".git")
+	if fields[session.CodexAddDirsKey] != wantDirs {
+		t.Errorf("add-dirs = %q, want %q", fields[session.CodexAddDirsKey], wantDirs)
 	}
-	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "no per-file allowlist") || !strings.Contains(res.Warnings[0], "/vault/tasks") {
+	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "no per-file allowlist") || !strings.Contains(res.Warnings[0], "/vault/tasks") || !strings.Contains(res.Warnings[0], ".git") {
 		t.Errorf("warnings = %q", res.Warnings)
 	}
 }

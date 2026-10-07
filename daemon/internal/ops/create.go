@@ -368,11 +368,21 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 		inst = &pb.Instance{Name: req.Instance, Agent: agent, Provider: fields["AGENTMUX_PROVIDER"], Model: fields["AGENTMUX_MODEL"], Workdir: wtPath, Status: pb.Status_STATUS_DEAD}
 	}
 	// A codex task instance gets the template's extra writable directories
-	// (the task-note vault) so its sandbox can reach them; nothing else
-	// outside the worktree is granted.
-	if agent == "codex" && fields[session.CodexAddDirsKey] != "" {
-		if err := session.SetRegistryField(req.Instance, session.CodexAddDirsKey, fields[session.CodexAddDirsKey]); err != nil {
-			return CreateResult{}, Refuse(safesend.ReasonFailed, "recording codex add-dirs for %s: %v", req.Instance, err)
+	// (the task-note vault, the orchestrator state dir) plus the repo's
+	// shared git dir, so it can commit in its worktree: a commit writes the
+	// worktree's own git dir, the shared object store and the branch ref,
+	// all of which sit outside the worktree. Nothing else outside the
+	// worktree is granted.
+	if agent == "codex" {
+		dirs := session.CodexAddDirs(fields[session.CodexAddDirsKey])
+		if gd := e.codexGitDir(ctx, wtPath, req.DryRun); gd != "" {
+			dirs = appendUnique(dirs, gd)
+		}
+		if len(dirs) > 0 {
+			fields[session.CodexAddDirsKey] = strings.Join(dirs, ",")
+			if err := session.SetRegistryField(req.Instance, session.CodexAddDirsKey, fields[session.CodexAddDirsKey]); err != nil {
+				return CreateResult{}, Refuse(safesend.ReasonFailed, "recording codex add-dirs for %s: %v", req.Instance, err)
+			}
 		}
 	}
 	// A reused claude instance keeps its pin: the registry the launch reads
@@ -586,6 +596,32 @@ func resolvePath(p string) string {
 		return real
 	}
 	return p
+}
+
+// codexGitDir returns the absolute shared git dir of the repo the task
+// worktree belongs to ("" when it cannot be resolved or on a dry run, where
+// the worktree does not exist).
+func (e Env) codexGitDir(ctx context.Context, wtPath string, dryRun bool) string {
+	if dryRun {
+		return ""
+	}
+	gd, err := e.git(ctx, wtPath, "rev-parse", "--git-common-dir")
+	if err != nil || gd == "" {
+		return ""
+	}
+	if !filepath.IsAbs(gd) {
+		gd = filepath.Join(wtPath, gd)
+	}
+	return filepath.Clean(gd)
+}
+
+func appendUnique(list []string, v string) []string {
+	for _, x := range list {
+		if x == v {
+			return list
+		}
+	}
+	return append(list, v)
 }
 
 // codexAddDirsNote says which extra directories the instance's runs may

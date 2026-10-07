@@ -66,7 +66,9 @@ bypass flags are refused unless the instance registry has
 template). Codex has no per-file allowlist, so `-allow-file` is unsupported
 (create warns). The task-note vault directory is granted with `--add-dir` from
 the registry key `AGENTMUX_CODEX_ADD_DIRS` (comma-separated absolute paths,
-copied from the template by create). Codex's workspace-write also makes the
+copied from the template by create, which also appends the repo's shared git
+dir so the worker can commit in its worktree; put the mergentic state dir in the
+template's value). Codex's workspace-write also makes the
 system temp directory writable. Task instances carry the liveguard identity, so
 they cannot reach live Discord or the live daemon.
 
