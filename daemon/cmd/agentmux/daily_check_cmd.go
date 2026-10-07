@@ -89,6 +89,9 @@ func runDoctorCmd(args []string) {
 	if problem := paseoSupervisorProblem(ctx, identity.HomeDir); problem != "" {
 		report.Problems = append(report.Problems, problem)
 	}
+	if problem := codexSandboxProblem(ctx); problem != "" {
+		report.Problems = append(report.Problems, problem)
+	}
 	if stateErr != nil {
 		report.Problems = append(report.Problems, "loading notification state: "+stateErr.Error())
 	}

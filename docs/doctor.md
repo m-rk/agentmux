@@ -95,3 +95,10 @@ zero-only box) gets diagnosis without repair: escalation fails loudly as
 `doctor escalation failed: ...` and the deterministic findings stand. Point
 `-checker` at another analysis CLI, or add a Claude login, to get repairs
 back.
+
+## Codex sandbox self-test
+
+If `codex` is on the run user's `PATH`, the doctor runs `codex sandbox --
+true` and reports a problem when it fails (on Ubuntu this is usually the
+AppArmor user-namespace restriction). See [codex-sandbox.md](codex-sandbox.md)
+for the cause and the narrow fix.

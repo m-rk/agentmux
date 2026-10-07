@@ -83,7 +83,8 @@ resume by thread id, send = new turn.
 The bwrap sandbox does not work there: `bwrap: loopback: Failed RTM_NEWADDR:
 Operation not permitted`. With `read-only` and `workspace-write` every shell
 command and every file write failed ("Operation not permitted"). Ubuntu 24.04
-restricts unprivileged user namespaces (AppArmor), which is the likely cause.
+restricts unprivileged user namespaces (AppArmor); confirmed and fixed in
+[codex-sandbox.md](../codex-sandbox.md) (AMUX-54).
 Until fixed, codex there can only talk, not work, unless run with the
 sandbox bypass flag.
 
