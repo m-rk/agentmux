@@ -198,3 +198,16 @@ Live proof (test host, read-only sandbox, default model, effort low): a new
 thread (`Reply with exactly the word PONG`) ended `done` with message `PONG`;
 `sessions run -thread` on the same id started a second segment that ended
 `done` with `PING`; the log held two `thread.started` segments.
+
+## Implemented: task instances (AMUX-57)
+
+`sessions create` from a codex template makes the worktree and registry entry
+like any agent, and the run child carries the liveguard identity
+(`AmpRunEnv`) with `OPENAI_API_KEY`/`CODEX_API_KEY` unset. Sandbox is
+`workspace-write` (the bypass needs `AGENTMUX_CODEX_ALLOW_UNSAFE_SANDBOX=1`).
+The task-note vault directory is granted with `--add-dir` from the
+registry key `AGENTMUX_CODEX_ADD_DIRS` (comma-separated absolute paths), which
+create copies from the template. Note codex's workspace-write also makes
+the system temp directory writable. `-allow-file` stays unsupported for
+codex: create returns a warning. Auth is one shared `CODEX_HOME` per run
+user; `agentmux auth status` reports it via `codex login status`.

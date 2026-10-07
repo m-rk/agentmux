@@ -65,6 +65,7 @@ func authUsage() {
 
 // authStatusResult is one user's check, for -json output.
 type authStatusResult struct {
+	Agent            string  `json:"agent,omitempty"` // "codex"; empty means claude-code
 	RunUser          string  `json:"run_user"`
 	LoggedIn         bool    `json:"logged_in"`
 	AuthMethod       string  `json:"auth_method,omitempty"`
@@ -86,7 +87,7 @@ func runAuthStatusCmd(args []string) {
 		log.Fatal("auth status: -all is mutually exclusive with -instance/-run-user")
 	}
 
-	var targets []string
+	var targets, codexTargets []string
 	var hintFor string
 	switch {
 	case *all:
@@ -95,7 +96,10 @@ func runAuthStatusCmd(args []string) {
 		if err != nil {
 			log.Fatalf("auth status: %v", err)
 		}
-		if len(targets) == 0 {
+		if codexTargets, err = distinctCodexRunUsers(); err != nil {
+			log.Fatalf("auth status: %v", err)
+		}
+		if len(targets) == 0 && len(codexTargets) == 0 {
 			targets = []string{currentUsername()}
 		}
 	case *instance != "":
@@ -103,7 +107,11 @@ func runAuthStatusCmd(args []string) {
 		if err != nil {
 			log.Fatalf("auth status: %v", err)
 		}
-		targets = []string{ru}
+		if instanceAgent(*instance) == "codex" {
+			codexTargets = []string{ru}
+		} else {
+			targets = []string{ru}
+		}
 		hintFor = fmt.Sprintf("-instance %s", *instance)
 	default:
 		if *runUserFlag != "" {
@@ -119,6 +127,9 @@ func runAuthStatusCmd(args []string) {
 	results := make([]authStatusResult, 0, len(targets))
 	for _, ru := range targets {
 		results = append(results, checkOneAuth(ru))
+	}
+	for _, ru := range codexTargets {
+		results = append(results, checkOneCodexAuth(ru))
 	}
 
 	if *jsonOut {
@@ -169,7 +180,74 @@ func checkOneAuth(runUser string) authStatusResult {
 	return r
 }
 
+// checkOneCodexAuth is the codex counterpart of checkOneAuth: login state
+// from `codex login status` only. Codex has one login per run user, shared
+// by all its instances through CODEX_HOME.
+func checkOneCodexAuth(runUser string) authStatusResult {
+	r := authStatusResult{Agent: "codex", RunUser: runUser}
+	loggedIn, method, err := provision.CodexLoginStatus(runUser)
+	if err != nil {
+		r.Error = err.Error()
+		return r
+	}
+	r.LoggedIn = loggedIn
+	r.AuthMethod = method
+	return r
+}
+
+// distinctCodexRunUsers returns every distinct run user owning a codex
+// instance (current user when the registry records none).
+func distinctCodexRunUsers() ([]string, error) {
+	instances, err := discovery.List()
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, inst := range instances {
+		if inst.Agent != "codex" {
+			continue
+		}
+		ru := inst.RunUser
+		if ru == "" {
+			ru = currentUsername()
+		}
+		if !seen[ru] {
+			seen[ru] = true
+			out = append(out, ru)
+		}
+	}
+	return out, nil
+}
+
+// instanceAgent is the agent recorded in an instance's registry, "" if it
+// can't be read.
+func instanceAgent(instance string) string {
+	fields, err := session.ReadRegistry(instance)
+	if err != nil {
+		return ""
+	}
+	return fields["AGENTMUX_AGENT"]
+}
+
+func formatCodexAuthStatus(r authStatusResult) string {
+	if r.Error != "" {
+		return fmt.Sprintf("codex %s: check failed: %s", r.RunUser, r.Error)
+	}
+	if !r.LoggedIn {
+		return fmt.Sprintf("codex %s: NOT logged in. Re-authenticate as that user with: codex login --device-auth (see AGENTS.md; `agentmux auth login` is claude-only)", r.RunUser)
+	}
+	note := ""
+	if r.AuthMethod == "api-key" {
+		note = " - API-key billing; task instances expect a ChatGPT login"
+	}
+	return fmt.Sprintf("codex %s: logged in (method %s)%s", r.RunUser, orDash(r.AuthMethod), note)
+}
+
 func formatAuthStatus(r authStatusResult, hintFor string) string {
+	if r.Agent == "codex" {
+		return formatCodexAuthStatus(r)
+	}
 	if r.Error != "" {
 		return fmt.Sprintf("%s: check failed: %s", r.RunUser, r.Error)
 	}

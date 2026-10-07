@@ -27,6 +27,22 @@ import (
 // (and the approvals/sandbox bypass flag) is refused.
 const CodexUnsafeSandboxEnv = "AGENTMUX_CODEX_ALLOW_UNSAFE_SANDBOX"
 
+// CodexAddDirsKey is the registry key holding the instance's extra writable
+// directories, comma-separated absolute paths, handed to every run as
+// `--add-dir`. A task instance copies it from its template at create time.
+const CodexAddDirsKey = "AGENTMUX_CODEX_ADD_DIRS"
+
+// CodexAddDirs splits the registry value into directories, dropping blanks.
+func CodexAddDirs(value string) []string {
+	var out []string
+	for _, d := range strings.Split(value, ",") {
+		if d = strings.TrimSpace(d); d != "" {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
 // DefaultCodexSandbox is the sandbox mode a run uses when none is named:
 // the design's recommended workspace-write.
 const DefaultCodexSandbox = "workspace-write"
@@ -76,6 +92,10 @@ type CodexRunOptions struct {
 	// Sandbox is read-only, workspace-write or danger-full-access; empty
 	// means DefaultCodexSandbox.
 	Sandbox string
+	// AddDirs are extra absolute directories the sandbox may write (codex
+	// --add-dir), e.g. the task-note vault directory. Relative entries are
+	// refused.
+	AddDirs []string
 	// AllowUnsafe is the instance's explicit opt-in (CodexUnsafeSandboxEnv)
 	// for danger-full-access.
 	AllowUnsafe bool
@@ -197,6 +217,12 @@ func CodexRunArgs(opts CodexRunOptions, threadID string) ([]string, error) {
 		args = append(args, "-C", opts.Workdir)
 	}
 	args = append(args, "-s", sandbox)
+	for _, d := range opts.AddDirs {
+		if !filepath.IsAbs(d) || strings.HasPrefix(d, "-") {
+			return nil, fmt.Errorf("codex add-dir %q must be an absolute path", d)
+		}
+		args = append(args, "--add-dir", d)
+	}
 	if model != "" {
 		args = append(args, "-m", model)
 	}

@@ -52,6 +52,9 @@ type CreateResult struct {
 	// dry-run only.
 	DryRun bool     `json:"dry_run,omitempty"`
 	Plan   []string `json:"plan,omitempty"`
+	// Warnings are provisioning notes that did not stop the create, e.g.
+	// allow-files requested for an agent that cannot apply them.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // Daemon is the part of the daemon client that Create uses.
@@ -314,6 +317,14 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 	if inst == nil { // not discovered yet
 		inst = &pb.Instance{Name: req.Instance, Agent: agent, Provider: fields["AGENTMUX_PROVIDER"], Model: fields["AGENTMUX_MODEL"], Workdir: wtPath, Status: pb.Status_STATUS_DEAD}
 	}
+	// A codex task instance gets the template's extra writable directories
+	// (the task-note vault) so its sandbox can reach them; nothing else
+	// outside the worktree is granted.
+	if agent == "codex" && fields[session.CodexAddDirsKey] != "" {
+		if err := session.SetRegistryField(req.Instance, session.CodexAddDirsKey, fields[session.CodexAddDirsKey]); err != nil {
+			return CreateResult{}, Refuse(safesend.ReasonFailed, "recording codex add-dirs for %s: %v", req.Instance, err)
+		}
+	}
 	// Record the branch the worktree was made on: retire uses it (plus
 	// the worktree's own branch and the task family) to decide which
 	// branches to delete-or-keep. SetRegistryField appends when absent
@@ -325,6 +336,9 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 	sess := SessionFrom(tmpl.Host, inst)
 	sess.Project = ProjectOf(inst.Name, inst.Workdir, ProjectKeys())
 	res := CreateResult{Session: sess, Branch: req.Branch, Created: created}
+	if agent == "codex" && len(allow) > 0 {
+		res.Warnings = append(res.Warnings, "codex has no per-file allowlist: -allow-file is stored but not applied; the run is confined to its worktree"+codexAddDirsNote(fields))
+	}
 	if baseCommit != "" {
 		res.Base, res.BaseCommit = req.Base, baseCommit
 	}
@@ -497,4 +511,13 @@ func resolvePath(p string) string {
 		return real
 	}
 	return p
+}
+
+// codexAddDirsNote says which extra directories the instance's runs may
+// write, for the allow-files warning.
+func codexAddDirsNote(fields map[string]string) string {
+	if dirs := session.CodexAddDirs(fields[session.CodexAddDirsKey]); len(dirs) > 0 {
+		return " plus " + strings.Join(dirs, ", ")
+	}
+	return ""
 }

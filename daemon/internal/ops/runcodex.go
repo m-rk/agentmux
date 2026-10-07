@@ -35,6 +35,7 @@ func (e Env) runCodex(ctx context.Context, req RunRequest, addr address.Address,
 		Model:       model,
 		Effort:      req.Effort,
 		Sandbox:     req.Sandbox,
+		AddDirs:     session.CodexAddDirs(fields[session.CodexAddDirsKey]),
 		AllowUnsafe: fields[session.CodexUnsafeSandboxEnv] == "1",
 	}, thread)
 	if err != nil {

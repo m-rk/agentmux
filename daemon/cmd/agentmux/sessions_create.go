@@ -91,6 +91,9 @@ func runSessionsCreate(args []string) {
 	} else {
 		fmt.Printf("%s %s\nworkdir  %s\nbranch   %s\n", verb, res.Address, res.Workdir, res.Branch)
 	}
+	for _, w := range res.Warnings {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+	}
 	if res.BaseCommit != "" {
 		fmt.Printf("base     origin/%s @ %s\n", res.Base, res.BaseCommit)
 	}

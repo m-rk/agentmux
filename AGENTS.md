@@ -31,6 +31,18 @@ helper tmux session and shuttle the URL/code with the operator:
 Raw tmux is fine here: the helper session is not agentmux-managed, so the
 "never reach around agentmux sessions with raw tmux" rule doesn't apply to it.
 
+### Re-authenticating codex
+
+Codex has one ChatGPT login per run user, shared by all that user's codex
+instances through `$CODEX_HOME`. `agentmux auth status -all` (or `-instance
+NAME`) shows it, using `codex login status` only; it never reads auth files.
+`agentmux auth login` is claude-only. For codex use the same helper tmux
+session as above but run `codex login --device-auth` (as the run user) instead:
+it prints a verification URL and a one-time code for the operator to enter on
+another computer, and needs no pasted code back, so skip steps 4-5's
+send-keys and just wait for the command to exit. Confirm with
+`agentmux auth status -instance NAME`.
+
 ## Reading secrets from 1Password
 
 Secrets (Discord tokens, API keys, etc.) live in 1Password and must be

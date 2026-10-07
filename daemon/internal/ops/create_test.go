@@ -615,3 +615,36 @@ func TestCreateAsRootDropsToRunUser(t *testing.T) {
 		t.Fatalf("root-owned files after root dry run:\n%s", out)
 	}
 }
+
+// A codex template's extra writable directories (the task-note vault) carry
+// to the task instance; allow-files are reported as not applied.
+func TestCreateCodexCarriesAddDirsAndWarnsOnAllowFiles(t *testing.T) {
+	c := newCreateEnv(t)
+	reg := "AGENTMUX_AGENT=codex\nAGENTMUX_WORKDIR=" + c.repo + "\nAGENTMUX_CODEX_ADD_DIRS=/vault/tasks\n"
+	if err := os.WriteFile(filepath.Join(discovery.EnvDir, "tmpl.env"), []byte(reg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	allow := filepath.Join(t.TempDir(), "notes.md")
+	if err := os.WriteFile(allow, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	req := c.req()
+	req.AllowFiles = []string{allow}
+	res, err := c.env.Create(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Agent != "codex" || len(c.d.created) != 1 || c.d.created[0].Agent != "codex" {
+		t.Fatalf("not a codex create: %+v", res)
+	}
+	fields, err := session.ReadRegistry("task-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fields[session.CodexAddDirsKey] != "/vault/tasks" {
+		t.Errorf("add-dirs = %q, want the template's", fields[session.CodexAddDirsKey])
+	}
+	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "no per-file allowlist") || !strings.Contains(res.Warnings[0], "/vault/tasks") {
+		t.Errorf("warnings = %q", res.Warnings)
+	}
+}

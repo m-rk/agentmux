@@ -1,11 +1,14 @@
 package session
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/m-rk/agentmux/daemon/internal/liveguard"
 )
 
 const testCodexThread = "00000000-0000-4000-8000-0000000000c1"
@@ -186,5 +189,39 @@ func TestCodexRunCmdlineMatch(t *testing.T) {
 	}
 	if codexRunCmdlineMatch(write("/usr/bin/codex", "login", "status")) || codexRunCmdlineMatch(write("sh", "-c", "codex exec")) {
 		t.Error("non-run process matched")
+	}
+}
+
+func TestCodexRunArgsAddDirs(t *testing.T) {
+	got, err := CodexRunArgs(CodexRunOptions{Workdir: "/w", AddDirs: CodexAddDirs("/vault/notes, ,/extra")}, testCodexThread)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "exec --json -C /w -s workspace-write --add-dir /vault/notes --add-dir /extra resume " + testCodexThread + " -"
+	if strings.Join(got, " ") != want {
+		t.Errorf("args = %q, want %q", strings.Join(got, " "), want)
+	}
+	if _, err := CodexRunArgs(CodexRunOptions{AddDirs: []string{"relative/dir"}}, ""); err == nil {
+		t.Error("relative add-dir was accepted")
+	}
+	for _, a := range got {
+		if a == "--dangerously-bypass-approvals-and-sandbox" || a == "--yolo" {
+			t.Errorf("default args carry the bypass flag %q", a)
+		}
+	}
+}
+
+// A codex run child carries the task identity the live guard fires on.
+func TestCodexRunCommandCarriesTaskIdentity(t *testing.T) {
+	cmd := codexRunCommand(context.Background(), "task-9", []string{"exec", "-"})
+	for _, want := range []string{liveguard.InstanceEnv + "=task-9", liveguard.TaskEnv + "=1"} {
+		if !contains(cmd.Env, want) {
+			t.Errorf("codex run env lacks %s", want)
+		}
+	}
+	for _, e := range cmd.Env {
+		if strings.HasPrefix(e, "OPENAI_API_KEY=") || strings.HasPrefix(e, "CODEX_API_KEY=") {
+			t.Errorf("codex run env carries %s", strings.SplitN(e, "=", 2)[0])
+		}
 	}
 }
