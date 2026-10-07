@@ -159,3 +159,42 @@ sandbox bypass flag.
   refusing wrapper is `daemon/internal/session/codexguard.go`, installed next
   to the amp wrapper for `task-*` instances. A refusal is one line on stderr
   and in `$AGENTMUX_TASK_LOG`.
+
+## 5. Implemented runner (AMUX-56)
+
+The `codex` agent kind is a headless runner shaped like amp (sections 1 and 3).
+
+- **Kind**: `AGENTMUX_AGENT=codex`. `agentmux new -agent codex` (and
+  `sessions create` from a codex template) provisions a registry entry and the
+  oneshot/tick units; `session run|update|stop` keep a placeholder tmux
+  session alive (no resident codex process). `-model` is the instance's
+  `AGENTMUX_MODEL`.
+- **Run**: `agentmux sessions run -file PROMPT [-model M] [-effort E]
+  [-sandbox MODE] [-thread ID] <instance>@<host>` launches
+  `codex exec --json -C <worktree> -s <sandbox> [-m M] [-c
+  model_reasoning_effort=E] -` detached, with the prompt on stdin from a
+  private file (never argv). Continue is the same with `resume <thread_id>`
+  before the trailing `-`. Output is appended to
+  `~/.local/state/agentmux/sessions/<instance>/codex-run-<thread>.jsonl`,
+  bracketed per run by `agentmux.start` / `agentmux.exit` records the launcher
+  writes. `OPENAI_API_KEY`/`CODEX_API_KEY` are dropped from the child.
+- **State** (`sessions status <instance>@<host>#<thread>`): each
+  `thread.started`/`agentmux.start` begins a segment; `turn.completed` is
+  done, `turn.failed` is failed with the flattened error (and `rate_limited`
+  for 429 / rate or usage limit), a bare `error` is not terminal, an
+  `agentmux.exit` with no result is failed ("process exited ... without a
+  result"), and no event for 10 minutes while running reports `stalled`.
+- **Continue vs busy**: a continue of a still-working thread is refused
+  (`busy`), since two `codex exec` on one rollout would interleave; a `send`
+  that finds the turn stalled stops it first and starts a new turn.
+- **Sandbox**: default `workspace-write`; `read-only` allowed;
+  `danger-full-access` and the bypass flags are refused unless the instance
+  registry has `AGENTMUX_CODEX_ALLOW_UNSAFE_SANDBOX=1` (set by hand; not copied
+  from a template).
+- **Not done here**: TUI instances, thread-watch collector, `codex queue`,
+  usage accounting from `turn.completed`, mergentic dispatch support.
+
+Live proof (test host, read-only sandbox, default model, effort low): a new
+thread (`Reply with exactly the word PONG`) ended `done` with message `PONG`;
+`sessions run -thread` on the same id started a second segment that ended
+`done` with `PING`; the log held two `thread.started` segments.
