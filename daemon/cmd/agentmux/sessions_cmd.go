@@ -35,7 +35,7 @@ const sessionsUsage = `usage:
   agentmux sessions send -by PRINCIPAL [-via relayed|dispatched|sent] [-from REF] [-correlation ID]
                          [-hosts PATH] [-wait DUR] [-json] <instance>@<host>[#<thread>] (TEXT | -file PATH|-)
   agentmux sessions create [-json] [-dry-run] [-socket PATH] [-hosts PATH] -template <instance>@<host> -instance NAME -branch B
-                           [-base BRANCH] [-worktree NAME] [-allow-file PATH ...]
+                           [-base BRANCH] [-worktree NAME] [-allow-file PATH ...] [-model MODEL] [-effort EFFORT]
   agentmux sessions run [-json] [-dry-run] [-hosts PATH] [-thread THREAD_ID] [-title TEXT] [-mode MODE] [-template NAME] -file PATH|- <instance>@<host>[#<thread>]
   agentmux sessions retire [-json] [-dry-run] [-hosts PATH] <instance>@<host>
   agentmux amp sweep [-json] [-dry-run] [-run-user USER]
@@ -285,6 +285,12 @@ func runSessionsStatus(args []string) {
 	fmt.Printf("address  %s\nagent    %s\nstatus   %s\nstate    %s\nworkdir  %s\n", st.Address, st.Agent, st.Status, st.State, st.Workdir)
 	if st.AmpMode.Mode != "" {
 		fmt.Printf("amp_mode %s (from %s)\n", st.AmpMode.Mode, st.AmpMode.Source)
+	}
+	if c := st.Claude; c != nil {
+		fmt.Printf("model    %s (pinned %s, effort %s)\n", orDash(c.ActualModel), orDash(c.PinnedModel), orDash(c.PinnedEffort))
+		if c.Mismatch {
+			fmt.Printf("warning  the session ran %s, not the pinned %s\n", c.ActualModel, c.PinnedModel)
+		}
 	}
 	if st.Run != nil {
 		if st.Run.Reason != "" {

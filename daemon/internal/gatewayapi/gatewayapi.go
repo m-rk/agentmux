@@ -115,6 +115,10 @@ type CreateRequest struct {
 	Worktree   string   `json:"worktree,omitempty"`
 	AllowFiles []string `json:"allow_files,omitempty"`
 	DryRun     bool     `json:"dry_run,omitempty"`
+	// Model and Effort pin a claude-code instance's model and effort; empty
+	// keeps the template's.
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
 }
 
 // CreateResponse is the session plus branch and created; a refusal is a

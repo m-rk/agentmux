@@ -202,16 +202,21 @@ func TestClaudeLaunchArgs(t *testing.T) {
 		name     string
 		resume   string
 		settings string
+		model    string
+		effort   string
 		want     []string
 	}{
-		{"plain", "", "", []string{"--remote-control", "disp"}},
-		{"resume", "abc123", "", []string{"--remote-control", "disp", "--resume", "abc123"}},
-		{"allow-files", "", "/h/s.json", []string{"--remote-control", "disp", "--settings", "/h/s.json"}},
-		{"allow-files and resume", "abc123", "/h/s.json", []string{"--remote-control", "disp", "--resume", "abc123", "--settings", "/h/s.json"}},
+		{"plain", "", "", "", "", []string{"--remote-control", "disp"}},
+		{"resume", "abc123", "", "", "", []string{"--remote-control", "disp", "--resume", "abc123"}},
+		{"allow-files", "", "/h/s.json", "", "", []string{"--remote-control", "disp", "--settings", "/h/s.json"}},
+		{"model", "", "", "opus", "", []string{"--remote-control", "disp", "--model", "opus"}},
+		{"effort", "", "", "", "high", []string{"--remote-control", "disp", "--effort", "high"}},
+		{"model, effort and resume", "abc", "", "opus", "high", []string{"--remote-control", "disp", "--model", "opus", "--effort", "high", "--resume", "abc"}},
+		{"allow-files and resume", "abc123", "/h/s.json", "", "", []string{"--remote-control", "disp", "--resume", "abc123", "--settings", "/h/s.json"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := claudeLaunchArgs("disp", tc.resume, tc.settings)
+			got := claudeLaunchArgs("disp", tc.resume, tc.settings, tc.model, tc.effort)
 			if strings.Join(got, "\x00") != strings.Join(tc.want, "\x00") {
 				t.Errorf("claudeLaunchArgs = %q, want %q", got, tc.want)
 			}

@@ -18,6 +18,7 @@ import (
 
 	"github.com/m-rk/agentmux/daemon/internal/address"
 	"github.com/m-rk/agentmux/daemon/internal/pb"
+	"github.com/m-rk/agentmux/daemon/internal/provision"
 	"github.com/m-rk/agentmux/daemon/internal/runas"
 	"github.com/m-rk/agentmux/daemon/internal/safesend"
 	"github.com/m-rk/agentmux/daemon/internal/session"
@@ -149,6 +150,20 @@ type StatusResult struct {
 	// Run is the run-thread state (running, done, or failed with Reason)
 	// when the address names a thread started by `sessions run`.
 	Run *RunStateInfo `json:"run,omitempty"`
+	// Claude is the pinned and actual model of a claude-code instance that
+	// has a pin or has answered at least once; see ClaudeInfo.
+	Claude *ClaudeInfo `json:"claude,omitempty"`
+}
+
+// ClaudeInfo is what a claude-code session was told to run and what it
+// actually ran. Actual comes from the newest transcript, so it is empty
+// until the session has answered once; Mismatch is true only when both a
+// pin and an actual model are known and they disagree.
+type ClaudeInfo struct {
+	PinnedModel  string `json:"pinned_model,omitempty"`
+	PinnedEffort string `json:"pinned_effort,omitempty"`
+	ActualModel  string `json:"actual_model,omitempty"`
+	Mismatch     bool   `json:"mismatch,omitempty"`
 }
 
 // RunStateInfo is the stream-log state of a `sessions run` thread.
@@ -263,6 +278,9 @@ func (e Env) Status(ctx context.Context, addrText string) (StatusResult, error) 
 		if inst.Agent == "codex" {
 			return codexStatus(res, addr)
 		}
+		if inst.Agent == "claude-code" {
+			res.Claude = claudeInfo(addr)
+		}
 		pane, err := c.ViewPane(ctx, &pb.ViewPaneRequest{Instance: inst.Name, Escapes: true})
 		if err != nil {
 			return res, err
@@ -362,4 +380,23 @@ func transcriptError(err error) error {
 		return Refuse(safesend.ReasonUnsupported, "%v", err)
 	}
 	return err
+}
+
+// claudeInfo reads a claude-code instance's pin from its registry and the
+// model it really ran from its newest transcript. Nil when there is nothing
+// to report; a failed read just leaves the actual model empty.
+func claudeInfo(addr address.Address) *ClaudeInfo {
+	fields, err := session.ReadRegistry(addr.Instance)
+	if err != nil {
+		return nil
+	}
+	info := &ClaudeInfo{PinnedModel: fields[provision.ClaudeModelKey], PinnedEffort: fields[provision.ClaudeEffortKey]}
+	if src, _, err := Source(addr); err == nil {
+		info.ActualModel, _ = transcript.ClaudeModel(src)
+	}
+	info.Mismatch = info.PinnedModel != "" && info.ActualModel != "" && !provision.ClaudeModelMatches(info.PinnedModel, info.ActualModel)
+	if info.PinnedModel == "" && info.PinnedEffort == "" && info.ActualModel == "" {
+		return nil
+	}
+	return info
 }

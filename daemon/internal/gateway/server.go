@@ -363,7 +363,7 @@ func (s *Server) createOp(w http.ResponseWriter, r *http.Request, a *access, id 
 	res, err := s.backend.Create(r.Context(), ops.CreateRequest{
 		Template: req.Template, Instance: req.Instance, Branch: req.Branch,
 		Base: req.Base, Worktree: req.Worktree, AllowFiles: req.AllowFiles,
-		DryRun: req.DryRun,
+		DryRun: req.DryRun, Model: req.Model, Effort: req.Effort,
 	})
 	if err != nil {
 		e := ops.AsError(err)

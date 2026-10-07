@@ -217,6 +217,13 @@ message CreateInstanceRequest {
   // claude-code applies them so far; other agents store the list and report
   // that it isn't applied yet. See docs/allow-file.md.
   repeated string allow_files = 15;
+  // claude-code only. Pin the session's model (an alias such as opus, or a
+  // full id) and effort (low, medium, high, xhigh, max): stored in the
+  // registry before the first launch and passed as `claude --model` /
+  // `--effort` on every launch, restarts included. Empty = claude's own
+  // default. Validated by the provisioner; other agents refuse them.
+  string claude_model = 17;
+  string claude_effort = 18;
 }
 
 message CreateInstanceResponse {

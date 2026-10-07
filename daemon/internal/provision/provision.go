@@ -36,6 +36,8 @@ type Options struct {
 	AmpDiscoverDirs bool     // amp only; pass --discover-dirs — see proto doc
 	AmpUpdate       string   // amp only: "", "on", or "off" — see proto doc
 	AmpMode         string   // amp only; per-instance -m override (AGENTMUX_AMP_MODE) — see proto doc
+	ClaudeModel     string   // claude-code only; pinned --model (AGENTMUX_CLAUDE_MODEL) — see proto doc
+	ClaudeEffort    string   // claude-code only; pinned --effort (AGENTMUX_CLAUDE_EFFORT) — see proto doc
 	AllowFiles      []string // files outside the workdir the agent may read and edit — see proto doc
 }
 

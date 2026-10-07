@@ -194,3 +194,25 @@ func TestClaudeCommandRecordsAndSummaries(t *testing.T) {
 		t.Fatalf("title: %+v %v", ts, err)
 	}
 }
+
+func TestClaudeModelReadsNewestRealAssistantModel(t *testing.T) {
+	home := t.TempDir()
+	src := Source{Instance: "i", Agent: "claude-code", Workdir: "/work/app", Home: home}
+	dir := claudeDir(src)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if m, err := ClaudeModel(src); err != nil || m != "" {
+		t.Fatalf("no transcript: %q, %v", m, err)
+	}
+	lines := `{"type":"user","message":{"content":"hi"}}
+{"type":"assistant","message":{"model":"claude-opus-5-5","content":[]}}
+{"type":"assistant","message":{"model":"<synthetic>","content":[]}}
+`
+	if err := os.WriteFile(filepath.Join(dir, "s1.jsonl"), []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if m, err := ClaudeModel(src); err != nil || m != "claude-opus-5-5" {
+		t.Fatalf("model = %q, %v; want claude-opus-5-5", m, err)
+	}
+}

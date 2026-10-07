@@ -34,6 +34,12 @@ type CreateRequest struct {
 	// A fetch from origin may still update remote-tracking refs. The
 	// result carries DryRun and Plan instead of a session.
 	DryRun bool
+	// Model and Effort pin a claude-code instance's model and effort, passed
+	// to `claude --model/--effort` on every launch. Empty keeps the
+	// template's pin (none if the template has none). Other agents refuse
+	// them. An unsupported value is refused, never replaced by a default.
+	Model  string
+	Effort string
 }
 
 // CreateResult is the new (or reused) session plus what Create decided.
@@ -186,6 +192,26 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 		agent = "claude-code" // claude-code registry entries predate AGENTMUX_AGENT
 	}
 
+	claudeModel, claudeEffort := "", ""
+	if agent == "claude-code" {
+		var err error
+		if claudeModel, err = provision.CleanClaudeModel(req.Model); err != nil {
+			return CreateResult{}, Refuse(safesend.ReasonInvalid, "%v", err)
+		}
+		if claudeEffort, err = provision.CleanClaudeEffort(req.Effort); err != nil {
+			return CreateResult{}, Refuse(safesend.ReasonInvalid, "%v", err)
+		}
+		// No pin given: the new instance inherits the template's.
+		if claudeModel == "" {
+			claudeModel = fields[provision.ClaudeModelKey]
+		}
+		if claudeEffort == "" {
+			claudeEffort = fields[provision.ClaudeEffortKey]
+		}
+	} else if strings.TrimSpace(req.Model) != "" || strings.TrimSpace(req.Effort) != "" {
+		return CreateResult{}, Refuse(safesend.ReasonUnsupported, "model and effort pins are supported for claude-code only; template %s runs %s", tmpl.Instance, agent)
+	}
+
 	toplevel, err := e.git(ctx, tmplWorkdir, "rev-parse", "--show-toplevel")
 	if err != nil || toplevel == "" {
 		return CreateResult{}, Refuse(safesend.ReasonUnsupported, "template %s workdir %s is not in a Git checkout", tmpl.Instance, tmplWorkdir)
@@ -222,6 +248,14 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 		return CreateResult{}, Refuse(safesend.ReasonInvalid, "instance %q already exists with workdir %s, not %s", req.Instance, existing.Workdir, wtPath)
 	}
 
+	if existing != nil && agent == "claude-code" {
+		if cur, err := session.ReadRegistry(req.Instance); err == nil {
+			if (req.Model != "" && strings.TrimSpace(req.Model) != cur[provision.ClaudeModelKey]) || (req.Effort != "" && strings.TrimSpace(req.Effort) != cur[provision.ClaudeEffortKey]) {
+				return CreateResult{}, Refuse(safesend.ReasonInvalid, "instance %q already exists with model %s, effort %s: a pin only applies when the instance is created", req.Instance, orDefault(cur[provision.ClaudeModelKey]), orDefault(cur[provision.ClaudeEffortKey]))
+			}
+		}
+	}
+
 	if req.Base != "" {
 		if b, err := e.git(ctx, toplevel, "check-ref-format", "--branch", req.Base); err != nil || b != req.Base {
 			return CreateResult{}, Refuse(safesend.ReasonInvalid, "base %q is not a valid branch name", req.Base)
@@ -244,6 +278,9 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 		plan := []string{"worktree " + wtPath + " on branch " + req.Branch}
 		if req.Base != "" {
 			plan = append(plan, "from origin/"+req.Base+" @ "+baseCommit)
+		}
+		if claudeModel != "" || claudeEffort != "" {
+			plan = append(plan, "launch claude with model "+orDefault(claudeModel)+", effort "+orDefault(claudeEffort))
 		}
 		if existing != nil {
 			plan = append(plan, "reuse instance "+req.Instance)
@@ -282,6 +319,8 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 			AmpUpdate:         fields["AGENTMUX_AMP_UPDATE"],
 			AmpMode:           fields["AGENTMUX_AMP_MODE"],
 			AllowFiles:        allow,
+			ClaudeModel:       claudeModel,
+			ClaudeEffort:      claudeEffort,
 		})
 		if err != nil {
 			return CreateResult{}, err
@@ -325,6 +364,8 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 			return CreateResult{}, Refuse(safesend.ReasonFailed, "recording codex add-dirs for %s: %v", req.Instance, err)
 		}
 	}
+	// A reused claude instance keeps its pin: the registry the launch reads
+	// is written only at creation, so a changed pin needs a new instance.
 	// Record the branch the worktree was made on: retire uses it (plus
 	// the worktree's own branch and the task family) to decide which
 	// branches to delete-or-keep. SetRegistryField appends when absent
@@ -520,4 +561,11 @@ func codexAddDirsNote(fields map[string]string) string {
 		return " plus " + strings.Join(dirs, ", ")
 	}
 	return ""
+}
+
+func orDefault(v string) string {
+	if v == "" {
+		return "default"
+	}
+	return v
 }

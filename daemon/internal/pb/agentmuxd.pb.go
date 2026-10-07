@@ -906,7 +906,14 @@ type CreateInstanceRequest struct {
 	// internal/allowfiles; stored in the registry so restarts keep them. Only
 	// claude-code applies them so far; other agents store the list and report
 	// that it isn't applied yet. See docs/allow-file.md.
-	AllowFiles    []string `protobuf:"bytes,15,rep,name=allow_files,json=allowFiles,proto3" json:"allow_files,omitempty"`
+	AllowFiles []string `protobuf:"bytes,15,rep,name=allow_files,json=allowFiles,proto3" json:"allow_files,omitempty"`
+	// claude-code only. Pin the session's model (an alias such as opus, or a
+	// full id) and effort (low, medium, high, xhigh, max): stored in the
+	// registry before the first launch and passed as `claude --model` /
+	// `--effort` on every launch, restarts included. Empty = claude's own
+	// default. Validated by the provisioner; other agents refuse them.
+	ClaudeModel   string `protobuf:"bytes,17,opt,name=claude_model,json=claudeModel,proto3" json:"claude_model,omitempty"`
+	ClaudeEffort  string `protobuf:"bytes,18,opt,name=claude_effort,json=claudeEffort,proto3" json:"claude_effort,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1051,6 +1058,20 @@ func (x *CreateInstanceRequest) GetAllowFiles() []string {
 		return x.AllowFiles
 	}
 	return nil
+}
+
+func (x *CreateInstanceRequest) GetClaudeModel() string {
+	if x != nil {
+		return x.ClaudeModel
+	}
+	return ""
+}
+
+func (x *CreateInstanceRequest) GetClaudeEffort() string {
+	if x != nil {
+		return x.ClaudeEffort
+	}
+	return ""
 }
 
 type CreateInstanceResponse struct {
@@ -1913,7 +1934,7 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\x06action\x18\x02 \x01(\x0e2\x1b.agentmuxd.v1.ControlActionR\x06action\";\n" +
 	"\x0fControlResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\xad\x04\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xf5\x04\n" +
 	"\x15CreateInstanceRequest\x12#\n" +
 	"\rinstance_name\x18\x01 \x01(\tR\finstanceName\x12\x14\n" +
 	"\x05agent\x18\x02 \x01(\tR\x05agent\x12\x1a\n" +
@@ -1933,7 +1954,9 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"amp_update\x18\x0e \x01(\tR\tampUpdate\x12\x19\n" +
 	"\bamp_mode\x18\x10 \x01(\tR\aampMode\x12\x1f\n" +
 	"\vallow_files\x18\x0f \x03(\tR\n" +
-	"allowFiles\"B\n" +
+	"allowFiles\x12!\n" +
+	"\fclaude_model\x18\x11 \x01(\tR\vclaudeModel\x12#\n" +
+	"\rclaude_effort\x18\x12 \x01(\tR\fclaudeEffort\"B\n" +
 	"\x16CreateInstanceResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"\x19\n" +

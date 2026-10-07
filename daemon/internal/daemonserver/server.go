@@ -140,6 +140,8 @@ func (s *Server) CreateInstance(ctx context.Context, req *pb.CreateInstanceReque
 		AmpUpdate:       req.AmpUpdate,
 		AmpMode:         req.AmpMode,
 		AllowFiles:      req.AllowFiles,
+		ClaudeModel:     req.ClaudeModel,
+		ClaudeEffort:    req.ClaudeEffort,
 	})
 	if err != nil {
 		return &pb.CreateInstanceResponse{Ok: false, Message: err.Error()}, nil

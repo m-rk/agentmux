@@ -120,7 +120,7 @@ func RunClaudeCode(name string) error {
 		return ensureClaudeRemoteControl(tmux, name, socket, session)
 	}
 
-	claudeArgs := claudeLaunchArgs(display, resume, prepareClaudeAllowSettings(name, workdir, fields))
+	claudeArgs := claudeLaunchArgs(display, resume, prepareClaudeAllowSettings(name, workdir, fields), fields[provision.ClaudeModelKey], fields[provision.ClaudeEffortKey])
 	// exec.Command takes args as a slice, not a shell string, so unlike
 	// rc-start.sh there's no manual shell-quoting to get right here.
 	// Task instances stamp the session with the task identity (see
@@ -157,10 +157,17 @@ func taskSessionEnvArgs(name string) []string {
 }
 
 // claudeLaunchArgs builds the arguments after `claude`. settingsPath is
-// the per-instance allow-file settings file, or "" for none, in which case
-// the arguments are exactly what instances without allow-files always got.
-func claudeLaunchArgs(display, resume, settingsPath string) []string {
+// the per-instance allow-file settings file, or "" for none. model and
+// effort are the instance's pin (see ClaudeModelKey), or "" for none; with
+// neither pin or allow-files the arguments are what instances always got.
+func claudeLaunchArgs(display, resume, settingsPath, model, effort string) []string {
 	args := []string{"--remote-control", display}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	if effort != "" {
+		args = append(args, "--effort", effort)
+	}
 	if resume != "" {
 		args = append(args, "--resume", resume)
 	}

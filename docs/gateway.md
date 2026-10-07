@@ -140,6 +140,38 @@ from that line. `-json` adds `base` and `base_commit` to the result.
 `-dry-run` checks everything a real create would — including fetching
 `origin/<base>` — but creates nothing; see [Deploy](deploy.md).
 
+### Pinning a claude model and effort
+
+A claude-code instance is otherwise created with whatever model the account
+or the template's settings default to. To pin one:
+
+```sh
+agentmux sessions create -template web@build-box -instance task-42 -branch feature/task-42 \
+  -model opus -effort high
+```
+
+`-model` takes an alias (`opus`, `sonnet`, `haiku`, optionally `[1m]`) or a
+full id (`claude-<family>-<version>`); `-effort` is `low`, `medium`, `high`,
+`xhigh` or `max`. They are recorded in the instance's registry
+(`AGENTMUX_CLAUDE_MODEL`, `AGENTMUX_CLAUDE_EFFORT`) before the first launch
+and passed as `claude --model` / `--effort` on every launch, so a restart
+keeps them. Without a pin the new instance inherits the template's pin, and
+a template with none launches with no flags, exactly as before.
+
+An unsupported model or effort is refused (`invalid`) before anything is
+created, never replaced by a default; so is a pin on a non-claude template
+(`unsupported`) or a pin that differs from an existing instance's (a pin
+applies only at creation). `sessions run` is codex and amp only, so claude
+has no per-run override.
+
+Confirm what started with `sessions status`: for claude-code it reports
+`claude.pinned_model`, `claude.pinned_effort` and `claude.actual_model` (the
+model the newest transcript's assistant replies used; empty until the first
+reply), and `claude.mismatch: true` when the two disagree. A caller that
+posts the launch should read `actual_model`, say so on a mismatch, and raise
+a question rather than carry on. The gateway of an older host ignores the
+unknown `model`/`effort` fields, so check `status` rather than assuming.
+
 ## Running an amp thread
 
 `sessions send` to an amp instance never pastes into the runner's

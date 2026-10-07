@@ -648,3 +648,68 @@ func TestCreateCodexCarriesAddDirsAndWarnsOnAllowFiles(t *testing.T) {
 		t.Errorf("warnings = %q", res.Warnings)
 	}
 }
+
+func TestCreateClaudePin(t *testing.T) {
+	c := newCreateEnv(t)
+	// Make the template a claude-code instance with its own pin.
+	tmpl := filepath.Join(discovery.EnvDir, "tmpl.env")
+	data, _ := os.ReadFile(tmpl)
+	data = []byte(strings.Replace(string(data), "AGENTMUX_AGENT=opencode", "AGENTMUX_AGENT=claude-code\nAGENTMUX_CLAUDE_MODEL=sonnet\nAGENTMUX_CLAUDE_EFFORT=low", 1))
+	if err := os.WriteFile(tmpl, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// No pin in the request: the template's pin is inherited.
+	req := c.req()
+	req.Instance, req.Branch = "task-inherit", "feature/inherit"
+	if _, err := c.env.Create(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if r := c.d.created[0]; r.ClaudeModel != "sonnet" || r.ClaudeEffort != "low" {
+		t.Errorf("inherited pin = %q/%q, want template's sonnet/low", r.ClaudeModel, r.ClaudeEffort)
+	}
+
+	// A pin in the request wins over the template's.
+	req = c.req()
+	req.Model, req.Effort = "claude-opus-5-5", "high"
+	if _, err := c.env.Create(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if r := c.d.created[1]; r.ClaudeModel != "claude-opus-5-5" || r.ClaudeEffort != "high" {
+		t.Errorf("pin = %q/%q, want claude-opus-5-5/high", r.ClaudeModel, r.ClaudeEffort)
+	}
+
+	// A different pin for the existing instance is refused, not ignored.
+	reg := filepath.Join(discovery.EnvDir, "task-1.env")
+	f, _ := os.OpenFile(reg, os.O_APPEND|os.O_WRONLY, 0o644)
+	f.WriteString("AGENTMUX_CLAUDE_MODEL=claude-opus-5-5\n")
+	f.Close()
+	req.Model = "sonnet"
+	_, err := c.env.Create(context.Background(), req)
+	wantReason(t, err, safesend.ReasonInvalid)
+}
+
+func TestCreateClaudePinBadValues(t *testing.T) {
+	c := newCreateEnv(t)
+	tmpl := filepath.Join(discovery.EnvDir, "tmpl.env")
+	data, _ := os.ReadFile(tmpl)
+	os.WriteFile(tmpl, []byte(strings.Replace(string(data), "AGENTMUX_AGENT=opencode", "AGENTMUX_AGENT=claude-code", 1)), 0o644)
+	req := c.req()
+	req.Model = "gpt-5"
+	_, err := c.env.Create(context.Background(), req)
+	wantReason(t, err, safesend.ReasonInvalid)
+	req.Model, req.Effort = "opus", "extreme"
+	_, err = c.env.Create(context.Background(), req)
+	wantReason(t, err, safesend.ReasonInvalid)
+	if len(c.d.created) != 0 {
+		t.Errorf("a refused pin still created %d instances", len(c.d.created))
+	}
+}
+
+func TestCreatePinRefusedForOtherAgents(t *testing.T) {
+	c := newCreateEnv(t) // opencode template
+	req := c.req()
+	req.Model = "opus"
+	_, err := c.env.Create(context.Background(), req)
+	wantReason(t, err, safesend.ReasonUnsupported)
+}

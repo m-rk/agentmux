@@ -134,6 +134,14 @@ func createClaudeCode(opts Options) (string, error) {
 	if err := validateIdentifier("instance name", name); err != nil {
 		return "", err
 	}
+	claudeModel, err := CleanClaudeModel(opts.ClaudeModel)
+	if err != nil {
+		return "", err
+	}
+	claudeEffort, err := CleanClaudeEffort(opts.ClaudeEffort)
+	if err != nil {
+		return "", err
+	}
 	if opts.ResumeSessionID != "" {
 		if err := validateIdentifier("resume session ID", opts.ResumeSessionID); err != nil {
 			return "", err
@@ -207,6 +215,8 @@ func createClaudeCode(opts Options) (string, error) {
 		{allowfiles.RegistryKey, allowFiles},
 		{"AGENTMUX_RESUME", opts.ResumeSessionID},
 		{"AGENTMUX_COMPACT_ON_UPDATE", opts.CompactOnUpdate},
+		{ClaudeModelKey, claudeModel},
+		{ClaudeEffortKey, claudeEffort},
 	})
 	if err != nil {
 		return "", err

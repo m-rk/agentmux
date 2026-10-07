@@ -404,3 +404,32 @@ func claudeCommandRecord(text string) bool {
 func claudeHarnessNote(text string) bool {
 	return strings.HasPrefix(text, "<task-notification>")
 }
+
+// ClaudeModel is the model the newest Claude session of src's workdir last
+// answered with, read from the newest transcript's assistant records
+// (synthetic CLI replies are skipped). "" means no assistant reply yet.
+func ClaudeModel(src Source) (string, error) {
+	ids, _, err := claudeFiles(src)
+	if err != nil || len(ids) == 0 {
+		return "", err
+	}
+	f, err := os.Open(filepath.Join(claudeDir(src), ids[0]+".jsonl"))
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	model := ""
+	err = eachLine(f, claudeMaxLine, func(line []byte) bool {
+		var rec struct {
+			Type    string `json:"type"`
+			Message struct {
+				Model string `json:"model"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(line, &rec) == nil && rec.Type == "assistant" && rec.Message.Model != "" && rec.Message.Model != "<synthetic>" {
+			model = rec.Message.Model
+		}
+		return true
+	})
+	return model, err
+}
