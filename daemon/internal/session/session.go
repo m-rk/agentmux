@@ -132,6 +132,8 @@ func Run(name string) error {
 		runErr = RunAgentmux(name)
 	case "amp":
 		runErr = RunAmp(name)
+	case "codex":
+		runErr = RunCodex(name)
 	default:
 		return fmt.Errorf("unsupported agent %q for instance %q", agent, name)
 	}
@@ -164,6 +166,8 @@ func Update(name string) error {
 		return UpdateAgentmux(name)
 	case "amp":
 		return UpdateAmp(name)
+	case "codex":
+		return UpdateCodex(name)
 	default:
 		return fmt.Errorf("unsupported agent %q for instance %q", agent, name)
 	}
@@ -181,6 +185,8 @@ func Stop(name string) error {
 		return StopAgentmux(name)
 	case "amp":
 		return StopAmp(name)
+	case "codex":
+		return StopCodex(name)
 	default:
 		return fmt.Errorf("unsupported agent %q for instance %q", agent, name)
 	}

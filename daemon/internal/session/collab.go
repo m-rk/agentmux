@@ -155,7 +155,7 @@ func syncCollaboration(name string) error {
 // collaborationPaneSafe so an amp instance doesn't poll Discord on every
 // five-minute tick for a delivery that can never happen.
 func collaborationSupported(agent string) bool {
-	return agent != "amp"
+	return agent != "amp" && agent != "codex"
 }
 
 func collaborationPaneSafe(agent, pane string) bool {
@@ -171,7 +171,7 @@ func collaborationPaneSafe(agent, pane string) bool {
 		if !KiloPaneReady(pane) {
 			return false
 		}
-	case "amp":
+	case "amp", "codex":
 		// Unconditional, unlike the readiness gates above: see
 		// collaborationSupported. No amp pane is ever a safe delivery target,
 		// however idle and dialog-free it looks.

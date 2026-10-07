@@ -157,6 +157,10 @@ type RunStateInfo struct {
 	State string `json:"state"`
 	// Reason is set when State is "failed".
 	Reason string `json:"reason,omitempty"`
+	// RateLimited marks a codex failure caused by a rate or usage limit.
+	RateLimited bool `json:"rate_limited,omitempty"`
+	// Stalled marks a codex run whose log has gone quiet while running.
+	Stalled bool `json:"stalled,omitempty"`
 	// WaitingOn is the pending `ask_user_choice` question when State is
 	// "waiting". It mirrors session.AmpWaitingOn.
 	WaitingOn *WaitingOnInfo `json:"waiting_on,omitempty"`
@@ -255,6 +259,9 @@ func (e Env) Status(ctx context.Context, addrText string) (StatusResult, error) 
 				res.State = state
 			}
 			return res, nil
+		}
+		if inst.Agent == "codex" {
+			return codexStatus(res, addr)
 		}
 		pane, err := c.ViewPane(ctx, &pb.ViewPaneRequest{Instance: inst.Name, Escapes: true})
 		if err != nil {

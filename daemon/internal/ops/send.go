@@ -156,13 +156,19 @@ func (e Env) Send(ctx context.Context, req SendRequest) SendResult {
 		} else {
 			err = sendAmpResume(ctx, src, addr, message, &res)
 		}
+	} else if src.Agent == "codex" {
+		if req.Doorbell {
+			err = Refuse(safesend.ReasonUnsupported, "-doorbell is not supported for codex instances: poll `sessions status` for the thread state instead")
+		} else {
+			err = sendCodexResume(ctx, src, addr, message, &res)
+		}
 	} else {
 		err = e.sendTmux(ctx, addr.Instance, src.Agent, message, req.Wait, req.Confirm, req.Doorbell, &res)
 	}
 	// An amp send resumes the worker's thread through the run path; its
 	// outcome says so, so the audit log never claims a terminal paste.
 	outcome, detail := "delivered", ""
-	if src.Agent == "amp" && err == nil {
+	if (src.Agent == "amp" || src.Agent == "codex") && err == nil {
 		outcome = "resumed"
 	}
 	if err != nil {

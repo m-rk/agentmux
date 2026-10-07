@@ -132,6 +132,8 @@ func (s State) Plan(agent string) []string {
 			plan = append(plan, "archive amp thread "+thread)
 		}
 		plan = append(plan, "stop in-flight amp runs", "stop session", "remove units and registry entry")
+	case "codex":
+		plan = append(plan, "stop in-flight codex runs", "stop session (keep codex rollout files)", "remove units and registry entry")
 	case "claude-code":
 		plan = append(plan, "stop session (keep transcripts)", "remove units and registry entry")
 	default: // opencode, kilo, zero
@@ -533,6 +535,10 @@ func apply(ctx context.Context, removeManaged func(context.Context, string) (str
 		// is not an error — and scoped to this instance's stamped
 		// identity, so other instances' runs are untouched.
 		session.StopAmpRuns(instance, st.Workdir)
+	case "codex":
+		// Stop in-flight `codex exec` children before the worktree goes;
+		// the branch and codex's own rollout files are kept.
+		session.StopCodexRuns(instance, st.Workdir)
 	case "opencode":
 		res.OpencodeSessions = st.OpencodeSessions
 	}

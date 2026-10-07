@@ -841,7 +841,10 @@ func (x *ControlResponse) GetMessage() string {
 type CreateInstanceRequest struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
 	InstanceName string                 `protobuf:"bytes,1,opt,name=instance_name,json=instanceName,proto3" json:"instance_name,omitempty"`
-	// "claude-code" | "zero" | "opencode" | "kilo" | "amp". "amp" takes none
+	// "claude-code" | "zero" | "opencode" | "kilo" | "amp" | "codex". "codex"
+	// is a headless runner like amp (one `codex exec --json` per turn, started
+	// by `sessions run`); it takes only `model` (passed to `codex -m`) and none
+	// of the provider/resume/compact fields. "amp" takes none
 	// of the provider/model/resume/compact fields below: its headless runner
 	// (`amp --no-tui --runner-id <id> --remote-control-terminal`) gets its
 	// account and model from the signed-in Amp account, and its runner id is
@@ -850,7 +853,7 @@ type CreateInstanceRequest struct {
 	// than ignored.
 	Agent           string `protobuf:"bytes,2,opt,name=agent,proto3" json:"agent,omitempty"`
 	Provider        string `protobuf:"bytes,3,opt,name=provider,proto3" json:"provider,omitempty"`                                        // zero/opencode/kilo only; "ollama", or a custom provider id
-	Model           string `protobuf:"bytes,4,opt,name=model,proto3" json:"model,omitempty"`                                              // zero/opencode/kilo only
+	Model           string `protobuf:"bytes,4,opt,name=model,proto3" json:"model,omitempty"`                                              // zero/opencode/kilo/codex only
 	Workdir         string `protobuf:"bytes,5,opt,name=workdir,proto3" json:"workdir,omitempty"`                                          // empty = provisioner default
 	ResumeSessionId string `protobuf:"bytes,6,opt,name=resume_session_id,json=resumeSessionId,proto3" json:"resume_session_id,omitempty"` // claude-code only; empty = fresh session
 	RunUser         string `protobuf:"bytes,7,opt,name=run_user,json=runUser,proto3" json:"run_user,omitempty"`                           // Linux only; empty = provisioner default

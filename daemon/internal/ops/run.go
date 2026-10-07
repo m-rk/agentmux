@@ -57,6 +57,14 @@ type RunRequest struct {
 	// `threads continue -x`, and this is an abort plus a new turn, not
 	// amp's cooperative steer-at-the-next-interruption-point.
 	InterruptStalled bool
+	// Model, Effort and Sandbox are per-run codex overrides (sessions run
+	// -model/-effort/-sandbox); empty falls back to the instance's
+	// AGENTMUX_MODEL, codex's own effort default, and workspace-write.
+	// Ignored for amp. danger-full-access needs the instance's explicit
+	// AGENTMUX_CODEX_ALLOW_UNSAFE_SANDBOX=1.
+	Model   string
+	Effort  string
+	Sandbox string
 }
 
 // RunResult is the thread, plus its state when already known.
@@ -66,7 +74,7 @@ type RunResult struct {
 	Agent    string `json:"agent,omitempty"`
 	Thread   string `json:"thread,omitempty"`
 	ThreadID string `json:"thread_id,omitempty"`
-	// ThreadURL is the public amp address of the thread.
+	// ThreadURL is the public amp address of the thread; empty for codex.
 	ThreadURL string `json:"thread_url,omitempty"`
 	// State is always "running": the agent was just launched (or
 	// relaunched for a continue) and the caller polls `sessions status`
@@ -163,8 +171,15 @@ func runInstanceFields(name, label string) (map[string]string, transcript.Source
 	if err != nil {
 		return nil, transcript.Source{}, err
 	}
+	if src.Agent == "codex" {
+		fields, err := session.ReadRegistry(name)
+		if err != nil {
+			return nil, transcript.Source{}, Refuse(safesend.ReasonNotFound, "no instance %q on this host", name)
+		}
+		return fields, src, nil
+	}
 	if src.Agent != "amp" {
-		return nil, transcript.Source{}, Refuse(safesend.ReasonUnsupported, "sessions run is only for amp instances; %s is %q", label, src.Agent)
+		return nil, transcript.Source{}, Refuse(safesend.ReasonUnsupported, "sessions run is only for amp and codex instances; %s is %q", label, src.Agent)
 	}
 	if src.AmpRunnerID == "" {
 		return nil, transcript.Source{}, Refuse(safesend.ReasonUnsupported, "%s has no amp runner id", label)
@@ -201,8 +216,8 @@ func (e Env) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		return RunResult{}, Refuse(safesend.ReasonInvalid, "%v", err)
 	}
 	if reqThread := strings.TrimSpace(addr.Thread); reqThread != "" {
-		if !transcript.ValidAmpThreadID(reqThread) {
-			return RunResult{}, Refuse(safesend.ReasonInvalid, "%q is not an amp thread id", reqThread)
+		if !transcript.ValidAmpThreadID(reqThread) && !session.ValidCodexThreadID(reqThread) {
+			return RunResult{}, Refuse(safesend.ReasonInvalid, "%q is not an amp or codex thread id", reqThread)
 		}
 	}
 	target, allowMissing, err := runTarget(addr, req)
@@ -238,6 +253,12 @@ func (e Env) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	}
 	if info, err := os.Stat(workdir); err != nil || !info.IsDir() {
 		return RunResult{}, Refuse(safesend.ReasonFailed, "workdir %s is not a directory", workdir)
+	}
+	if src.Agent == "codex" {
+		return e.runCodex(ctx, req, addr, text, fields, workdir)
+	}
+	if t := strings.TrimSpace(addr.Thread); t != "" && !transcript.ValidAmpThreadID(t) {
+		return RunResult{}, Refuse(safesend.ReasonInvalid, "%q is not an amp thread id", t)
 	}
 	host, herr := ampconfig.Load(ampconfig.DefaultPath())
 	if herr != nil {

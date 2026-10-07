@@ -7,6 +7,7 @@
 #   FAKE_CODEX_THREAD_ID  thread id for a new thread (synthetic default)
 #   FAKE_CODEX_MESSAGE    agent message text (default "fake codex done")
 #   FAKE_CODEX_ARGV_LOG   if set, argv is written there, one arg per line
+#   FAKE_CODEX_STDIN_LOG  if set and the prompt arg is `-`, stdin is copied there
 #   FAKE_CODEX_HANG_SECONDS  how long `hang` sleeps (default 3600)
 #
 # Honours `exec`, `exec resume <id>|--last`, -C, -s, -m, -c, -o, --json.
@@ -39,14 +40,7 @@ MESSAGE=${FAKE_CODEX_MESSAGE:-fake codex done}
 OUT=""
 DIR=""
 JSON=0
-if [ "$1" = resume ]; then
-	shift
-	case "$1" in
-	--last) THREAD=${FAKE_CODEX_THREAD_ID:-00000000-0000-4000-8000-000000000001}; shift ;;
-	-*) ;;
-	?*) THREAD=$1; shift ;;
-	esac
-fi
+RESUMED=0
 while [ $# -gt 0 ]; do
 	case "$1" in
 	-C|--cd) DIR=$2; shift 2 ;;
@@ -59,6 +53,19 @@ while [ $# -gt 0 ]; do
 	-m|--model|-c|--config|-p|--profile|-a|--ask-for-approval|--add-dir) shift 2 ;;
 	-o|--output-last-message) OUT=$2; shift 2 ;;
 	--json) JSON=1; shift ;;
+	resume)
+		# `exec resume` may follow exec-level flags (the real resume
+		# subcommand takes no -C/-s, so callers put those first).
+		shift
+		if [ "$RESUMED" = 0 ]; then
+			RESUMED=1
+			case "$1" in
+			--last|"") [ "$1" = --last ] && shift ;;
+			-*) ;;
+			*) THREAD=$1; shift ;;
+			esac
+		fi ;;
+	-) [ -n "$FAKE_CODEX_STDIN_LOG" ] && cat > "$FAKE_CODEX_STDIN_LOG"; shift ;;
 	*) shift ;;
 	esac
 done

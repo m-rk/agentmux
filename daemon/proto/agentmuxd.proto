@@ -151,7 +151,10 @@ message ControlResponse {
 
 message CreateInstanceRequest {
   string instance_name = 1;
-  // "claude-code" | "zero" | "opencode" | "kilo" | "amp". "amp" takes none
+  // "claude-code" | "zero" | "opencode" | "kilo" | "amp" | "codex". "codex"
+  // is a headless runner like amp (one `codex exec --json` per turn, started
+  // by `sessions run`); it takes only `model` (passed to `codex -m`) and none
+  // of the provider/resume/compact fields. "amp" takes none
   // of the provider/model/resume/compact fields below: its headless runner
   // (`amp --no-tui --runner-id <id> --remote-control-terminal`) gets its
   // account and model from the signed-in Amp account, and its runner id is
@@ -160,7 +163,7 @@ message CreateInstanceRequest {
   // than ignored.
   string agent = 2;
   string provider = 3;           // zero/opencode/kilo only; "ollama", or a custom provider id
-  string model = 4;               // zero/opencode/kilo only
+  string model = 4;               // zero/opencode/kilo/codex only
   string workdir = 5;             // empty = provisioner default
   string resume_session_id = 6;   // claude-code only; empty = fresh session
   string run_user = 7;            // Linux only; empty = provisioner default

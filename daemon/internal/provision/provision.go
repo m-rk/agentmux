@@ -68,6 +68,8 @@ func defaultInstanceName(agent, workdir string) string {
 		return defaultClaudeCodeInstance
 	case "amp":
 		return defaultAmpInstance
+	case "codex":
+		return defaultCodexInstance
 	}
 	return defaultAgentmuxInstance
 }
@@ -96,6 +98,8 @@ func Create(opts Options) (string, error) {
 	if len(opts.AllowFiles) > 0 && !allowfiles.Supported(opts.Agent) {
 		if opts.Agent == "amp" {
 			msg += "\nnote: amp doesn't restrict file access outside its workdir, so -allow-file is not needed and cannot confine it"
+		} else if opts.Agent == "codex" {
+			msg += "\nnote: codex has no per-file allowlist; -allow-file is stored but not applied (runs are confined by the sandbox mode)"
 		} else {
 			msg += fmt.Sprintf("\nwarning: -allow-file is stored but not applied for the %q agent", opts.Agent)
 		}
@@ -111,8 +115,10 @@ func createForAgent(opts Options) (string, error) {
 		return createAgentmux(opts)
 	case "amp":
 		return createAmp(opts)
+	case "codex":
+		return createCodex(opts)
 	default:
-		return "", fmt.Errorf("unsupported agent %q (want claude-code, zero, opencode, kilo, or amp)", opts.Agent)
+		return "", fmt.Errorf("unsupported agent %q (want claude-code, zero, opencode, kilo, amp, or codex)", opts.Agent)
 	}
 }
 
