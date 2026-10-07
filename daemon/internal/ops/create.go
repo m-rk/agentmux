@@ -380,6 +380,11 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 	if agent == "codex" && len(allow) > 0 {
 		res.Warnings = append(res.Warnings, "codex has no per-file allowlist: -allow-file is stored but not applied; the run is confined to its worktree"+codexAddDirsNote(fields))
 	}
+	if agent == "amp" && created && !req.DryRun {
+		if w := session.AmpToolchainWarning(req.Instance, session.CheckAmpToolchain()); w != "" {
+			res.Warnings = append(res.Warnings, w)
+		}
+	}
 	if baseCommit != "" {
 		res.Base, res.BaseCommit = req.Base, baseCommit
 	} else if req.Base != "" {

@@ -221,3 +221,12 @@ amp has no default-mode setting (checked 2026-10-06: only
 `amp.updates.mode` and `amp.defaultVisibility` exist in its settings
 file, and `-m` is per run). Re-check after each amp upgrade, and use a
 default setting if one appears.
+
+## Toolchain on PATH
+
+Task instances for amp start with the host user's login-shell `PATH` (the
+Go toolchain, ripgrep and anything else their profile adds), with the task
+wrapper directory first. It is set where agentmux creates the instance's
+tmux session, so workers don't need an `export PATH=...` prefix.
+`agentmux sessions create` then runs `go version` and `rg --version` with
+that `PATH` and, if either fails, adds a one-line warning to the result.

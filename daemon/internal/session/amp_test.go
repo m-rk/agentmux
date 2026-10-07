@@ -585,8 +585,9 @@ func TestTaskAmpStubArgsStampsTaskInstancesOnly(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	writeHostModeFile(t, home, "high")
+	defer swapHostLoginPath("/opt/toolchain/bin:/usr/bin")()
 	got := taskAmpStubArgs("task-9", map[string]string{})
-	if len(got) != 4 || got[0] != "-e" || !strings.HasPrefix(got[1], "PATH=") || !strings.HasSuffix(got[1], ":$PATH") {
+	if len(got) != 4 || got[0] != "-e" || !strings.HasPrefix(got[1], "PATH=") || !strings.Contains(got[1], ":/opt/toolchain/bin:") {
 		t.Fatalf("taskAmpStubArgs(task-9) = %q, want the -e PATH pair", got)
 	}
 	if got[2] != "-e" || got[3] != "AGENTMUX_AMP_MODE=high" {
