@@ -266,6 +266,17 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 		return CreateResult{}, err
 	}
 
+	// Task worktrees for repos outside go1com strip agent/AI trailers at
+	// commit time (see installTrailerHook): commits there carry no
+	// Amp-Thread-ID, Co-Authored-By, Claude-Session or Generated-with
+	// trailers (AMUX-64). The hook covers the worktree whether this call
+	// made it or reused one, and a dry run installs nothing.
+	if !req.DryRun {
+		if herr := e.installTrailerHook(ctx, toplevel, wtPath, runUser); herr != nil {
+			return CreateResult{}, herr
+		}
+	}
+
 	if req.DryRun {
 		// A dry run never creates a worktree, branch, instance,
 		// registry entry or env-file: report what would happen. The

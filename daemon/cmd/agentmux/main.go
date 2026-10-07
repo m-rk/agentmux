@@ -65,6 +65,8 @@ func main() {
 		runGatewayCmd(args[1:])
 	case "self-update":
 		runSelfUpdateCmd(args[1:])
+	case "ship-check":
+		runShipCheck(args[1:])
 	case "-h", "--help", "help":
 		printUsage()
 	default:
@@ -140,6 +142,8 @@ Usage:
   agentmux gateway install -capability NAME        (Linux root / macOS user) keep that running as a service
   agentmux self-update install|run|status          pull-based updater for the Mac: install up to the shipped commit (see docs/self-update.md)
   agentmux sessions ship|versions|selfupdate-log   publish the shipped commit, or read what a host runs (see docs/self-update.md)
+  agentmux ship-check [-base BRANCH] [-workdir PATH] <branch>
+                               refuse when the branch carries agent trailers, naming each commit (see docs/gateway.md)
   agentmux deploy begin|end                        hold/release the lock the pull updater skips on
   agentmux help                show this message`)
 }

@@ -150,6 +150,41 @@ from that line. `-json` adds `base` and `base_commit` to the result.
 `-dry-run` checks everything a real create would — including fetching
 `origin/<base>` — but creates nothing; see [Deploy](deploy.md).
 
+### Commit hygiene: no agent trailers (AMUX-64)
+
+Commits in task worktrees carry no agent, AI or `Co-Authored-By` trailers
+outside `go1com` repos (MERG-7's attribution rule). `sessions create`
+enforces that with a `commit-msg` hook instead of hand-stripping at ship
+time: for repos whose origin lives outside the `go1com` GitHub org, the
+create writes a `commit-msg` hook into the worktree's own git dir and
+scopes `core.hooksPath` to it (worktree-scoped, so the main checkout and
+every other worktree keep their own hooks). The hook deletes
+`Amp-Thread-ID`, `Co-Authored-By`, `Claude-Session`, `Generated-With`
+and `Generated with ...` lines, drops the blank lines left behind, chains
+a pre-existing `commit-msg` hook first (preserved as `commit-msg.local`
+in the same dir), and logs one line to stderr when it stripped anything.
+A `go1com` origin skips the install; a dry-run create installs nothing.
+
+The ship-side check is `agentmux ship-check`:
+
+```sh
+agentmux ship-check task-42-feature       # branch past the origin default branch
+agentmux ship-check -base main task-42-feature
+agentmux ship-check -json -workdir /path/to/worktree task-42-feature
+```
+
+It fetches `origin` first (so a stale remote-tracking ref cannot hide a
+trailer that already merged), then refuses — exit 1, naming each
+offending commit hash and subject — when any commit on the branch past
+the base still carries one of those trailers. It also scans the
+worktree's uncommitted changes (staged, unstaged, and untracked files,
+capped at 20 findings) for private hostnames (`*.tail*.ts.net`,
+`*.local`, `*.lan`) and personal home paths (anything but the generic
+`/home/alice` and `/Users/alice` placeholders) and prints those as
+advisory `ship-check privacy:` lines — they never hold the ship, which
+is what review used to catch by hand. `-json` prints
+`{"ok", "trailers": [{"hash", "subject"}], "privacy": [...]}` instead.
+
 ### Pinning a claude model and effort
 
 A claude-code instance is otherwise created with whatever model the account
