@@ -281,10 +281,10 @@ func TestHandleMessageIgnoresBotsOthersAndTestThread(t *testing.T) {
 	l := newListener(t, s)
 	l.Client.Config.TestThreadID = "901"
 	for _, tc := range []struct {
-		id, channel string
-		bot         bool
-	}{{"600", "900", true}, {"601", "900", false}, {"602", "901", false}} {
-		raw, _ := json.Marshal(map[string]any{"id": tc.id, "channel_id": tc.channel, "author": map[string]any{"id": "777", "bot": tc.bot}})
+		id, channel, user string
+		bot               bool
+	}{{"600", "900", "777", true}, {"601", "900", "778", false}, {"602", "901", "777", false}} {
+		raw, _ := json.Marshal(map[string]any{"id": tc.id, "channel_id": tc.channel, "author": map[string]any{"id": tc.user, "bot": tc.bot}})
 		if err := l.HandleMessage(context.Background(), raw); err != nil {
 			t.Fatal(err)
 		}
