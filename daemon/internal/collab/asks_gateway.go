@@ -361,6 +361,13 @@ func (l *Listener) HandleMessage(ctx context.Context, raw json.RawMessage) error
 	if channel.ParentID != l.Client.Config.ForumChannelID {
 		return nil
 	}
+	var forum Channel
+	if err := l.Client.botJSON(ctx, http.MethodGet, "/channels/"+url.PathEscape(l.Client.Config.ForumChannelID), &forum); err != nil {
+		return err
+	}
+	if !l.Client.isAskThread(forum, channel) {
+		return nil
+	}
 	if m.Timestamp.IsZero() {
 		m.Timestamp = time.Now().UTC()
 	}

@@ -294,6 +294,62 @@ func TestHandleMessageIgnoresBotsOthersAndTestThread(t *testing.T) {
 	}
 }
 
+func TestHandleMessageIgnoresNonAskForumThreads(t *testing.T) {
+	a := &answersServer{}
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/channels/900":
+			writeJSON(t, w, Channel{ID: "900", ParentID: "forum", AppliedTags: []string{"t-project"}})
+		case "/api/channels/forum":
+			writeJSON(t, w, Channel{ID: "forum", AvailableTags: []ForumTag{{"t-task", "task"}, {"t-project", "project"}}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer s.Close()
+	l := newListener(t, s)
+	raw, _ := json.Marshal(map[string]any{"id": "600", "channel_id": "900", "author": map[string]any{"id": "777"}})
+	if err := l.HandleMessage(context.Background(), raw); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.puts) != 0 {
+		t.Fatalf("unexpected reactions: %v", a.puts)
+	}
+	if _, err := os.Stat(l.Store.Path + ".inputs"); !os.IsNotExist(err) {
+		t.Fatalf("unexpected input store: %v", err)
+	}
+}
+
+func TestWriteWakeDebouncesSignals(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "asks.wake")
+	wakeMu.Lock()
+	previous := lastWake
+	lastWake = time.Time{}
+	wakeMu.Unlock()
+	t.Cleanup(func() {
+		wakeMu.Lock()
+		lastWake = previous
+		wakeMu.Unlock()
+	})
+	if err := writeWake(path); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeWake(path); err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.ModTime().Equal(second.ModTime()) {
+		t.Fatalf("debounced wake changed mtime: %s -> %s", first.ModTime(), second.ModTime())
+	}
+}
+
 func interactionJSON(t *testing.T, user, parent, customID string) json.RawMessage {
 	raw, err := json.Marshal(map[string]any{
 		"id": "i1", "token": "tok", "type": 3, "channel_id": "900",

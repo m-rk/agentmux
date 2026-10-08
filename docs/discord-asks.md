@@ -348,8 +348,10 @@ still map by label.
   through the normal Discord API. `MESSAGE_CONTENT` (privileged intent) is
   not requested or used. Bot messages, other users, and the configured test
   thread are ignored.
-- **Discord portal:** enable the `GUILD_MESSAGES` Gateway intent for the
-  application. Do not enable `MESSAGE_CONTENT` for this feature.
+- **Discord portal:** `GUILD_MESSAGES` is a non-privileged Gateway intent, so
+  there is no portal toggle for it. `asks serve` requests it when connecting.
+  `MESSAGE_CONTENT` is not requested or used, so it does not need to be
+  enabled.
 - **Permissions:** the bot needs **Create Posts** (new asks), **Send
   Messages in Threads** (`post -thread`), and **Add Reactions** on the forum.
 - Run `asks serve` under a service manager (it exits only on SIGINT/SIGTERM
