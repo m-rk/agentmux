@@ -16,6 +16,12 @@ import (
 // gate as post/reply/read/close; the reaction PUT needs the bot (Add
 // Reactions on the forum) and gets the same one-retry treatment as seeding.
 func (c *Client) ReactAsk(ctx context.Context, threadID, messageID, emoji string) error {
+	return c.ReactAskWithReplace(ctx, threadID, messageID, emoji, false)
+}
+
+// ReactAskWithReplace optionally removes the bot's existing reactions before
+// adding the requested reaction.
+func (c *Client) ReactAskWithReplace(ctx context.Context, threadID, messageID, emoji string, replace bool) error {
 	if _, _, err := c.askThread(ctx, threadID); err != nil {
 		return err
 	}
@@ -25,8 +31,36 @@ func (c *Client) ReactAsk(ctx context.Context, threadID, messageID, emoji string
 	if err := validateReactionEmoji(emoji); err != nil {
 		return err
 	}
+	if replace {
+		if err := c.removeOwnReactions(ctx, threadID, messageID); err != nil {
+			return fmt.Errorf("removing previous bot reactions from Discord message %s: %w", messageID, err)
+		}
+	}
 	if err := c.putReaction(ctx, threadID, messageID, emoji); err != nil {
 		return fmt.Errorf("adding reaction to Discord message %s (the bot needs Add Reactions on the forum): %w", messageID, err)
+	}
+	return nil
+}
+
+func (c *Client) removeOwnReactions(ctx context.Context, channelID, messageID string) error {
+	m, err := c.message(ctx, channelID, messageID)
+	if err != nil {
+		return fmt.Errorf("reading message reactions: %w", err)
+	}
+	for _, reaction := range m.Reactions {
+		if !reaction.Me {
+			continue
+		}
+		emoji := reaction.Emoji.Name
+		if reaction.Emoji.ID != "" {
+			emoji += ":" + reaction.Emoji.ID
+		}
+		if emoji == "" {
+			continue
+		}
+		if err := c.botJSONBody(ctx, http.MethodDelete, emojiPath(channelID, messageID, emoji)+"/@me", nil, nil); err != nil {
+			return fmt.Errorf("removing reaction %q: %w", emoji, err)
+		}
 	}
 	return nil
 }

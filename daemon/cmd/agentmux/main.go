@@ -125,7 +125,7 @@ Usage:
   agentmux asks post -title T -body-file F [-tag NAME ...] [-json]   post an ask that mentions the configured user
   agentmux asks reply -thread ID -body-file F [-mention]
   agentmux asks read -thread ID [-after MESSAGE_ID] [-json]
-  agentmux asks react -thread ID -message ID -emoji EMOJI
+  agentmux asks react -thread ID -message ID -emoji EMOJI [-replace]
   agentmux asks edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL]
   agentmux asks close -thread ID [-tag NAME]
   agentmux asks list [-open|-archived|-all] [-tag NAME] [-since DUR] [-json]

@@ -16,11 +16,13 @@ import (
 type reactEditServer struct {
 	mu      sync.Mutex
 	puts    []string // reaction PUT paths, in order
+	deletes []string // reaction DELETE paths, in order
 	patches []string // message PATCH paths, in order
 	bodies  []map[string]any
 
-	message map[string]any
-	threads map[string]Channel
+	message   map[string]any
+	reactions []MessageReaction
+	threads   map[string]Channel
 }
 
 func (s *reactEditServer) server(t *testing.T) *httptest.Server {
@@ -35,7 +37,7 @@ func (s *reactEditServer) server(t *testing.T) *httptest.Server {
 		s.threads = map[string]Channel{"900": {ID: "900", ParentID: "forum", AppliedTags: []string{"t-ask"}}}
 	}
 	if s.message == nil {
-		s.message = map[string]any{"id": "500", "content": "pick one", "components": []any{
+		s.message = map[string]any{"id": "500", "content": "pick one", "reactions": s.reactions, "components": []any{
 			map[string]any{"type": 1, "components": []any{
 				map[string]any{"type": 2, "style": 2, "label": "Ship it", "custom_id": "ask:Ship it"},
 				map[string]any{"type": 2, "style": 2, "label": "Not now", "custom_id": "ask:Not now"},
@@ -49,6 +51,9 @@ func (s *reactEditServer) server(t *testing.T) *httptest.Server {
 		switch {
 		case r.Method == http.MethodPut && strings.Contains(path, "/reactions/"):
 			s.puts = append(s.puts, path)
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodDelete && strings.Contains(path, "/reactions/"):
+			s.deletes = append(s.deletes, path)
 			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodPatch && strings.Contains(path, "/messages/"):
 			var body map[string]any
@@ -84,6 +89,39 @@ func TestReactAskPutsReaction(t *testing.T) {
 	want := "/api/channels/900/messages/500/reactions/" + url.PathEscape("🤖") + "/@me"
 	if len(s.puts) != 1 || s.puts[0] != want {
 		t.Fatalf("puts = %v, want %s", s.puts, want)
+	}
+}
+
+func TestReactAskReplaceRemovesOnlyOwnReactionsBeforeAdding(t *testing.T) {
+	s := &reactEditServer{reactions: []MessageReaction{
+		{Me: true, Emoji: struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}{Name: "1️⃣"}},
+		{Me: true, Emoji: struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}{ID: "1234", Name: "party"}},
+		{Me: false, Emoji: struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}{Name: "👀"}},
+	}}
+	srv := s.server(t)
+	defer srv.Close()
+	if err := asksClientFor(srv.URL).ReactAskWithReplace(context.Background(), "900", "500", "✅", true); err != nil {
+		t.Fatal(err)
+	}
+	wantDeletes := []string{
+		"/api/channels/900/messages/500/reactions/" + url.PathEscape("1️⃣") + "/@me",
+		"/api/channels/900/messages/500/reactions/" + url.PathEscape("party:1234") + "/@me",
+	}
+	if len(s.deletes) != len(wantDeletes) || s.deletes[0] != wantDeletes[0] || s.deletes[1] != wantDeletes[1] {
+		t.Fatalf("deletes = %v, want %v", s.deletes, wantDeletes)
+	}
+	wantPut := "/api/channels/900/messages/500/reactions/" + url.PathEscape("✅") + "/@me"
+	if len(s.puts) != 1 || s.puts[0] != wantPut {
+		t.Fatalf("puts = %v, want %s", s.puts, wantPut)
 	}
 }
 

@@ -135,7 +135,7 @@ agentmux asks reply -thread ID -body-file F [-mention] [-embeds]
 agentmux asks read -thread ID [-after MESSAGE_ID] -json
 # [{"id","author_id","author_name","author_is_configured_user","text","timestamp","answers":[…]}, …] oldest first
 
-agentmux asks react -thread ID -message ID -emoji 🤖   # bot adds a reaction to a posted message
+agentmux asks react -thread ID -message ID -emoji 🤖 [-replace]   # bot adds a reaction to a posted message
 
 agentmux asks edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL] [-embeds]
 # replace the body and/or settle the buttons: -disable-buttons greys them all
@@ -248,7 +248,8 @@ agentmux asks prune [-thread ID] [-older-than DUR] [-dry-run] [-json]
 - `react` has the bot add one emoji to a posted message (e.g. 🤖 once an
   autopilot or orchestrator has answered the ask outside Discord), so the
   post shows the choice with no person clicking. Needs Add Reactions, like
-  seeding.
+  seeding. `-replace` first removes the bot's existing reactions from that
+  message, leaving reactions from other users untouched.
 - `edit` changes a posted message in place: `-body-file F` (`-` for stdin)
   replaces the text, `-disable-buttons` greys every button out, and
   `-chosen LABEL` keeps that one highlighted (success style, trailing ✓)

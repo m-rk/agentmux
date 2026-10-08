@@ -60,7 +60,7 @@ func asksUsage() {
   agentmux asks post (-title T | -thread ID [-title T]) -body-file F [-tag NAME ...] [-react EMOJI,EMOJI,...] [-button LABEL ...] [-buttons-json FILE] [-embeds] [-json] [-dry-run]
   agentmux asks reply -thread ID -body-file F [-mention] [-embeds] [-dry-run]
   agentmux asks read -thread ID [-after MESSAGE_ID] [-json]
-  agentmux asks react -thread ID -message ID -emoji EMOJI
+  agentmux asks react -thread ID -message ID -emoji EMOJI [-replace]
   agentmux asks edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL] [-embeds]
   agentmux asks tag -thread ID -set "task,working" [-unarchive] [-force] [-unlock]
   agentmux asks close -thread ID [-tag NAME] [-lock] [-unlock]
@@ -426,6 +426,7 @@ func runAsksReact(args []string) error {
 	thread := fs.String("thread", "", "ask thread ID")
 	message := fs.String("message", "", "message ID to react to")
 	emoji := fs.String("emoji", "", "emoji for the bot to add (e.g. 🤖)")
+	replace := fs.Bool("replace", false, "remove the bot's previous reactions on this message first")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -443,7 +444,7 @@ func runAsksReact(args []string) error {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if err := client.ReactTestMessage(ctx, *message, *emoji); err != nil {
+		if err := client.ReactTestMessageWithReplace(ctx, *message, *emoji, *replace); err != nil {
 			return err
 		}
 		fmt.Printf("test thread: reacted %s to message %s in test thread %s.\n", *emoji, *message, test)
@@ -451,7 +452,7 @@ func runAsksReact(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := client.ReactAsk(ctx, *thread, *message, *emoji); err != nil {
+	if err := client.ReactAskWithReplace(ctx, *thread, *message, *emoji, *replace); err != nil {
 		return err
 	}
 	fmt.Printf("Reacted %s to message %s in ask thread %s.\n", *emoji, *message, *thread)

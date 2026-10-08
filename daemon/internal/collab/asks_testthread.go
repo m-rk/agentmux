@@ -137,6 +137,12 @@ func (c *Client) ReplyTestMessage(ctx context.Context, task, body string) (strin
 // worker can test reactions as Discord renders them. Only the test
 // thread's messages are reachable.
 func (c *Client) ReactTestMessage(ctx context.Context, messageID, emoji string) error {
+	return c.ReactTestMessageWithReplace(ctx, messageID, emoji, false)
+}
+
+// ReactTestMessageWithReplace optionally removes the bot's existing reactions
+// before adding the requested reaction.
+func (c *Client) ReactTestMessageWithReplace(ctx context.Context, messageID, emoji string, replace bool) error {
 	thread, err := c.TestThreadID()
 	if err != nil {
 		return err
@@ -146,6 +152,11 @@ func (c *Client) ReactTestMessage(ctx context.Context, messageID, emoji string) 
 	}
 	if err := validateReactionEmoji(emoji); err != nil {
 		return err
+	}
+	if replace {
+		if err := c.removeOwnReactions(ctx, thread, messageID); err != nil {
+			return fmt.Errorf("removing previous bot reactions from Discord test message %s: %w", messageID, err)
+		}
 	}
 	if err := c.putReaction(ctx, thread, messageID, emoji); err != nil {
 		return fmt.Errorf("adding reaction to Discord test message %s (the bot needs Add Reactions on the forum): %w", messageID, err)
