@@ -622,7 +622,7 @@ func runAsksServe(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	l := &collab.Listener{Client: client, Store: &collab.ClickStore{Path: client.ClicksPath}}
+	l := &collab.Listener{Client: client, Store: &collab.ClickStore{Path: client.ClicksPath}, WakePath: client.ClicksPath + ".wake"}
 	return l.Run(ctx)
 }
 

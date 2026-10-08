@@ -72,6 +72,7 @@ func (o EditAskOptions) applyEditEmbedFlag(payload map[string]any) {
 		payload["flags"] = suppressEmbedsFlag
 	}
 }
+
 // ReactionSeedError means the ask was posted but adding the seed reactions
 // failed (typically the bot lacks Add Reactions).
 type ReactionSeedError struct{ Err error }
@@ -258,6 +259,44 @@ type Click struct {
 	Label     string    `json:"label"`
 	UserID    string    `json:"user_id"`
 	Timestamp time.Time `json:"timestamp"`
+}
+
+// Input records metadata for a configured user's typed reply. Message content
+// stays in Discord and is fetched by asks read when MESSAGE_CONTENT is off.
+type Input struct {
+	ThreadID  string    `json:"thread_id"`
+	MessageID string    `json:"message_id"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+func (s *ClickStore) AppendInput(input Input) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	path := s.Path + ".inputs"
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return false, err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		var old Input
+		if json.Unmarshal(sc.Bytes(), &old) == nil && old.MessageID == input.MessageID {
+			return false, nil
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return false, err
+	}
+	line, err := json.Marshal(input)
+	if err != nil {
+		return false, err
+	}
+	_, err = f.Write(append(line, '\n'))
+	return err == nil, err
 }
 
 // ClickStore is an append-only JSONL file shared by the listener (writer)

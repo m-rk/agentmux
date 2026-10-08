@@ -8,6 +8,8 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,6 +24,35 @@ const defaultGatewayURL = "wss://gateway.discord.gg/?v=10&encoding=json"
 // an interaction.
 const interactionAckBudget = 2500 * time.Millisecond
 
+const guildMessagesIntent = 1 << 9
+
+var wakeMu sync.Mutex
+var lastWake time.Time
+
+func writeWake(path string) error {
+	wakeMu.Lock()
+	defer wakeMu.Unlock()
+	now := time.Now()
+	if now.Sub(lastWake) < 300*time.Millisecond {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Chtimes(path, now, now); err != nil {
+		return err
+	}
+	lastWake = now
+	return nil
+}
+
 // Listener holds a Discord gateway connection open and records clicks on ask
 // buttons. Button clicks reach a bot only as INTERACTION_CREATE events, so
 // this is what makes the buttons approach need an always-on process. No
@@ -29,6 +60,7 @@ const interactionAckBudget = 2500 * time.Millisecond
 type Listener struct {
 	Client     *Client
 	Store      *ClickStore
+	WakePath   string
 	GatewayURL string
 	Logf       func(format string, args ...any)
 
@@ -143,7 +175,7 @@ func (l *Listener) session(ctx context.Context) (ready bool, err error) {
 	} else {
 		err = send(2, map[string]any{
 			"token":      l.Client.Config.BotToken,
-			"intents":    0,
+			"intents":    guildMessagesIntent,
 			"properties": map[string]string{"os": "linux", "browser": "agentmux", "device": "agentmux"},
 		})
 	}
@@ -186,6 +218,15 @@ func (l *Listener) session(ctx context.Context) (ready bool, err error) {
 					defer cancel()
 					if err := l.HandleInteraction(ictx, raw); err != nil {
 						l.logf("asks gateway: interaction: %v", err)
+					}
+				}()
+			case "MESSAGE_CREATE":
+				raw := f.D
+				go func() {
+					ictx, cancel := context.WithTimeout(ctx, interactionAckBudget)
+					defer cancel()
+					if err := l.HandleMessage(ictx, raw); err != nil {
+						l.logf("asks gateway: message: %v", err)
 					}
 				}()
 			}
@@ -269,10 +310,82 @@ func (l *Listener) HandleInteraction(ctx context.Context, raw json.RawMessage) e
 		_ = l.respond(ctx, in, 4, map[string]any{"content": "Couldn't record that answer; try again.", "flags": 64})
 		return fmt.Errorf("recording click: %w", err)
 	}
+	if recorded {
+		l.wake()
+	}
 	if !recorded {
 		return l.respond(ctx, in, 4, map[string]any{"content": "This ask already has an answer.", "flags": 64})
 	}
-	return l.respond(ctx, in, 7, map[string]any{"components": settleComponents(in.Message.Components, in.Data.CustomID)})
+	if err := l.respond(ctx, in, 7, map[string]any{"components": settleComponents(in.Message.Components, in.Data.CustomID)}); err != nil {
+		return err
+	}
+	if err := l.Client.putReaction(ctx, in.ChannelID, in.Message.ID, "👀"); err != nil {
+		l.logf("asks gateway: adding received reaction: %v", err)
+	}
+	return nil
+}
+
+type gatewayMessage struct {
+	ID        string    `json:"id"`
+	ChannelID string    `json:"channel_id"`
+	Content   string    `json:"content"`
+	Timestamp time.Time `json:"timestamp"`
+	Author    Author    `json:"author"`
+}
+
+// HandleMessage acknowledges replies by the configured user in the asks
+// forum. Discord remains the source of reply text; this store records only
+// metadata so ask serve can wake promptly without requiring MESSAGE_CONTENT.
+func (l *Listener) HandleMessage(ctx context.Context, raw json.RawMessage) error {
+	var m gatewayMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return err
+	}
+	if m.Author.Bot || m.Author.ID == "" || m.ID == "" || m.ChannelID == "" {
+		return nil
+	}
+	if m.ChannelID == strings.TrimSpace(l.Client.Config.TestThreadID) && l.Client.Config.TestThreadID != "" {
+		return nil
+	}
+	user, err := l.Client.mentionUser()
+	if err != nil {
+		return err
+	}
+	if m.Author.ID != user {
+		return nil
+	}
+	var channel Channel
+	if err := l.Client.botJSON(ctx, http.MethodGet, "/channels/"+url.PathEscape(m.ChannelID), &channel); err != nil {
+		return err
+	}
+	if channel.ParentID != l.Client.Config.ForumChannelID {
+		return nil
+	}
+	if m.Timestamp.IsZero() {
+		m.Timestamp = time.Now().UTC()
+	}
+	added, err := l.Store.AppendInput(Input{ThreadID: m.ChannelID, MessageID: m.ID, Timestamp: m.Timestamp.UTC()})
+	if err != nil || !added {
+		return err
+	}
+	if err := l.Client.putReaction(ctx, m.ChannelID, m.ID, "👀"); err != nil {
+		return err
+	}
+	l.wake()
+	return nil
+}
+
+func (l *Listener) wake() {
+	path := l.WakePath
+	if path == "" && l.Store != nil {
+		path = l.Store.Path + ".wake"
+	}
+	if path == "" {
+		return
+	}
+	if err := writeWake(path); err != nil {
+		l.logf("asks gateway: wake ask serve: %v", err)
+	}
 }
 
 // settleLabel returns the chosen button's label: any existing check marks

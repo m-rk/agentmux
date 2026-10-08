@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -252,6 +253,47 @@ func TestClickStoreFirstClickWins(t *testing.T) {
 	}
 }
 
+func TestHandleMessageAcknowledgesConfiguredUserAndStoresMetadata(t *testing.T) {
+	a := &answersServer{}
+	s := a.server(t)
+	defer s.Close()
+	l := newListener(t, s)
+	raw, _ := json.Marshal(map[string]any{"id": "600", "channel_id": "900", "content": "private reply", "timestamp": "2026-10-08T00:00:00Z", "author": map[string]any{"id": "777"}})
+	if err := l.HandleMessage(context.Background(), raw); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.puts) != 1 || !strings.Contains(a.puts[0], "/messages/600/reactions/%F0%9F%91%80/@me") {
+		t.Fatalf("reactions = %v", a.puts)
+	}
+	inputs, err := os.ReadFile(l.Store.Path + ".inputs")
+	if err != nil || strings.Contains(string(inputs), "private reply") || !strings.Contains(string(inputs), `"message_id":"600"`) {
+		t.Fatalf("inputs = %s, %v", inputs, err)
+	}
+	if _, err := os.Stat(l.Store.Path + ".wake"); err != nil {
+		t.Fatalf("wake not written: %v", err)
+	}
+}
+
+func TestHandleMessageIgnoresBotsOthersAndTestThread(t *testing.T) {
+	a := &answersServer{}
+	s := a.server(t)
+	defer s.Close()
+	l := newListener(t, s)
+	l.Client.Config.TestThreadID = "901"
+	for _, tc := range []struct {
+		id, channel string
+		bot         bool
+	}{{"600", "900", true}, {"601", "900", false}, {"602", "901", false}} {
+		raw, _ := json.Marshal(map[string]any{"id": tc.id, "channel_id": tc.channel, "author": map[string]any{"id": "777", "bot": tc.bot}})
+		if err := l.HandleMessage(context.Background(), raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(a.puts) != 0 {
+		t.Fatalf("unexpected reactions: %v", a.puts)
+	}
+}
+
 func interactionJSON(t *testing.T, user, parent, customID string) json.RawMessage {
 	raw, err := json.Marshal(map[string]any{
 		"id": "i1", "token": "tok", "type": 3, "channel_id": "900",
@@ -288,6 +330,9 @@ func TestHandleInteractionRecordsAndDisablesButtons(t *testing.T) {
 	}
 	if a.cbPaths[0] != "/api/interactions/i1/tok/callback" || a.callbacks[0]["type"] != float64(7) {
 		t.Fatalf("callback = %v %#v", a.cbPaths, a.callbacks)
+	}
+	if len(a.puts) != 1 || !strings.Contains(a.puts[0], "/reactions/%F0%9F%91%80/@me") {
+		t.Fatalf("ack reactions = %v", a.puts)
 	}
 	row := a.callbacks[0]["data"].(map[string]any)["components"].([]any)[0].(map[string]any)["components"].([]any)
 	chosen, other := row[0].(map[string]any), row[1].(map[string]any)
@@ -375,7 +420,7 @@ func TestListenerGatewayHandshake(t *testing.T) {
 	select {
 	case f := <-identified:
 		d := f["d"].(map[string]any)
-		if f["op"] != float64(2) || d["intents"] != float64(0) || d["token"] != "read-token" {
+		if f["op"] != float64(2) || d["intents"] != float64(guildMessagesIntent) || d["token"] != "read-token" {
 			t.Fatalf("identify = %#v", f)
 		}
 	case <-time.After(3 * time.Second):

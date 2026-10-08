@@ -329,7 +329,8 @@ can't send interactive components. Discord delivers a click only as an
 interaction that must be acked within 3 seconds, so something must hold a
 Gateway connection open: `agentmux asks serve`. It records the click in
 `~/.local/state/agentmux/asks/clicks.jsonl` (`read` reads the same file, so
-run `serve` and `read` as the same user) and acks by editing the message:
+run `serve` and `read` as the same user), adds 👀 to the ask as a receipt, and
+touches the sibling `clicks.jsonl.wake` signal for ask serve. It acks by editing the message:
 every button is disabled and the chosen one turns green with a trailing ✓
 (`[emoji label ✓]`), keeping
 each button's emoji and style. A click
@@ -340,9 +341,17 @@ nothing: test buttons can never answer a real ask. The first click wins. `asks e
 `disabled`, `style` and the trailing ✓ change, so emoji survive and clicks
 still map by label.
 
-- **Permissions:** the bot needs **Create Posts** (new asks) and **Send
-  Messages in Threads** (`post -thread`) on the forum, in addition to what
-  reactions need if used together. No privileged Gateway intents are needed.
+- **Typed replies:** `asks serve` subscribes to `GUILD_MESSAGES` (intent bit
+  512), which is non-privileged. It reacts 👀 to messages from the configured
+  user in threads under the configured forum, and records only thread ID,
+  message ID and time in `clicks.jsonl.inputs`. Ask serve reads message text
+  through the normal Discord API. `MESSAGE_CONTENT` (privileged intent) is
+  not requested or used. Bot messages, other users, and the configured test
+  thread are ignored.
+- **Discord portal:** enable the `GUILD_MESSAGES` Gateway intent for the
+  application. Do not enable `MESSAGE_CONTENT` for this feature.
+- **Permissions:** the bot needs **Create Posts** (new asks), **Send
+  Messages in Threads** (`post -thread`), and **Add Reactions** on the forum.
 - Run `asks serve` under a service manager (it exits only on SIGINT/SIGTERM
   and reconnects with backoff on its own). For example a systemd user unit:
 
