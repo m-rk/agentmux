@@ -369,14 +369,14 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 	}
 	// A codex task instance gets the template's extra writable directories
 	// (the task-note vault, the orchestrator state dir) plus the repo's
-	// shared git dir, so it can commit in its worktree: a commit writes the
-	// worktree's own git dir, the shared object store and the branch ref,
-	// all of which sit outside the worktree. Nothing else outside the
-	// worktree is granted.
+	// git dir's writable parts, so it can commit in its worktree: a commit
+	// writes the worktree's own git dir, the shared object store and the
+	// branch ref, all of which sit outside the worktree. Nothing else
+	// outside the worktree is granted.
 	if agent == "codex" {
 		dirs := session.CodexAddDirs(fields[session.CodexAddDirsKey])
-		if gd := e.codexGitDir(ctx, wtPath, req.DryRun); gd != "" {
-			dirs = appendUnique(dirs, gd)
+		for _, d := range e.codexGitDirs(ctx, wtPath, req.DryRun) {
+			dirs = appendUnique(dirs, d)
 		}
 		if len(dirs) > 0 {
 			fields[session.CodexAddDirsKey] = strings.Join(dirs, ",")
@@ -598,21 +598,40 @@ func resolvePath(p string) string {
 	return p
 }
 
-// codexGitDir returns the absolute shared git dir of the repo the task
-// worktree belongs to ("" when it cannot be resolved or on a dry run, where
-// the worktree does not exist).
-func (e Env) codexGitDir(ctx context.Context, wtPath string, dryRun bool) string {
+// codexGitDirs returns the absolute git directories a codex worker must
+// write to commit in the task worktree: the worktree's own admin dir and the
+// shared objects, refs and logs dirs (nil when they cannot be resolved or on
+// a dry run, where the worktree does not exist). Codex's workspace-write
+// sandbox keeps a directory named .git read-only even when it is a writable
+// root, so granting the shared .git itself does not work (AMUX-65); its
+// subdirectories do, and leave config and hooks read-only, so a worker still
+// cannot rewrite config or plant a hook.
+func (e Env) codexGitDirs(ctx context.Context, wtPath string, dryRun bool) []string {
 	if dryRun {
-		return ""
+		return nil
 	}
-	gd, err := e.git(ctx, wtPath, "rev-parse", "--git-common-dir")
-	if err != nil || gd == "" {
-		return ""
+	abs := func(arg string) string {
+		d, err := e.git(ctx, wtPath, "rev-parse", arg)
+		if err != nil || d == "" {
+			return ""
+		}
+		if !filepath.IsAbs(d) {
+			d = filepath.Join(wtPath, d)
+		}
+		return filepath.Clean(d)
 	}
-	if !filepath.IsAbs(gd) {
-		gd = filepath.Join(wtPath, gd)
+	common := abs("--git-common-dir")
+	if common == "" {
+		return nil
 	}
-	return filepath.Clean(gd)
+	var dirs []string
+	if own := abs("--git-dir"); own != "" && own != common {
+		dirs = append(dirs, own)
+	}
+	for _, sub := range []string{"objects", "refs", "logs"} {
+		dirs = append(dirs, filepath.Join(common, sub))
+	}
+	return dirs
 }
 
 func appendUnique(list []string, v string) []string {

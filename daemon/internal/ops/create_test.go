@@ -641,8 +641,10 @@ func TestCreateCodexCarriesAddDirsAndWarnsOnAllowFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The template's dirs plus the repo's shared git dir (commits need it).
-	wantDirs := "/vault/tasks," + filepath.Join(c.repo, ".git")
+	// The template's dirs plus the git dirs a commit writes: never the
+	// shared .git itself, which codex's sandbox keeps read-only.
+	git := filepath.Join(c.repo, ".git")
+	wantDirs := strings.Join([]string{"/vault/tasks", filepath.Join(git, "worktrees", filepath.Base(res.Workdir)), filepath.Join(git, "objects"), filepath.Join(git, "refs"), filepath.Join(git, "logs")}, ",")
 	if fields[session.CodexAddDirsKey] != wantDirs {
 		t.Errorf("add-dirs = %q, want %q", fields[session.CodexAddDirsKey], wantDirs)
 	}
