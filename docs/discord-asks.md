@@ -191,7 +191,10 @@ agentmux asks prune [-thread ID] [-older-than DUR] [-dry-run] [-json]
 - `-body-file -` reads the body from stdin. Bodies are limited to 2000
   characters including the mention.
 - `post` applies `task` and `needs me` plus any `-tag`s (Discord allows five
-  per post), and opens the body with `<@user>`. A `-tag` naming a state tag
+  per post). Put `{{mention}}` in the call-to-action sentence to place `<@user>`
+  there. If omitted, agentmux puts the mention at the start of the body's last
+  paragraph. A post that should not ping anyone must use a non-mentioning path.
+  A `-tag` naming a state tag
   (e.g. `-tag blocked`) replaces the default `needs me`; type and project
   tags are kept alongside. New posts also get the longest auto-archive
   duration (7 days), so live task threads stay open.

@@ -132,12 +132,12 @@ func TestPostAskWithButtonsUsesBot(t *testing.T) {
 	a := &answersServer{}
 	s := a.server(t)
 	defer s.Close()
-	thread, msg, err := asksClientFor(s.URL).PostAsk(context.Background(), "T", "pick", nil, AskOptions{Buttons: []AskButton{{Label: "Ship it"}, {Label: "Not now"}}})
+	thread, msg, err := asksClientFor(s.URL).PostAsk(context.Background(), "T", "Context first.\n\npick", nil, AskOptions{Buttons: []AskButton{{Label: "Ship it"}, {Label: "Not now"}}})
 	if err != nil || thread != "900" || msg != "900" {
 		t.Fatalf("got %q %q %v", thread, msg, err)
 	}
 	m := a.botPosts[0]["message"].(map[string]any)
-	if !strings.HasPrefix(m["content"].(string), "<@777>\n") {
+	if m["content"] != "Context first.\n\n<@777> pick" {
 		t.Fatalf("content = %v", m["content"])
 	}
 	row := m["components"].([]any)[0].(map[string]any)["components"].([]any)

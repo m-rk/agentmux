@@ -71,7 +71,7 @@ func TestPostAskMentionsOnlyConfiguredUser(t *testing.T) {
 		t.Fatalf("got %q %q %v", thread, msg, err)
 	}
 	p := f.hook[0]
-	if !strings.HasPrefix(p["content"].(string), "<@777>\n") {
+	if p["content"] != "<@777> Please decide @everyone <@888>" {
 		t.Fatalf("content = %q", p["content"])
 	}
 	am := p["allowed_mentions"].(map[string]any)
@@ -111,7 +111,7 @@ func TestReplyAskMention(t *testing.T) {
 	if _, ok := f.hook[0]["allowed_mentions"].(map[string]any)["users"]; ok || strings.Contains(f.hookQ[0], "thread_id=900") == false {
 		t.Fatalf("plain reply = %#v %s", f.hook[0], f.hookQ[0])
 	}
-	if !strings.HasPrefix(f.hook[1]["content"].(string), "<@777>") {
+	if f.hook[1]["content"] != "<@777> ping" {
 		t.Fatalf("mention reply = %#v", f.hook[1])
 	}
 }
@@ -185,7 +185,7 @@ func TestPostAskInThreadReopensAndMentions(t *testing.T) {
 	f := &fakeAsks{}
 	s := f.server(t, map[string]Channel{"900": {ID: "900", ParentID: "forum", AppliedTags: []string{"t-task", "t-answered", "t-proj"}}}, nil)
 	defer s.Close()
-	id, err := asksClientFor(s.URL).PostAskInThread(context.Background(), "900", "MERG-4 combine tasks", "next question @everyone", nil, AskOptions{})
+	id, err := asksClientFor(s.URL).PostAskInThread(context.Background(), "900", "MERG-4 combine tasks", "Context first.\n\nnext question @everyone", nil, AskOptions{})
 	if err != nil || id != "500" {
 		t.Fatalf("got %q %v", id, err)
 	}
@@ -196,7 +196,7 @@ func TestPostAskInThreadReopensAndMentions(t *testing.T) {
 	if f.patched["archived"] != false || f.patched["auto_archive_duration"] != float64(10080) || f.patched["name"] != "MERG-4 combine tasks" {
 		t.Fatalf("patched = %#v", f.patched)
 	}
-	if len(f.hook) != 1 || !strings.Contains(f.hookQ[0], "thread_id=900") || !strings.HasPrefix(f.hook[0]["content"].(string), "<@777>\n") {
+	if len(f.hook) != 1 || !strings.Contains(f.hookQ[0], "thread_id=900") || f.hook[0]["content"] != "Context first.\n\n<@777> next question @everyone" {
 		t.Fatalf("hook = %#v %v", f.hook, f.hookQ)
 	}
 	am := f.hook[0]["allowed_mentions"].(map[string]any)

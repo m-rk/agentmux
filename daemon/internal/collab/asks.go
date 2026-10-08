@@ -216,7 +216,18 @@ func (c *Client) mentionPayload(user string, mention bool) map[string]any {
 func askContent(user string, mention bool, body string) (string, error) {
 	body = strings.TrimSpace(body)
 	if mention {
-		body = "<@" + user + ">\n" + body
+		mentionText := "<@" + user + ">"
+		if strings.Contains(body, "{{mention}}") {
+			body = strings.ReplaceAll(body, "{{mention}}", mentionText)
+		} else {
+			// Existing callers need no placeholder: put the mention at the
+			// start of the final paragraph, where a call to action belongs.
+			if i := strings.LastIndex(body, "\n\n"); i >= 0 {
+				body = body[:i+2] + mentionText + " " + strings.TrimLeft(body[i+2:], "\n")
+			} else {
+				body = mentionText + " " + body
+			}
+		}
 	}
 	if strings.TrimSpace(body) == "" {
 		return "", fmt.Errorf("body is empty")

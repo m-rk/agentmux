@@ -14,15 +14,15 @@ func previewClient() *Client {
 var previewTags = []string{"task", "needs me", "mergentic", "done"}
 
 func TestPreviewPostPrintsPayload(t *testing.T) {
-	p, err := previewClient().PreviewPost("Launch X?", "Please decide", []string{"mergentic"}, AskOptions{}, previewTags)
+	p, err := previewClient().PreviewPost("Launch X?", "Context first.\n\nPlease decide.", []string{"mergentic"}, AskOptions{}, previewTags)
 	if err != nil {
 		t.Fatalf("PreviewPost: %v", err)
 	}
 	if p.Kind != "post" || p.Title != "Launch X?" {
 		t.Fatalf("preview = %+v", p)
 	}
-	if !strings.HasPrefix(p.Content, "<@777>\n") {
-		t.Fatalf("content = %q, want the mention first", p.Content)
+	if p.Content != "Context first.\n\n<@777> Please decide." {
+		t.Fatalf("content = %q, want mention on final paragraph", p.Content)
 	}
 	out := p.Format()
 	for _, want := range []string{"dry-run: would send post", "title: Launch X?", "<@777>", "tags: task, mergentic, needs me"} {
@@ -52,11 +52,28 @@ func TestPreviewReplyMention(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreviewReply: %v", err)
 	}
-	if !strings.HasPrefix(p.Content, "<@777>\n") || p.ThreadID != "123" {
+	if p.Content != "<@777> done" || p.ThreadID != "123" {
 		t.Fatalf("preview = %+v", p)
 	}
 	if out := p.Format(); !strings.Contains(out, "would send reply to thread 123") {
 		t.Fatalf("formatted reply missing the thread:\n%s", out)
+	}
+}
+
+func TestAskContentMentionPlaceholder(t *testing.T) {
+	got, err := askContent("777", true, "Intro\n\n{{mention}} please pick an option below.")
+	if err != nil || got != "Intro\n\n<@777> please pick an option below." {
+		t.Fatalf("askContent = %q, %v", got, err)
+	}
+}
+
+func TestAskContentMentionFallbackUsesLastParagraph(t *testing.T) {
+	got, err := askContent("777", true, "Intro\n\nContext\n\nPlease choose.")
+	if err != nil || got != "Intro\n\nContext\n\n<@777> Please choose." {
+		t.Fatalf("askContent = %q, %v", got, err)
+	}
+	if strings.HasPrefix(got, "<@777>") {
+		t.Fatalf("mention starts first line: %q", got)
 	}
 }
 
