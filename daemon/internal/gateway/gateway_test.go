@@ -85,6 +85,10 @@ func (f *fakeBackend) Create(_ context.Context, req ops.CreateRequest) (ops.Crea
 	}, nil
 }
 
+func (f *fakeBackend) AddRunner(_ context.Context, req ops.RunnerAddRequest) (ops.RunnerAddResult, error) {
+	return ops.RunnerAddResult{Name: req.Name, Agent: req.Agent, DryRun: req.DryRun}, nil
+}
+
 func (f *fakeBackend) Run(_ context.Context, req ops.RunRequest) (ops.RunResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

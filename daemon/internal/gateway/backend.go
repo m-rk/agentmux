@@ -18,6 +18,7 @@ type Backend interface {
 	Read(ctx context.Context, addr, cursor string, limit int) (transcript.Page, error)
 	Send(ctx context.Context, req ops.SendRequest) ops.SendResult
 	Create(ctx context.Context, req ops.CreateRequest) (ops.CreateResult, error)
+	AddRunner(ctx context.Context, req ops.RunnerAddRequest) (ops.RunnerAddResult, error)
 	Run(ctx context.Context, req ops.RunRequest) (ops.RunResult, error)
 	Retire(ctx context.Context, req ops.RetireRequest) (ops.RetireResult, error)
 	GC(ctx context.Context, req ops.GCRequest) (ops.GCResult, error)
@@ -54,6 +55,10 @@ func (b LocalBackend) Send(ctx context.Context, req ops.SendRequest) ops.SendRes
 
 func (b LocalBackend) Create(ctx context.Context, req ops.CreateRequest) (ops.CreateResult, error) {
 	return b.Env.Create(ctx, req)
+}
+
+func (b LocalBackend) AddRunner(ctx context.Context, req ops.RunnerAddRequest) (ops.RunnerAddResult, error) {
+	return b.Env.AddRunner(ctx, req)
 }
 
 func (b LocalBackend) Run(ctx context.Context, req ops.RunRequest) (ops.RunResult, error) {

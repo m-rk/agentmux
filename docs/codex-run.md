@@ -73,6 +73,17 @@ in the template's value). Codex's workspace-write also makes the
 system temp directory writable. Task instances carry the liveguard identity, so
 they cannot reach live Discord or the live daemon.
 
+`agentmux sessions template add -from INSTANCE@HOST -agent codex` creates a
+Codex instance for the same project, workdir and run user as the source. An
+optional host default in `~/.config/agentmux/codex.yaml` has this shape:
+
+```yaml
+add_dirs:
+  - /home/alice/shared-work
+```
+
+Those directories are added to the runner's writable directories.
+
 ### Committing from the sandbox
 
 Codex (0.160.x) workspace-write keeps any directory named `.git` read-only

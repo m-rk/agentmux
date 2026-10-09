@@ -23,20 +23,21 @@ const DefaultPort = 4288
 
 // Operations, as named in the app capability's "ops" lists.
 const (
-	OpList    = "list"
-	OpStatus  = "status"
-	OpThreads = "threads"
-	OpRead    = "read"
-	OpSend    = "send"
-	OpCreate  = "create"
-	OpRun     = "run"
-	OpRetire  = "retire"
-	OpGC      = "gc"
-	OpEvents  = "events" // reserved for phase 5
+	OpList        = "list"
+	OpStatus      = "status"
+	OpThreads     = "threads"
+	OpRead        = "read"
+	OpSend        = "send"
+	OpCreate      = "create"
+	OpTemplateAdd = "template-add"
+	OpRun         = "run"
+	OpRetire      = "retire"
+	OpGC          = "gc"
+	OpEvents      = "events" // reserved for phase 5
 )
 
 // Ops lists every operation a capability may name.
-var Ops = []string{OpList, OpStatus, OpThreads, OpRead, OpSend, OpCreate, OpRun, OpRetire, OpGC, OpEvents, OpShipPublish, OpVersions, OpSelfUpdateLog}
+var Ops = []string{OpList, OpStatus, OpThreads, OpRead, OpSend, OpCreate, OpTemplateAdd, OpRun, OpRetire, OpGC, OpEvents, OpShipPublish, OpVersions, OpSelfUpdateLog}
 
 // Path is the URL path for op, e.g. /v1/send.
 func Path(op string) string { return "/v1/" + op }
@@ -124,6 +125,14 @@ type CreateRequest struct {
 // CreateResponse is the session plus branch and created; a refusal is a
 // non-2xx ErrorResponse.
 type CreateResponse = ops.CreateResult
+
+type TemplateAddRequest struct {
+	From   string `json:"from"`
+	Agent  string `json:"agent,omitempty"`
+	Name   string `json:"name,omitempty"`
+	DryRun bool   `json:"dry_run,omitempty"`
+}
+type TemplateAddResponse = ops.RunnerAddResult
 
 // RunRequest starts an amp thread on the host (Thread "" in Address) or
 // continues one. Text is the prompt; Title names the thread and is

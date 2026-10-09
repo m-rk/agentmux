@@ -205,6 +205,32 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, a *access) {
 		}
 		a.target = clip(req.Instance + "@" + s.backend.Host())
 		s.createOp(w, r, a, id, req)
+	case gatewayapi.OpTemplateAdd:
+		var req gatewayapi.TemplateAddRequest
+		if !s.decode(w, a, body, &req, false) {
+			return
+		}
+		a.target = clip(req.From)
+		addr, err := address.Parse(req.From)
+		if err != nil || addr.Host != s.backend.Host() {
+			s.refuse(w, a, http.StatusBadRequest, safesend.ReasonInvalid, "from must address an instance on this host")
+			return
+		}
+		if !sessionAllowed(id.Grants, op, addr.Session().String()) {
+			s.refuse(w, a, http.StatusForbidden, safesend.ReasonForbidden, "template add is not permitted")
+			return
+		}
+		if !s.send.allow(a.principal) {
+			s.rateLimited(w, a, s.send.limit)
+			return
+		}
+		res, err := s.backend.AddRunner(r.Context(), ops.RunnerAddRequest{From: req.From, Agent: req.Agent, Name: req.Name, DryRun: req.DryRun})
+		if err != nil {
+			e := ops.AsError(err)
+			s.refuse(w, a, gatewayapi.HTTPStatus(e.Reason), e.Reason, e.Detail)
+			return
+		}
+		s.reply(w, a, http.StatusOK, res)
 	case gatewayapi.OpSend:
 		var req gatewayapi.SendRequest
 		if !s.decode(w, a, body, &req, false) {

@@ -89,6 +89,12 @@ func (c *Client) Create(ctx context.Context, req gatewayapi.CreateRequest) (gate
 	return out, err
 }
 
+func (c *Client) AddRunner(ctx context.Context, req gatewayapi.TemplateAddRequest) (gatewayapi.TemplateAddResponse, error) {
+	var out gatewayapi.TemplateAddResponse
+	err := c.call(ctx, gatewayapi.OpTemplateAdd, CreateTimeout, req, &out)
+	return out, err
+}
+
 // RunTimeout bounds a run: the server's own runTimeout plus the round trip.
 const RunTimeout = 4 * time.Minute
 

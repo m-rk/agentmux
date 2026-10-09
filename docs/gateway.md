@@ -59,7 +59,8 @@ placeholder.
       "example.com/cap/agentmux-gateway": [
         {"ops": ["list", "read", "status", "threads"], "sessions": ["*@*"]},
         {"ops": ["send"], "sessions": ["web*@*"]},
-        {"ops": ["create"], "sessions": ["task-*@build-box"]}
+        {"ops": ["create"], "sessions": ["task-*@build-box"]},
+        {"ops": ["template-add"], "sessions": ["*@build-box"]}
       ]
     }
   }
@@ -70,7 +71,7 @@ Each entry of the array is a grant object:
 
 | field      | meaning |
 |------------|---------|
-| `ops`      | any of `list`, `status`, `threads`, `read`, `send`, `create`, `run`, `retire`, `gc`, `events`, `ship-publish`, `versions`, `selfupdate-log` |
+| `ops`      | any of `list`, `status`, `threads`, `read`, `send`, `create`, `template-add`, `run`, `retire`, `gc`, `events`, `ship-publish`, `versions`, `selfupdate-log` |
 | `sessions` | `path.Match` patterns over `<instance>@<host>`; `*` does not match `/` |
 
 Entries add up: a call is allowed if any one entry allows it. There is no
@@ -80,6 +81,10 @@ the names it may create (`task-*@build-box` above). The same holds for
 `retire` (ends a session and deletes its branch) and `gc` (deletes retired
 leftovers host-wide). `ip: tcp:4288` is the network path; the `app` capability is the
 authorization.
+
+`template-add` provisions a same-project runner from an existing instance;
+the grant is checked against the source instance address and should be limited
+to the hosts and source instances that may be used for onboarding.
 
 ## Starting a task session
 

@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,20 +24,21 @@ import (
 // lives on — deliberately not pb.Instance itself, so the -json output shape
 // stays stable even if the proto gains internal-only fields later.
 type listRow struct {
-	Host             string         `json:"host"`
-	Address          string         `json:"address"` // <instance>@<host>; see internal/address
-	Name             string         `json:"name"`
-	Agent            string         `json:"agent"`
-	Provider         string         `json:"provider"`
-	Model            string         `json:"model"`
-	Status           string         `json:"status"`
-	Workdir          string         `json:"workdir"`
-	Project          string         `json:"project"` // empty for tcp:// hosts, whose workdir isn't local
+	Host             string          `json:"host"`
+	Address          string          `json:"address"` // <instance>@<host>; see internal/address
+	Name             string          `json:"name"`
+	Agent            string          `json:"agent"`
+	Provider         string          `json:"provider"`
+	Model            string          `json:"model"`
+	Status           string          `json:"status"`
+	Workdir          string          `json:"workdir"`
+	Project          string          `json:"project"` // empty for tcp:// hosts, whose workdir isn't local
+	ProjectAgents    []string        `json:"project_agents,omitempty"`
 	AmpMode          ops.AmpModeInfo `json:"amp_mode,omitempty"`
-	TmuxSession      string         `json:"tmux_session"`
-	Pid              int64          `json:"pid"`
-	LastActivityUnix int64          `json:"last_activity_unix"`
-	StartedAtUnix    int64          `json:"started_at_unix"`
+	TmuxSession      string          `json:"tmux_session"`
+	Pid              int64           `json:"pid"`
+	LastActivityUnix int64           `json:"last_activity_unix"`
+	StartedAtUnix    int64           `json:"started_at_unix"`
 }
 
 // runListCmd is `agentmux list`: a headless, scriptable counterpart to the
@@ -72,6 +74,24 @@ func runListCmd(args []string) {
 	}
 
 	rows, errs := collectRows(hosts)
+	projectAgents := map[string]map[string]bool{}
+	for _, r := range rows {
+		if r.Project == "" {
+			continue
+		}
+		k := r.Host + "\x00" + r.Project
+		if projectAgents[k] == nil {
+			projectAgents[k] = map[string]bool{}
+		}
+		projectAgents[k][r.Agent] = true
+	}
+	for i := range rows {
+		k := rows[i].Host + "\x00" + rows[i].Project
+		for a := range projectAgents[k] {
+			rows[i].ProjectAgents = append(rows[i].ProjectAgents, a)
+		}
+		sort.Strings(rows[i].ProjectAgents)
+	}
 
 	if *jsonOut {
 		enc := json.NewEncoder(os.Stdout)
