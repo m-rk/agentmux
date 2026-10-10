@@ -31,6 +31,7 @@ type selfUpdateHostConfig struct {
 	MergenticBin  string // where the built mergentic binary installs (~/.local/bin)
 	AgentsBinDir  string // extra dir receiving the mergentic binary (the agents local bin)
 	GatewaySocket string // daemon socket for the post-install smoke check
+	GoBin         string // absolute Go executable used for vet and build
 }
 
 // selfUpdateUsage is the command's help.
@@ -80,6 +81,7 @@ func defineSelfUpdateConfigFlags(fs *flag.FlagSet, cfg *selfUpdateHostConfig) {
 	fs.StringVar(&cfg.MergenticBin, "mergentic-bin", "", "where the built mergentic binary installs")
 	fs.StringVar(&cfg.AgentsBinDir, "agents-bin-dir", "", "extra dir receiving the mergentic binary")
 	fs.StringVar(&cfg.GatewaySocket, "socket", "", "daemon socket for the post-install smoke check")
+	fs.StringVar(&cfg.GoBin, "go-bin", "", "Go executable used for vet and build")
 }
 
 // resolveSelfUpdateConfig fills every still-empty field of cfg, first
@@ -126,6 +128,9 @@ func resolveSelfUpdateConfig(cfg selfUpdateHostConfig) selfUpdateHostConfig {
 		if cfg.GatewaySocket == "" {
 			cfg.GatewaySocket = daemoninstall.SocketPath()
 		}
+	}
+	if cfg.GoBin == "" {
+		cfg.GoBin = os.Getenv("AGENTMUX_SELF_UPDATE_GO_BIN")
 	}
 	return cfg
 }
@@ -177,6 +182,11 @@ func runSelfUpdateInstall(args []string) {
 	if cfg.AgentmuxURL == "" || cfg.MergenticURL == "" {
 		log.Fatal("self-update install: -agentmux-url and -mergentic-url are required (or AGENTMUX_SELF_UPDATE_*_URL)")
 	}
+	goBin, err := resolveSelfUpdateGo(cfg.GoBin, os.Getenv("PATH"))
+	if err != nil {
+		log.Fatalf("self-update install: %v", err)
+	}
+	cfg.GoBin = goBin
 	home, err := os.UserHomeDir()
 	if err != nil {
 		log.Fatalf("self-update install: %v", err)
@@ -260,6 +270,10 @@ func selfUpdateOneRepo(home string, cfg selfUpdateHostConfig, r selfUpdateRepo, 
 		}
 		return string(out), nil
 	}
+	goBin, err := resolveSelfUpdateGo(cfg.GoBin, os.Getenv("PATH"))
+	if err != nil {
+		return recordFail(home, r.name, wantSHA, err.Error())
+	}
 	if _, err := os.Stat(filepath.Join(r.dir, ".git")); err != nil {
 		if _, err := run("", "git", "clone", r.url, r.dir); err != nil {
 			return recordFail(home, r.name, wantSHA, fmt.Sprintf("clone: %v", err))
@@ -283,9 +297,10 @@ func selfUpdateOneRepo(home string, cfg selfUpdateHostConfig, r selfUpdateRepo, 
 		return recordFail(home, r.name, wantSHA, fmt.Sprintf("worktree: %v", err))
 	}
 	defer run(r.dir, "git", "worktree", "remove", "--force", workdir)
-	if out, err := run(workdir, "go", "vet", "./..."); err != nil {
+	if out, err := run(workdir, goBin, "vet", "./..."); err != nil {
 		return recordFail(home, r.name, wantSHA, fmt.Sprintf("go vet: %v: %s", err, strings.TrimSpace(out)))
 	}
+	cfg.GoBin = goBin
 	bin, err := selfUpdateBuild(r.name, cfg, workdir, run)
 	if err != nil {
 		return recordFail(home, r.name, wantSHA, err.Error())
@@ -305,7 +320,11 @@ func selfUpdateBuild(repo string, cfg selfUpdateHostConfig, workdir string, run 
 		pkg = "./cmd/mergentic"
 	}
 	out := filepath.Join(workdir, "self-update-build", repo)
-	if out, err := run(workdir, "go", "build", "-o", out, pkg); err != nil {
+	goBin, err := resolveSelfUpdateGo(cfg.GoBin, os.Getenv("PATH"))
+	if err != nil {
+		return "", err
+	}
+	if out, err := run(workdir, goBin, "build", "-o", out, pkg); err != nil {
 		return "", fmt.Errorf("go build %s: %w: %s", pkg, err, strings.TrimSpace(out))
 	}
 	_ = cfg

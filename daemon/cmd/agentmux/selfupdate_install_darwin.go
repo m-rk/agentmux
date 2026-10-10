@@ -16,6 +16,11 @@ import (
 // Like `agentmux daemon install` on macOS, it must not run as root: the
 // checkouts, bins and state are all per-user.
 func installSelfUpdateSchedule(home, bin string, cfg selfUpdateHostConfig, print bool) error {
+	goBin, err := resolveSelfUpdateGo(cfg.GoBin, os.Getenv("PATH"))
+	if err != nil {
+		return fmt.Errorf("self-update install: %w", err)
+	}
+	cfg.GoBin = goBin
 	logDir := filepath.Join(home, ".agentmux", "log")
 	plist := renderSelfUpdatePlist(bin, cfg, logDir)
 	path := filepath.Join(home, "Library", "LaunchAgents", selfUpdateLabel+".plist")

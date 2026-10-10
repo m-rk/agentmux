@@ -50,6 +50,14 @@ agentmux self-update install \
   -agents-bin-dir /home/me/.local/bin
 ```
 
+The installer resolves Go and stores its absolute executable path in the
+LaunchAgent, so vet and build work with launchd's minimal environment. After
+upgrading agentmux with this fix, reinstall the existing job once using the
+same `agentmux self-update install` command and host-specific URL/path flags;
+the installer will pin the Go executable it finds on the interactive PATH
+or in a standard macOS Go location. If Go is installed somewhere else, pass
+`-go-bin /absolute/path/to/go`.
+
 `-print` shows the plist without installing it. `self-update status`
 prints installed vs shipped per repo on the host itself.
 

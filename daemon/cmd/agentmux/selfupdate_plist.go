@@ -22,7 +22,7 @@ func renderSelfUpdatePlist(bin string, cfg selfUpdateHostConfig, logDir string) 
 		bin, "self-update", "run",
 		cfg.AgentmuxURL, cfg.MergenticURL, cfg.AgentmuxDir, cfg.MergenticDir,
 		cfg.AgentmuxBin, cfg.MergenticBin, cfg.AgentsBinDir, cfg.GatewaySocket,
-		selfUpdateInterval, logDir, logDir)
+		cfg.GoBin, selfUpdateInterval, logDir, logDir)
 }
 
 const selfUpdatePlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
@@ -54,6 +54,8 @@ const selfUpdatePlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
         <key>AGENTMUX_SELF_UPDATE_AGENTS_BIN_DIR</key>
         <string>%s</string>
         <key>AGENTMUX_SELF_UPDATE_SOCKET</key>
+        <string>%s</string>
+        <key>AGENTMUX_SELF_UPDATE_GO_BIN</key>
         <string>%s</string>
     </dict>
     <key>StartInterval</key>

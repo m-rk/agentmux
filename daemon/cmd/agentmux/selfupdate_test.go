@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -39,6 +40,7 @@ func TestRenderSelfUpdatePlist(t *testing.T) {
 		"AGENTMUX_SELF_UPDATE_AGENTS_BIN_DIR",
 		"/home/me/.local/bin",
 		"AGENTMUX_SELF_UPDATE_SOCKET",
+		"AGENTMUX_SELF_UPDATE_GO_BIN",
 		"self-update.err.log",
 	} {
 		if !strings.Contains(plist, want) {
@@ -125,6 +127,26 @@ func TestHomeOfFindsHome(t *testing.T) {
 	}
 	if got := homeOf("/tmp/tool"); got == "" {
 		t.Errorf("homeOf fallback is empty")
+	}
+}
+
+func TestResolveSelfUpdateGoWithEmptyPath(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "go")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf go-ok\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolveSelfUpdateGo(bin, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(got) {
+		t.Fatalf("resolved Go path %q is not absolute", got)
+	}
+	cmd := exec.Command(got, "version")
+	cmd.Env = []string{"PATH="}
+	out, err := cmd.CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) != "go-ok" {
+		t.Fatalf("Go with empty PATH = %q, %v", out, err)
 	}
 }
 
