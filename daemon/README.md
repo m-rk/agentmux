@@ -26,7 +26,7 @@ agent/platform combination this repo supports: `claude-code`, `zero`,
 ## Build
 
 ```sh
-go build -o agentmux ./cmd/agentmux
+go build -ldflags="-X main.commit=$(git rev-parse HEAD)" -o agentmux ./cmd/agentmux
 ```
 
 The module currently targets Go 1.26.5. The binary orchestrates tools already

@@ -38,7 +38,7 @@ trusted.
 ```sh
 git clone https://github.com/m-rk/agentmux.git
 cd agentmux/daemon
-go build -o agentmux ./cmd/agentmux
+go build -ldflags="-X main.commit=$(git rev-parse HEAD)" -o agentmux ./cmd/agentmux
 
 sudo ./agentmux daemon install   # Linux: daemon + doctor systemd timer
 ./agentmux daemon install        # macOS: daemon + doctor LaunchAgent, no sudo

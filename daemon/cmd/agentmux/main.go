@@ -3,8 +3,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"runtime/debug"
 )
 
 func main() {
@@ -15,6 +17,8 @@ func main() {
 	}
 
 	switch args[0] {
+	case "version", "-version", "--version":
+		runVersion(args[1:])
 	case "tui":
 		runTUI(args[1:])
 	case "daemon":
@@ -78,10 +82,49 @@ func main() {
 	}
 }
 
+type versionInfo struct {
+	Version string `json:"version"`
+	Commit  string `json:"commit"`
+}
+
+// Set by release/build commands with -ldflags "-X main.commit=<sha>".
+var commit = "unknown"
+
+func currentVersion() versionInfo {
+	v := versionInfo{Version: "devel", Commit: commit}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if bi.Main.Version != "" {
+			v.Version = bi.Main.Version
+		}
+		for _, setting := range bi.Settings {
+			if setting.Key == "vcs.revision" && setting.Value != "" {
+				v.Commit = setting.Value
+			}
+		}
+	}
+	return v
+}
+
+func runVersion(args []string) {
+	jsonOutput := false
+	for _, arg := range args {
+		if arg == "-json" || arg == "--json" {
+			jsonOutput = true
+		}
+	}
+	v := currentVersion()
+	if jsonOutput {
+		_ = json.NewEncoder(os.Stdout).Encode(v)
+		return
+	}
+	fmt.Printf("agentmux %s (%s)\n", v.Version, v.Commit)
+}
+
 func printUsage() {
 	fmt.Println(`agentmux: TUI + daemon + instance wizard for agentmux
 
 Usage:
+  agentmux version [-json]     print the installed version and commit
   agentmux                    launch the TUI (default)
   agentmux daemon install [-doctor-time HH:MM]   install the daemon and post-refresh doctor
   agentmux daemon uninstall   remove the daemon
