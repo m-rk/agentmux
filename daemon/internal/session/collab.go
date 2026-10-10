@@ -34,7 +34,7 @@ func syncCollaboration(name string) error {
 	if configPath == "" {
 		return nil
 	}
-	cfg, err := discordnotify.Load(configPath)
+	cfg, err := discordnotify.LoadResolved(configPath)
 	if err != nil {
 		return err
 	}

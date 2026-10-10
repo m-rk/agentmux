@@ -90,12 +90,12 @@ func (t *tagFlags) String() string     { return "NAME" }
 func (t *tagFlags) Set(v string) error { *t = append(*t, v); return nil }
 
 func asksClient() (*collab.Client, error) {
-	cfg, err := discordnotify.Load(discordnotify.DefaultPath())
+	cfg, err := discordnotify.LoadResolved(discordnotify.DefaultPath())
 	if err != nil {
 		return nil, err
 	}
-	if !cfg.Collaboration.Configured() {
-		return nil, fmt.Errorf("Discord collaboration isn't configured; run 'agentmux collab setup'")
+	if missing := cfg.Collaboration.MissingKeys(); len(missing) > 0 {
+		return nil, fmt.Errorf("Discord collaboration isn't configured (missing %s); run 'agentmux collab setup'", strings.Join(missing, ", "))
 	}
 	client := collab.NewClient(cfg.Collaboration)
 	if home, err := os.UserHomeDir(); err == nil {

@@ -91,10 +91,18 @@ is:
 
 ```sh
 agentmux collab setup -y \
-  -bot-token "$DISCORD_BOT_TOKEN" \
-  -webhook-url "$DISCORD_FORUM_WEBHOOK_URL" \
-  -forum-channel "$DISCORD_FORUM_CHANNEL_ID"
+  -bot-token 'op://<vault-id>/<item-id>/credential' \
+  -webhook-url 'op://<vault-id>/<item-id>/website' \
+  -forum-channel "$DISCORD_FORUM_CHANNEL_ID" \
+  -ask-mention-user "$DISCORD_ASK_MENTION_USER_ID"
 ```
+
+Pass `op://…` references directly for the token and webhook. Setup resolves
+them for validation, then saves only the references; the daemon and `asks`
+resolve them at runtime and cache the values in memory for that process. Plain
+token and URL values are still accepted for existing scripts, but references
+avoid writing bearer credentials to disk. The forum channel and optional ask
+mention user ID can be supplied by fleet provisioning flags.
 
 There's one bot, forum, and webhook shared across every host in the fleet — this
 is a multi-host collaboration space, not a per-host one. Provision a new host

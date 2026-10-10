@@ -6,11 +6,15 @@ package discordnotify
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -104,6 +108,82 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
 	return &cfg, nil
+}
+
+var resolvedRefs sync.Map
+var readOpRef = readOnePasswordRef
+
+func readOnePasswordRef(ref string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "op", "read", ref)
+	if token := os.Getenv("OP_SERVICE_ACCOUNT_TOKEN"); token != "" {
+		cmd.Env = os.Environ()
+	} else if home, err := os.UserHomeDir(); err == nil {
+		if token, err := os.ReadFile(filepath.Join(home, ".config", "op", "service_account_token")); err == nil {
+			cmd.Env = append(os.Environ(), "OP_SERVICE_ACCOUNT_TOKEN="+strings.TrimSpace(string(token)))
+		}
+	}
+	return cmd.Output()
+}
+
+// LoadResolved loads the config and resolves scoped 1Password references in
+// collaboration credentials. Resolved values are cached for this process.
+func LoadResolved(path string) (*Config, error) {
+	cfg, err := Load(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := ResolveCollaboration(&cfg.Collaboration); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// ResolveCollaboration resolves credential references in place.
+func ResolveCollaboration(c *CollaborationConfig) error {
+	resolve := func(key string, value *string) error {
+		if !strings.HasPrefix(*value, "op://") {
+			return nil
+		}
+		if cached, ok := resolvedRefs.Load(*value); ok {
+			*value = cached.(string)
+			return nil
+		}
+		out, err := readOpRef(*value)
+		if err != nil {
+			return fmt.Errorf("resolving collaboration %s from 1Password (op read failed)", key)
+		}
+		secret := strings.TrimSpace(string(out))
+		if secret == "" {
+			return fmt.Errorf("resolving collaboration %s from 1Password: empty value", key)
+		}
+		resolvedRefs.Store(*value, secret)
+		*value = secret
+		return nil
+	}
+	if err := resolve("bot_token", &c.BotToken); err != nil {
+		return err
+	}
+	if err := resolve("webhook_url", &c.WebhookURL); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MissingCollaborationKeys names the required settings without exposing values.
+func (c CollaborationConfig) MissingKeys() []string {
+	var missing []string
+	if strings.TrimSpace(c.BotToken) == "" {
+		missing = append(missing, "bot_token")
+	}
+	if strings.TrimSpace(c.WebhookURL) == "" {
+		missing = append(missing, "webhook_url")
+	}
+	if strings.TrimSpace(c.ForumChannelID) == "" {
+		missing = append(missing, "forum_channel_id")
+	}
+	return missing
 }
 
 // Save writes cfg to path with 0600 permissions. Unlike hosts.yaml (which

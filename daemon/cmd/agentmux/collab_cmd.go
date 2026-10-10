@@ -96,6 +96,7 @@ func runCollabSetup(args []string) error {
 	botToken := fs.String("bot-token", "", "Discord bot token used to read the forum")
 	webhookURL := fs.String("webhook-url", "", "Discord forum webhook URL used to write")
 	forumID := fs.String("forum-channel", "", "Discord forum channel ID")
+	mentionID := fs.String("ask-mention-user", "", "Discord user ID allowed to be mentioned in asks")
 	testThread := fs.String("test-thread", "", "reusable asks test thread ID task sessions post into (blank clears it)")
 	avatars := avatarFlags{}
 	fs.Var(avatars, "agent-avatar", "fallback avatar as AGENT=https://…; repeatable")
@@ -118,6 +119,9 @@ func runCollabSetup(args []string) error {
 		if *forumID == "" {
 			*forumID = cfg.Collaboration.ForumChannelID
 		}
+		if *mentionID == "" {
+			*mentionID = cfg.Collaboration.AskMentionUserID
+		}
 		if *testThread == "" {
 			*testThread = cfg.Collaboration.TestThreadID
 		}
@@ -131,10 +135,18 @@ func runCollabSetup(args []string) error {
 			return err
 		}
 	}
-	if strings.TrimSpace(*botToken) == "" || strings.TrimSpace(*webhookURL) == "" || strings.TrimSpace(*forumID) == "" {
-		return fmt.Errorf("-bot-token, -webhook-url, and -forum-channel are required")
+	cfg.Collaboration.BotToken = strings.TrimSpace(*botToken)
+	cfg.Collaboration.WebhookURL = strings.TrimSpace(*webhookURL)
+	cfg.Collaboration.ForumChannelID = strings.TrimSpace(*forumID)
+	cfg.Collaboration.AskMentionUserID = strings.TrimSpace(*mentionID)
+	if missing := cfg.Collaboration.MissingKeys(); len(missing) > 0 {
+		return fmt.Errorf("missing collaboration keys: %s; run 'agentmux collab setup'", strings.Join(missing, ", "))
 	}
-	if !isDiscordWebhookURL(strings.TrimSpace(*webhookURL)) {
+	resolved := cfg.Collaboration
+	if err := discordnotify.ResolveCollaboration(&resolved); err != nil {
+		return err
+	}
+	if !isDiscordWebhookURL(strings.TrimSpace(resolved.WebhookURL)) {
 		return fmt.Errorf("-webhook-url doesn't look like a Discord webhook URL")
 	}
 	if cfg.Collaboration.AgentAvatarURLs == nil {
@@ -143,9 +155,6 @@ func runCollabSetup(args []string) error {
 	for agent, avatar := range avatars {
 		cfg.Collaboration.AgentAvatarURLs[agent] = avatar
 	}
-	cfg.Collaboration.BotToken = strings.TrimSpace(*botToken)
-	cfg.Collaboration.WebhookURL = strings.TrimSpace(*webhookURL)
-	cfg.Collaboration.ForumChannelID = strings.TrimSpace(*forumID)
 	seen := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { seen[f.Name] = true })
 	// -test-thread is sticky like the interactive answers: set it when
@@ -159,7 +168,8 @@ func runCollabSetup(args []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if err := collab.NewClient(cfg.Collaboration).Doctor(ctx); err != nil {
+	resolved.TestThreadID = cfg.Collaboration.TestThreadID
+	if err := collab.NewClient(resolved).Doctor(ctx); err != nil {
 		return fmt.Errorf("validation failed; not saving: %w", err)
 	}
 	if _, err := ops.EnsureCodexDefaults(runas.CurrentUserHome()); err != nil {
@@ -245,12 +255,12 @@ func loadCollabSession(instance string) (collabSession, error) {
 	if err != nil {
 		return collabSession{}, err
 	}
-	cfg, err := discordnotify.Load(discordnotify.DefaultPath())
+	cfg, err := discordnotify.LoadResolved(discordnotify.DefaultPath())
 	if err != nil {
 		return collabSession{}, err
 	}
-	if !cfg.Collaboration.Configured() {
-		return collabSession{}, fmt.Errorf("Discord collaboration isn't configured; run 'agentmux collab setup'")
+	if missing := cfg.Collaboration.MissingKeys(); len(missing) > 0 {
+		return collabSession{}, fmt.Errorf("Discord collaboration isn't configured (missing %s); run 'agentmux collab setup'", strings.Join(missing, ", "))
 	}
 	agent := fields["AGENTMUX_AGENT"]
 	if agent == "" {
