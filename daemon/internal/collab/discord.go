@@ -41,16 +41,34 @@ type Client struct {
 }
 
 type Channel struct {
-	ID            string         `json:"id"`
-	GuildID       string         `json:"guild_id"`
-	ParentID      string         `json:"parent_id"`
-	Name          string         `json:"name"`
-	OwnerID       string         `json:"owner_id"`
-	Type          int            `json:"type"`
-	LastMessageID string         `json:"last_message_id"`
-	ThreadMeta    ThreadMetadata `json:"thread_metadata"`
-	AppliedTags   []string       `json:"applied_tags"`
-	AvailableTags []ForumTag     `json:"available_tags"`
+	ID                   string                `json:"id"`
+	GuildID              string                `json:"guild_id"`
+	ParentID             string                `json:"parent_id"`
+	Name                 string                `json:"name"`
+	OwnerID              string                `json:"owner_id"`
+	Type                 int                   `json:"type"`
+	LastMessageID        string                `json:"last_message_id"`
+	ThreadMeta           ThreadMetadata        `json:"thread_metadata"`
+	AppliedTags          []string              `json:"applied_tags"`
+	AvailableTags        []ForumTag            `json:"available_tags"`
+	PermissionOverwrites []PermissionOverwrite `json:"permission_overwrites"`
+}
+
+type PermissionOverwrite struct {
+	ID    string `json:"id"`
+	Type  int    `json:"type"`
+	Allow string `json:"allow"`
+	Deny  string `json:"deny"`
+}
+type guildRole struct {
+	ID          string `json:"id"`
+	Permissions string `json:"permissions"`
+}
+type guildMember struct {
+	Roles []string `json:"roles"`
+}
+type currentUser struct {
+	ID string `json:"id"`
 }
 
 type ForumTag struct {
@@ -228,6 +246,103 @@ func (c *Client) Validate(ctx context.Context) error {
 	}
 	return nil
 }
+
+// Doctor checks forum metadata, webhook routing, required ask tags and the
+// bot's effective Manage Threads permission without creating or editing a thread.
+func (c *Client) Doctor(ctx context.Context) error {
+	if !c.Config.Configured() {
+		return fmt.Errorf("Discord collaboration needs a bot token, forum channel id, and webhook URL")
+	}
+	var forum Channel
+	if err := c.botJSON(ctx, http.MethodGet, "/channels/"+url.PathEscape(c.Config.ForumChannelID), &forum); err != nil {
+		return fmt.Errorf("reading Discord forum channel: %w", err)
+	}
+	if forum.Type != 15 {
+		return fmt.Errorf("Discord channel is not a forum channel")
+	}
+	var webhook webhookInfo
+	if err := c.webhookJSON(ctx, http.MethodGet, nil, nil, &webhook); err != nil {
+		return fmt.Errorf("reading Discord collaboration webhook: %w", err)
+	}
+	if webhook.ChannelID != c.Config.ForumChannelID {
+		return fmt.Errorf("Discord webhook does not post into the configured forum")
+	}
+	available := map[string]bool{}
+	for _, tag := range forum.AvailableTags {
+		available[strings.ToLower(tag.Name)] = true
+	}
+	var missing []string
+	for _, name := range AskForumTags() {
+		if !available[strings.ToLower(name)] {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("forum is missing required tags: %s", strings.Join(missing, ", "))
+	}
+	if forum.GuildID == "" {
+		return fmt.Errorf("Discord forum channel has no guild id")
+	}
+	var me currentUser
+	if err := c.botJSON(ctx, http.MethodGet, "/users/@me", &me); err != nil {
+		return fmt.Errorf("reading Discord bot identity: %w", err)
+	}
+	var member guildMember
+	if err := c.botJSON(ctx, http.MethodGet, "/guilds/"+url.PathEscape(forum.GuildID)+"/members/"+url.PathEscape(me.ID), &member); err != nil {
+		return fmt.Errorf("reading Discord bot roles: %w", err)
+	}
+	var roles []guildRole
+	if err := c.botJSON(ctx, http.MethodGet, "/guilds/"+url.PathEscape(forum.GuildID)+"/roles", &roles); err != nil {
+		return fmt.Errorf("reading Discord role permissions: %w", err)
+	}
+	roleIDs := map[string]bool{forum.GuildID: true}
+	for _, id := range member.Roles {
+		roleIDs[id] = true
+	}
+	permissions := uint64(0)
+	for _, role := range roles {
+		if roleIDs[role.ID] {
+			p, _ := strconv.ParseUint(role.Permissions, 10, 64)
+			permissions |= p
+		}
+	}
+	const manageThreads uint64 = 1 << 34
+	const administrator uint64 = 1 << 3
+	if permissions&administrator == 0 {
+		apply := func(allow, deny string) {
+			a, _ := strconv.ParseUint(allow, 10, 64)
+			d, _ := strconv.ParseUint(deny, 10, 64)
+			permissions = permissions&^d | a
+		}
+		for _, o := range forum.PermissionOverwrites {
+			if o.Type == 0 && o.ID == forum.GuildID {
+				apply(o.Allow, o.Deny)
+			}
+		}
+		for _, o := range forum.PermissionOverwrites {
+			if o.Type == 0 && roleIDs[o.ID] && o.ID != forum.GuildID {
+				apply(o.Allow, o.Deny)
+			}
+		}
+		var allow, deny uint64
+		for _, o := range forum.PermissionOverwrites {
+			if o.Type == 1 && o.ID == me.ID {
+				a, _ := strconv.ParseUint(o.Allow, 10, 64)
+				d, _ := strconv.ParseUint(o.Deny, 10, 64)
+				allow |= a
+				deny |= d
+			}
+		}
+		permissions = permissions&^deny | allow
+	}
+	if permissions&(manageThreads|administrator) == 0 {
+		return fmt.Errorf("Discord bot lacks Manage Threads in the forum")
+	}
+	return nil
+}
+
+// AskForumTags returns the kind and state tags used by asks.
+func AskForumTags() []string { return append(append([]string{}, AskTypeTags...), AskStateTags...) }
 
 func (c *Client) ListRelevantThreads(ctx context.Context, project string) ([]Channel, error) {
 	if err := ValidateProjectKey(project); err != nil {

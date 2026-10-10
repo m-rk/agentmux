@@ -27,6 +27,8 @@ func runCollabCmd(args []string) {
 	switch args[0] {
 	case "setup":
 		err = runCollabSetup(args[1:])
+	case "doctor":
+		err = runCollabDoctor(args[1:])
 	case "configure":
 		err = runCollabConfigure(args[1:])
 	case "read":
@@ -46,10 +48,29 @@ func runCollabCmd(args []string) {
 func collabUsage() {
 	fmt.Fprintln(os.Stderr, `usage:
   agentmux collab setup [-y -bot-token TOKEN -webhook-url URL -forum-channel ID [-test-thread ID]]
+  agentmux collab doctor
   agentmux collab configure -instance NAME [-project KEY] [-avatar-url URL]
   agentmux collab read -instance NAME [-thread ID]
   agentmux collab post -instance NAME -topic TOPIC -summary SENTENCE [-shared] [-details FILE.md]
   agentmux collab post -instance NAME -thread ID -summary TEXT [-details FILE.md]`)
+}
+
+func runCollabDoctor(args []string) error {
+	fs := flag.NewFlagSet("collab doctor", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := discordnotify.Load(discordnotify.DefaultPath())
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := collab.NewClient(cfg.Collaboration).Doctor(ctx); err != nil {
+		return err
+	}
+	fmt.Println("Discord collaboration forum, webhook, tags, and bot permissions are ready.")
+	return nil
 }
 
 type avatarFlags map[string]string
@@ -137,13 +158,14 @@ func runCollabSetup(args []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if err := collab.NewClient(cfg.Collaboration).Validate(ctx); err != nil {
+	if err := collab.NewClient(cfg.Collaboration).Doctor(ctx); err != nil {
 		return fmt.Errorf("validation failed; not saving: %w", err)
 	}
 	if err := discordnotify.Save(path, cfg); err != nil {
 		return err
 	}
 	fmt.Printf("Discord collaboration configured in %s\n", path)
+	fmt.Println("Run 'agentmux collab doctor' to verify forum readiness.")
 	return nil
 }
 
