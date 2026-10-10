@@ -242,6 +242,22 @@ func TestSelfUpdateBuildUsesModuleDir(t *testing.T) {
 	}
 }
 
+func TestSelfUpdateSmokeRequestsUseFullAddresses(t *testing.T) {
+	create, run, err := selfUpdateSmokeRequests("worker", "laptop", "smoke/self-update-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if create.Template != "worker@laptop" || create.Instance != defaultSmokeName || create.Branch != "smoke/self-update-test" || create.Base != "main" || !create.DryRun {
+		t.Fatalf("create request = %+v", create)
+	}
+	if run.Address != defaultSmokeName+"@laptop" || run.Template != "worker" || !run.DryRun {
+		t.Fatalf("run request = %+v", run)
+	}
+	if _, _, err := selfUpdateSmokeRequests("worker", "bad host", "smoke/test"); err == nil {
+		t.Fatal("invalid host address was accepted")
+	}
+}
+
 func TestInstalledDoctorTime(t *testing.T) {
 	dir := t.TempDir()
 	home := dir + "/home"

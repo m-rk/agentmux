@@ -227,19 +227,35 @@ func selfUpdateSmokeGateway(ctx context.Context, sock string) error {
 		return nil // no instances: nothing to validate against
 	}
 	branch := "smoke/self-update-" + time.Now().Format("20060102-150405")
-	creq := ops.CreateRequest{Template: tmpl, Instance: defaultSmokeName, Branch: branch, Base: "main", DryRun: true}
+	creq, rreq, err := selfUpdateSmokeRequests(tmpl, address.LocalHostName(), branch)
+	if err != nil {
+		return err
+	}
 	cres, cerr := (ops.Env{SocketPath: sock}).Create(ctx, creq)
 	if cerr != nil && !smokeCreateSkippable(cerr) {
 		e := ops.AsError(cerr)
 		return fmt.Errorf("dry-run create: %s: %s", e.Reason, e.Detail)
 	}
-	rreq := ops.RunRequest{Address: defaultSmokeName, Template: tmpl, Text: "self-update smoke test: reply with exactly: ok", DryRun: true}
 	if _, rerr := (ops.Env{SocketPath: sock}).Run(ctx, rreq); rerr != nil && !smokeRunSkippable(rerr) {
 		e := ops.AsError(rerr)
 		return fmt.Errorf("dry-run run: %s: %s", e.Reason, e.Detail)
 	}
 	_ = cres
 	return nil
+}
+
+func selfUpdateSmokeRequests(template, host, branch string) (ops.CreateRequest, ops.RunRequest, error) {
+	templateAddress := template + "@" + host
+	smokeAddress := defaultSmokeName + "@" + host
+	if _, err := address.Parse(templateAddress); err != nil {
+		return ops.CreateRequest{}, ops.RunRequest{}, fmt.Errorf("smoke template address: %w", err)
+	}
+	if _, err := address.Parse(smokeAddress); err != nil {
+		return ops.CreateRequest{}, ops.RunRequest{}, fmt.Errorf("smoke target address: %w", err)
+	}
+	create := ops.CreateRequest{Template: templateAddress, Instance: defaultSmokeName, Branch: branch, Base: "main", DryRun: true}
+	run := ops.RunRequest{Address: smokeAddress, Template: template, Text: "self-update smoke test: reply with exactly: ok", DryRun: true}
+	return create, run, nil
 }
 
 // selfUpdateInstallMergentic installs the mergentic binary into
