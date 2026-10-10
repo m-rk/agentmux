@@ -1,5 +1,27 @@
 # Pull-based self-update (Mac)
 
+## Recover a Mac with an old agentmux binary
+
+From a terminal on the Mac, run this one command to build and install the
+current `main` even when the installed binary lacks `self-update`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/m-rk/agentmux/main/scripts/bootstrap-mac.sh | bash
+```
+
+The script fetches `main` into a temporary Git worktree, builds the daemon,
+installs it, restarts the agentmux gateway, prints the installed commit, and
+removes the temporary checkout. It states the daemon and gateway restart
+before asking once for confirmation. Preview the steps without installing or
+restarting anything by adding `--dry-run` to the command after the pipe:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/m-rk/agentmux/main/scripts/bootstrap-mac.sh | bash -s -- --dry-run
+```
+
+For a fork or mirror, set `AGENTMUX_BOOTSTRAP_REPO` to its Git URL before
+running the script.
+
 The Mac pulls its own builds: the hub gets no access into it. A
 per-user launchd job, `com.m-rk.agentmux.self-update`, runs
 `agentmux self-update run` every 10 minutes (600 seconds). The run
