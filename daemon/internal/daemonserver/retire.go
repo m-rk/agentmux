@@ -7,6 +7,7 @@ import (
 
 	"github.com/m-rk/agentmux/daemon/internal/discovery"
 	"github.com/m-rk/agentmux/daemon/internal/pb"
+	"github.com/m-rk/agentmux/daemon/internal/provision"
 	"github.com/m-rk/agentmux/daemon/internal/session"
 )
 
@@ -23,6 +24,30 @@ import (
 // record — and calls this RPC for exactly this step, the way `sessions
 // create` already delegates instance creation to CreateInstance.
 func (s *Server) RetireInstance(ctx context.Context, req *pb.RetireInstanceRequest) (*pb.RetireInstanceResponse, error) {
+	if req.Archive {
+		if err := provision.ValidateInstanceName(req.Instance); err != nil {
+			return &pb.RetireInstanceResponse{Ok: false, Message: err.Error()}, nil
+		}
+		instances, err := discovery.List()
+		if err != nil {
+			return &pb.RetireInstanceResponse{Ok: false, Message: fmt.Sprintf("listing instances: %v", err)}, nil
+		}
+		found := false
+		for _, inst := range instances {
+			if inst.Name == req.Instance {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return &pb.RetireInstanceResponse{Ok: false, Message: fmt.Sprintf("no instance %q on this host", req.Instance)}, nil
+		}
+		archive, err := session.ArchiveManaged(req.Instance)
+		if err != nil {
+			return &pb.RetireInstanceResponse{Ok: false, Message: err.Error()}, nil
+		}
+		return &pb.RetireInstanceResponse{Ok: true, Message: fmt.Sprintf("removed %s: stopped and disabled instance; archived registry and service artifacts at %s", req.Instance, archive)}, nil
+	}
 	if !strings.HasPrefix(req.Instance, "task-") {
 		return &pb.RetireInstanceResponse{Ok: false,
 			Message: fmt.Sprintf("not a task session: %q does not start with %q; retire only touches task-* agents created by `sessions create`",

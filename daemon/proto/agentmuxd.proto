@@ -264,6 +264,9 @@ message RenameInstanceResponse {
 
 message RetireInstanceRequest {
   string instance = 1;
+  // Archive moves the instance registry and service artifacts under the
+  // retired directory instead of deleting them. Used by `agentmux remove`.
+  bool archive = 2;
 }
 
 message RetireInstanceResponse {

@@ -19,6 +19,7 @@ import (
 type fakeDaemon struct {
 	instances []*pb.Instance
 	created   []*pb.CreateInstanceRequest
+	retired   []*pb.RetireInstanceRequest
 	failWith  string
 }
 
@@ -40,6 +41,7 @@ func (f *fakeDaemon) CreateInstance(_ context.Context, req *pb.CreateInstanceReq
 }
 
 func (f *fakeDaemon) RetireInstance(_ context.Context, req *pb.RetireInstanceRequest) (*pb.RetireInstanceResponse, error) {
+	f.retired = append(f.retired, req)
 	return &pb.RetireInstanceResponse{Ok: true, Message: "retired " + req.Instance}, nil
 }
 

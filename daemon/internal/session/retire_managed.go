@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/m-rk/agentmux/daemon/internal/discovery"
 	"github.com/m-rk/agentmux/daemon/internal/runas"
@@ -113,6 +114,65 @@ func RemoveRegistry(instance string) error {
 	path := filepath.Join(discovery.EnvDir, instance+".env")
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing registry for %s: %w", instance, err)
+	}
+	return nil
+}
+
+// ArchiveManaged stops and disables an instance, then moves its registry
+// entry and service artifacts beneath the host's agentmux retired directory.
+// The workdir and agent data are intentionally left alone.
+func ArchiveManaged(instance string) (string, error) {
+	if err := StopManaged(instance); err != nil {
+		return "", fmt.Errorf("stopping %s: %w", instance, err)
+	}
+	if runtime.GOOS == "linux" {
+		for _, unit := range artifactUnits(instance) {
+			systemctl("disable", "--now", unit)
+		}
+		systemctl("daemon-reload")
+	} else {
+		for _, label := range artifactLabels(instance) {
+			launchctlBootout(label)
+		}
+	}
+
+	stamp := time.Now().UTC().Format("20060102T150405.000000000Z")
+	archive := filepath.Join(discovery.EnvDir, "retired", instance+"-"+stamp)
+	unitsDir := filepath.Join(archive, "units")
+	if err := os.MkdirAll(unitsDir, 0o700); err != nil {
+		return "", fmt.Errorf("creating retired archive: %w", err)
+	}
+	registry := filepath.Join(discovery.EnvDir, instance+".env")
+	if err := moveIfExists(registry, filepath.Join(archive, instance+".env")); err != nil {
+		return "", err
+	}
+	if runtime.GOOS == "linux" {
+		for _, unit := range artifactUnits(instance) {
+			from := filepath.Join("/etc/systemd/system", unit)
+			if err := moveIfExists(from, filepath.Join(unitsDir, unit)); err != nil {
+				return "", err
+			}
+		}
+	} else {
+		home := runas.CurrentUserHome()
+		for _, label := range artifactLabels(instance) {
+			from := filepath.Join(home, "Library", "LaunchAgents", label+".plist")
+			if err := moveIfExists(from, filepath.Join(unitsDir, label+".plist")); err != nil {
+				return "", err
+			}
+		}
+	}
+	return archive, nil
+}
+
+func moveIfExists(from, to string) error {
+	if _, err := os.Lstat(from); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("checking %s: %w", from, err)
+	}
+	if err := os.Rename(from, to); err != nil {
+		return fmt.Errorf("moving %s to retired archive: %w", from, err)
 	}
 	return nil
 }

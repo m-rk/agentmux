@@ -82,3 +82,31 @@ func TestRemoveUnitsDisablesEveryArtifact(t *testing.T) {
 		t.Error("registry entry still present")
 	}
 }
+
+func TestMoveIfExistsArchivesFile(t *testing.T) {
+	dir := t.TempDir()
+	from := filepath.Join(dir, "instance.env")
+	to := filepath.Join(dir, "retired", "instance.env")
+	if err := os.WriteFile(from, []byte("AGENTMUX_AGENT=codex\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(to), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := moveIfExists(from, to); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(from); !os.IsNotExist(err) {
+		t.Fatalf("source still exists: %v", err)
+	}
+	got, err := os.ReadFile(to)
+	if err != nil || string(got) != "AGENTMUX_AGENT=codex\n" {
+		t.Fatalf("archived file = %q, %v", got, err)
+	}
+}
+
+func TestMoveIfExistsIgnoresMissingArtifact(t *testing.T) {
+	if err := moveIfExists(filepath.Join(t.TempDir(), "absent"), filepath.Join(t.TempDir(), "archive")); err != nil {
+		t.Fatalf("missing optional artifact: %v", err)
+	}
+}

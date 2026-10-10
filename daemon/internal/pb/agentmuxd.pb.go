@@ -1467,8 +1467,11 @@ func (x *RenameInstanceResponse) GetMessage() string {
 }
 
 type RetireInstanceRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Instance      string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Instance string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
+	// Archive moves the instance registry and service artifacts under the
+	// retired directory instead of deleting them. Used by `agentmux remove`.
+	Archive       bool `protobuf:"varint,2,opt,name=archive,proto3" json:"archive,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1508,6 +1511,13 @@ func (x *RetireInstanceRequest) GetInstance() string {
 		return x.Instance
 	}
 	return ""
+}
+
+func (x *RetireInstanceRequest) GetArchive() bool {
+	if x != nil {
+		return x.Archive
+	}
+	return false
 }
 
 type RetireInstanceResponse struct {
@@ -1978,9 +1988,10 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\fdisplay_name\x18\x03 \x01(\tR\vdisplayName\"B\n" +
 	"\x16RenameInstanceResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"3\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"M\n" +
 	"\x15RetireInstanceRequest\x12\x1a\n" +
-	"\binstance\x18\x01 \x01(\tR\binstance\"B\n" +
+	"\binstance\x18\x01 \x01(\tR\binstance\x12\x18\n" +
+	"\aarchive\x18\x02 \x01(\bR\aarchive\"B\n" +
 	"\x16RetireInstanceResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"r\n" +

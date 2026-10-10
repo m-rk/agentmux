@@ -29,6 +29,8 @@ func main() {
 		runWizard(args[1:])
 	case "rename":
 		runRenameCmd(args[1:])
+	case "remove":
+		runRemoveCmd(args[1:])
 	case "resume-list":
 		runResumeListCmd(args[1:])
 	case "session":
@@ -93,6 +95,7 @@ Usage:
   agentmux new -y -instance NAME -agent kilo -provider custom -provider-base-url URL -model M
                                 update an existing instance's provider/model too (re-run with the same instance+agent)
   agentmux rename ...          rename an instance's tmux session/display name
+  agentmux remove -instance NAME  stop, disable, and archive an instance
   agentmux resume-list ...     list resumable Claude Code sessions for a workdir
   agentmux list                headless instance status (name/agent/model/status/workdir); add -json for scripts
   agentmux sessions resolve [-json] INSTANCE@HOST[#THREAD]
