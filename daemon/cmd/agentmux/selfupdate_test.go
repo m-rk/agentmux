@@ -10,7 +10,59 @@ import (
 
 	"github.com/m-rk/agentmux/daemon/internal/ops"
 	"github.com/m-rk/agentmux/daemon/internal/safesend"
+	"github.com/m-rk/agentmux/daemon/internal/selfupdate"
 )
+
+func TestSelfUpdateFailureThresholdBacksOffOnlyThatSHA(t *testing.T) {
+	state := selfupdate.Failure{SHA: strings.Repeat("a", 40), Count: 3}
+	if !selfUpdateBackedOff(state, state.SHA, 3) {
+		t.Fatal("threshold failure should back off")
+	}
+	if selfUpdateBackedOff(state, strings.Repeat("b", 40), 3) {
+		t.Fatal("new SHA should be attempted")
+	}
+	state.Count = 2
+	if selfUpdateBackedOff(state, state.SHA, 3) {
+		t.Fatal("failure below threshold should still retry")
+	}
+}
+
+func TestRepeatedSelfUpdateFailureAlertsOnceBacksOffAndClears(t *testing.T) {
+	home := t.TempDir()
+	sha := strings.Repeat("a", 40)
+	t.Setenv("AGENTMUX_SELF_UPDATE_FAILURE_THRESHOLD", "3")
+	posts := 0
+	oldPost := postSelfUpdateFailureAskFn
+	postSelfUpdateFailureAskFn = func(repo, gotSHA, line string, count int) (string, error) {
+		posts++
+		if repo != "agentmux" || gotSHA != sha || line != "smoke failure" || count != 3 {
+			t.Fatalf("alert args = %q %q %q %d", repo, gotSHA, line, count)
+		}
+		return "thread-1", nil
+	}
+	t.Cleanup(func() { postSelfUpdateFailureAskFn = oldPost })
+	for i := 0; i < 3; i++ {
+		recordFail(home, "agentmux", sha, "smoke failure\nsecond detail")
+	}
+	if posts != 1 {
+		t.Fatalf("alert posts = %d, want 1", posts)
+	}
+	states, err := selfupdate.LoadFailures(selfupdate.FailuresPath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !selfUpdateBackedOff(states["agentmux@"+sha], sha, 3) {
+		t.Fatal("same failed SHA should be backed off")
+	}
+	clearSelfUpdateFailure(home, "agentmux")
+	states, err = selfupdate.LoadFailures(selfupdate.FailuresPath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if states["agentmux@"+sha].ThreadID != "" {
+		t.Fatal("success should clear the open alert")
+	}
+}
 
 func TestRenderSelfUpdatePlist(t *testing.T) {
 	cfg := selfUpdateHostConfig{

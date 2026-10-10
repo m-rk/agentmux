@@ -60,6 +60,7 @@ func selfUpdateInstallRepo(home string, cfg selfUpdateHostConfig, repo, built st
 	if err := selfupdate.LogEvent(home, selfupdate.DeployedLine(repo, installed, wantSHA)); err != nil {
 		return fmt.Errorf("logging deploy: %w", err)
 	}
+	clearSelfUpdateFailure(home, repo)
 	fmt.Printf("self-update: deployed %s@%s\n", repo, wantSHA)
 	return nil
 }

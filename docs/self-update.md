@@ -57,6 +57,14 @@ and installs atomically (temp file, then rename). See AMUX-29.
   On success the run writes one `deployed <repo>@<sha>` line the hub
   reads.
 
+- Repeated failure alert: three consecutive failures with the same first
+  error line for one repo and SHA open one asks thread mentioning the
+  configured user. State lives in `failures.json`; that SHA is backed off
+  until a different SHA is shipped. A successful update closes the alert.
+  Set `~/.agentmux/self-update/failure-threshold` to a positive integer to
+  change the default of 3. The asks forum and mention user must be configured
+  in `~/.config/agentmux/discord.yaml`.
+
 ## Host setup (once, by hand on the Mac)
 
 No personal paths, hostnames or usernames live in the repo; configure

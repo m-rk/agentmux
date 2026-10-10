@@ -258,6 +258,11 @@ func selfUpdateOneRepo(home string, cfg selfUpdateHostConfig, r selfUpdateRepo, 
 	if !selfupdate.WantInstall(r.name, haveSHA, wantSHA) {
 		return nil
 	}
+	if states, err := selfupdate.LoadFailures(selfupdate.FailuresPath(home)); err == nil {
+		if selfUpdateBackedOff(states[r.name+"@"+wantSHA], wantSHA, selfUpdateFailureThreshold()) {
+			return nil
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	run := func(dir string, name string, args ...string) (string, error) {
@@ -356,5 +361,6 @@ func selfUpdateBuild(repo string, cfg selfUpdateHostConfig, workdir, moduleDir s
 // recordFail logs a failure line and returns it as the error.
 func recordFail(home, repo, sha, reason string) error {
 	_ = selfupdate.LogEvent(home, selfupdate.FailedLine(repo, sha, reason))
+	trackSelfUpdateFailure(home, repo, sha, reason)
 	return fmt.Errorf("%s", reason)
 }

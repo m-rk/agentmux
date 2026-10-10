@@ -48,6 +48,58 @@ func ShippedPath(home string) string { return filepath.Join(BaseDir(home), "ship
 // can confirm which commit the Mac runs without touching the Mac.
 func VersionsPath(home string) string { return filepath.Join(BaseDir(home), "versions.json") }
 
+// FailuresPath stores consecutive failures and the ask opened for each repo.
+func FailuresPath(home string) string { return filepath.Join(BaseDir(home), "failures.json") }
+
+// FailureThresholdPath optionally overrides the default alert threshold.
+func FailureThresholdPath(home string) string {
+	return filepath.Join(BaseDir(home), "failure-threshold")
+}
+
+// Failure is the persisted state for one repo's current shipped commit.
+type Failure struct {
+	SHA      string `json:"sha"`
+	Error    string `json:"error"`
+	Count    int    `json:"count"`
+	ThreadID string `json:"thread_id,omitempty"`
+	Alerted  bool   `json:"alerted,omitempty"`
+}
+
+// LoadFailures reads the updater failure state. Missing state is empty.
+func LoadFailures(path string) (map[string]Failure, error) {
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return map[string]Failure{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]Failure
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if out == nil {
+		out = map[string]Failure{}
+	}
+	return out, nil
+}
+
+// SaveFailures atomically persists updater failure state.
+func SaveFailures(path string, failures map[string]Failure) error {
+	b, err := json.MarshalIndent(failures, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, append(b, '\n'), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
 // LogPath is the updater's event log: one line per event, including the
 // `deployed <repo>@<sha>` line on success. The gateway log tail op reads
 // it, and the orchestrator's deploy watch greps it.

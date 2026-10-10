@@ -3,9 +3,26 @@ package selfupdate
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestFailureStateRoundTrips(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "failures.json")
+	want := map[string]Failure{"agentmux": {SHA: strings.Repeat("a", 40), Error: "smoke failed", Count: 3, ThreadID: "123"}}
+	if err := SaveFailures(path, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadFailures(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("LoadFailures() = %#v, want %#v", got, want)
+	}
+}
 
 func TestBasePathsStayUnderAgentmuxDir(t *testing.T) {
 	home := "/home/alice"
