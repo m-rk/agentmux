@@ -17,14 +17,14 @@ func resolveSelfUpdateGo(configured, path string) (string, error) {
 				candidates = append(candidates, filepath.Join(dir, "go"))
 			}
 		}
+		candidates = append(candidates,
+			"/opt/homebrew/bin/go",
+			"/usr/local/go/bin/go",
+			"/usr/local/bin/go",
+			"/opt/local/bin/go",
+			"/usr/bin/go",
+		)
 	}
-	candidates = append(candidates,
-		"/opt/homebrew/bin/go",
-		"/usr/local/go/bin/go",
-		"/usr/local/bin/go",
-		"/opt/local/bin/go",
-		"/usr/bin/go",
-	)
 	for _, candidate := range candidates {
 		if candidate == "" {
 			continue
@@ -41,7 +41,9 @@ func resolveSelfUpdateGo(configured, path string) (string, error) {
 		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
 			continue
 		}
-		return resolved, nil
+		// Keep the stable symlink path (for example Homebrew's bin/go)
+		// while checking its current target is executable.
+		return abs, nil
 	}
 	if configured != "" {
 		return "", fmt.Errorf("configured Go executable %q is unavailable; reinstall with -go-bin PATH or ensure Go is installed", configured)

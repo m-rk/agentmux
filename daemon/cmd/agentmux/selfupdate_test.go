@@ -150,6 +150,25 @@ func TestResolveSelfUpdateGoWithEmptyPath(t *testing.T) {
 	}
 }
 
+func TestResolveSelfUpdateGoKeepsStableSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "go-versioned")
+	link := filepath.Join(dir, "go")
+	if err := os.WriteFile(target, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolveSelfUpdateGo(link, "")
+	if err != nil || got != link {
+		t.Fatalf("configured symlink = %q, %v; want %q", got, err, link)
+	}
+	if _, err := resolveSelfUpdateGo(filepath.Join(dir, "missing"), "/usr/local/go/bin"); err == nil {
+		t.Fatal("invalid configured Go path must not silently use a fallback")
+	}
+}
+
 func TestInstalledDoctorTime(t *testing.T) {
 	dir := t.TempDir()
 	home := dir + "/home"
