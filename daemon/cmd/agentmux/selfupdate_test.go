@@ -161,6 +161,46 @@ func TestInstallFileRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSelfUpdateHandoffRunsCandidateAndRestoresAfterCrash(t *testing.T) {
+	dir := t.TempDir()
+	old := filepath.Join(dir, "old-agentmux")
+	installed := filepath.Join(dir, "agentmux")
+	candidate := filepath.Join(dir, "candidate")
+	marker := filepath.Join(dir, "candidate-ran")
+	if err := os.WriteFile(old, []byte("old build"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(installed, []byte("old build"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(candidate, []byte("#!/bin/sh\nprintf candidate > \"$MARKER\"\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MARKER", marker)
+	cfg := selfUpdateHostConfig{AgentmuxBin: installed}
+	if err := selfUpdateHandoff(candidate, old, cfg, func() error { t.Fatal("unexpected recovery"); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(marker); err != nil || string(got) != "candidate" {
+		t.Fatalf("candidate marker = %q, %v", got, err)
+	}
+
+	if err := os.WriteFile(installed, []byte("candidate installed"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(candidate, []byte("#!/bin/sh\nexit 23\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	recovered := false
+	err := selfUpdateHandoff(candidate, old, cfg, func() error { recovered = true; return nil })
+	if err == nil || !recovered {
+		t.Fatalf("handoff error = %v; recovered = %v", err, recovered)
+	}
+	if got, readErr := os.ReadFile(installed); readErr != nil || string(got) != "old build" {
+		t.Fatalf("installed after crash = %q, %v", got, readErr)
+	}
+}
+
 func writeTestFile(path, content string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

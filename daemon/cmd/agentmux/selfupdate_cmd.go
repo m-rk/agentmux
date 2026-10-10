@@ -59,11 +59,43 @@ func runSelfUpdateCmd(args []string) {
 		runSelfUpdateInstall(args[1:])
 	case "run":
 		runSelfUpdateRun(args[1:])
+	case selfUpdateStage2Command:
+		runSelfUpdateStage2(args[1:])
 	case "status":
 		runSelfUpdateStatus(args[1:])
 	default:
 		fmt.Fprintln(os.Stderr, selfUpdateUsage)
 		os.Exit(2)
+	}
+}
+
+const (
+	selfUpdateStage2Command = "stage2-v1"
+	selfUpdateStage2Timeout = 5 * time.Minute
+)
+
+// runSelfUpdateStage2 is deliberately implemented by the candidate binary:
+// its smoke and install logic are therefore the code being evaluated.
+func runSelfUpdateStage2(args []string) {
+	fs := flag.NewFlagSet("self-update stage2", flag.ExitOnError)
+	from := fs.String("from", "", "previous agentmux binary for rollback")
+	var cfg selfUpdateHostConfig
+	defineSelfUpdateConfigFlags(fs, &cfg)
+	_ = fs.Parse(args)
+	if *from == "" || fs.NArg() != 0 {
+		log.Fatal("self-update stage2: -from is required")
+	}
+	cfg = resolveSelfUpdateConfig(cfg)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		log.Fatal(err)
+	}
+	built, err := os.Executable()
+	if err == nil {
+		err = selfUpdateInstallRepo(home, cfg, "agentmux", built)
+	}
+	if err != nil {
+		log.Fatalf("self-update stage2: %v", err)
 	}
 }
 
@@ -314,8 +346,81 @@ func selfUpdateOneRepo(home string, cfg selfUpdateHostConfig, r selfUpdateRepo, 
 	if err != nil {
 		return recordFail(home, r.name, wantSHA, err.Error())
 	}
+	if r.name == "agentmux" {
+		oldBin, err := os.Executable()
+		if err != nil {
+			return recordFail(home, r.name, wantSHA, fmt.Sprintf("locating installed binary: %v", err))
+		}
+		if err := selfUpdateHandoff(bin, oldBin, cfg, func() error {
+			return selfUpdateRestoreAndRestart(oldBin)
+		}); err != nil {
+			return recordFail(home, r.name, wantSHA, err.Error())
+		}
+		return nil
+	}
 	if err := selfUpdateInstallRepo(home, cfg, r.name, bin); err != nil {
 		return recordFail(home, r.name, wantSHA, err.Error())
+	}
+	return nil
+}
+
+// selfUpdateHandoff lets the candidate run stage two, which owns the smoke
+// check and install. Stage one remains responsible for the hard timeout and
+// restoring the previous executable if stage two exits unsuccessfully.
+func selfUpdateHandoff(candidate, oldBin string, cfg selfUpdateHostConfig, recover func() error) error {
+	backup := cfg.AgentmuxBin + ".stage1-prev"
+	if err := copyFile(oldBin, backup, 0o755); err != nil {
+		return fmt.Errorf("saving stage-one rollback binary: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), selfUpdateStage2Timeout)
+	defer cancel()
+	args := []string{"self-update", selfUpdateStage2Command, "-from", oldBin}
+	for _, f := range []struct{ name, value string }{
+		{"-agentmux-url", cfg.AgentmuxURL}, {"-mergentic-url", cfg.MergenticURL},
+		{"-agentmux-dir", cfg.AgentmuxDir}, {"-mergentic-dir", cfg.MergenticDir},
+		{"-agentmux-bin", cfg.AgentmuxBin}, {"-mergentic-bin", cfg.MergenticBin},
+		{"-agents-bin-dir", cfg.AgentsBinDir}, {"-socket", cfg.GatewaySocket}, {"-go-bin", cfg.GoBin},
+	} {
+		if f.value != "" {
+			args = append(args, f.name, f.value)
+		}
+	}
+	cmd := exec.CommandContext(ctx, candidate, args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		cause := fmt.Errorf("stage two: %w: %s", err, strings.TrimSpace(string(out)))
+		if ctx.Err() != nil {
+			cause = fmt.Errorf("stage two timed out after %s", selfUpdateStage2Timeout)
+		}
+		restoreErr := restoreStageOneBackup(backup, cfg.AgentmuxBin)
+		if restoreErr != nil {
+			return fmt.Errorf("%v; restoring old build failed: %w", cause, restoreErr)
+		}
+		if recoverErr := recover(); recoverErr != nil {
+			return fmt.Errorf("%v; restoring old build failed: %w", cause, recoverErr)
+		}
+		_ = os.Remove(backup)
+		return cause
+	}
+	_ = os.Remove(backup)
+	return nil
+}
+
+func restoreStageOneBackup(backup, dst string) error {
+	tmp := dst + ".stage1-tmp"
+	if err := copyFile(backup, tmp, 0o755); err != nil {
+		return err
+	}
+	return os.Rename(tmp, dst)
+}
+
+// selfUpdateRestoreAndRestart is stage one's crash/timeout recovery path.
+func selfUpdateRestoreAndRestart(oldBin string) error {
+	cmd := exec.Command(oldBin, "daemon", "install")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("restarting old daemon: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("launchctl", "kickstart", "-k", "gui/"+selfUpdateUID()+"/"+gatewayLabel).CombinedOutput(); err != nil {
+		return fmt.Errorf("restarting gateway: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
