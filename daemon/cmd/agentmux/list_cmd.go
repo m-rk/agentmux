@@ -111,7 +111,7 @@ func runListCmd(args []string) {
 	for _, e := range errs {
 		fmt.Fprintln(os.Stderr, "warning: "+e)
 	}
-	if len(errs) > 0 && len(rows) == 0 {
+	if len(rows) == 0 && (len(errs) > 0 || len(hosts) == 0) {
 		os.Exit(1)
 	}
 }

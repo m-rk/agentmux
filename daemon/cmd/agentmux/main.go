@@ -149,7 +149,7 @@ Usage:
   agentmux rename ...          rename an instance's tmux session/display name
   agentmux remove -instance NAME  stop, disable, and archive an instance
   agentmux resume-list ...     list resumable Claude Code sessions for a workdir
-  agentmux list                headless instance status (name/agent/model/status/workdir); add -json for scripts
+  agentmux list                headless instance status; partial host failures warn on stderr; add -json for scripts
   agentmux sessions resolve [-json] INSTANCE@HOST[#THREAD]
                                look up the session an address names (see docs/design/gateway.md)
   agentmux sessions threads|read [-json] INSTANCE@HOST[#THREAD]
