@@ -98,6 +98,27 @@ and `.git/hooks` stay read-only (a worker's write to either fails), so it
 cannot change config or plant a hook. Existing instances keep the add-dirs they
 were created with; recreate them to pick up the grant.
 
+### Full project tests from a Codex task
+
+Run `scripts/codex-test.sh` from the worktree to execute the approved full
+daemon suite (`go test ./...`). The command is fixed in the script and accepts
+no arguments. It runs with `nice -n 10`, puts `GOCACHE`, `GOTMPDIR`, and its
+captured output under the task worktree's private `.agentmux-codex-test/`
+directory, and streams test output to the calling thread. Its final
+`CODEX_TEST_RESULT` line includes the exit code and elapsed seconds. A failed
+command containing permission, read-only filesystem, namespace, or local
+network denial markers is labeled `sandbox_denial`; Go failure lines are
+reported as `test_failure`. If both appear, the result is
+`sandbox_denial_and_test_failure`. The script returns the original test
+command's exit code in every failure case.
+
+This is the project-specific entry point for a one-command sandbox approval
+when the task runner requires one for test listeners. It does not change
+Codex's sandbox mode, approvals, or network access for later commands. A
+`sandbox_denial` means the suite did not produce a trustworthy pass/fail result;
+rerun through the task runner's approved command path. The normal ship check
+remains authoritative.
+
 ## Spend
 
 Usage draws on the logged-in ChatGPT plan's quota and rate limits, not
