@@ -148,10 +148,16 @@ func selfUpdateInstallAgentmux(home string, cfg selfUpdateHostConfig, built stri
 		_ = restarter()
 		return rollbackLogged(home, "agentmux", wantSHA, fmt.Sprintf("restart: %v", err))
 	}
-	if err := selfUpdateSmoke(cfg); err != nil {
+	warnings, err := selfUpdateSmoke(cfg)
+	if err != nil {
 		_ = rollbackFile(bin)
 		_ = restarter()
 		return rollbackLogged(home, "agentmux", wantSHA, fmt.Sprintf("smoke: %v", err))
+	}
+	for _, warning := range warnings {
+		if err := recordSmokeWarning(home, wantSHA, warning); err != nil {
+			log.Printf("self-update: recording smoke warning: %v", err)
+		}
 	}
 	_ = haveSHA
 	return nil
@@ -197,15 +203,36 @@ func rollbackLogged(home, repo, sha, reason string) error {
 	return fmt.Errorf("%s", reason)
 }
 
+// recordSmokeWarning records one warning per shipped SHA on this host. The
+// updater log is exposed by sessions versions and selfupdate-log.
+func recordSmokeWarning(home, sha, warning string) error {
+	line := fmt.Sprintf("warning agentmux@%s: smoke: %s", sha, warning)
+	contents, err := os.ReadFile(selfupdate.LogPath(home))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	key := fmt.Sprintf("warning agentmux@%s:", sha)
+	for _, existing := range strings.Split(string(contents), "\n") {
+		if strings.Contains(existing, key) {
+			return nil
+		}
+	}
+	if err := selfupdate.LogEvent(home, line); err != nil {
+		return err
+	}
+	log.Printf("self-update: %s", line)
+	return nil
+}
+
 // selfUpdateSmoke checks the daemon and gateway answer: the same dry-run
 // create+run the hub deploy uses (see deploySmokeTest), pointed at the
 // local host. It creates nothing.
-func selfUpdateSmoke(cfg selfUpdateHostConfig) error {
+func selfUpdateSmoke(cfg selfUpdateHostConfig) ([]string, error) {
 	sock := cfg.GatewaySocket
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	if err := selfUpdateSmokeDaemon(ctx, sock); err != nil {
-		return err
+		return nil, err
 	}
 	return selfUpdateSmokeGateway(ctx, sock)
 }
@@ -223,17 +250,41 @@ func selfUpdateSmokeDaemon(ctx context.Context, sock string) error {
 // dry-run run through the local daemon, the same check deploy runs per
 // host (AMUX-27). A forbidden create or run is skipped, not failed, for
 // the same reason as in deploy: the grant is deliberately narrow.
-func selfUpdateSmokeGateway(ctx context.Context, sock string) error {
-	tmpl := deployDefaultTemplate(ctx, sock)
-	if tmpl == "" {
-		return nil // no instances: nothing to validate against
+func selfUpdateSmokeGateway(ctx context.Context, sock string) ([]string, error) {
+	sessions, err := (ops.Env{SocketPath: sock}).List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("gateway list: %w", err)
 	}
+	if len(sessions) == 0 {
+		return nil, nil // no instances: nothing to validate against
+	}
+	templates := make([]string, 0, len(sessions))
+	seen := map[string]bool{}
+	for _, session := range sessions {
+		if !seen[session.Name] {
+			seen[session.Name] = true
+			templates = append(templates, session.Name)
+		}
+	}
+	var warnings []string
+	for _, tmpl := range templates {
+		if err := selfUpdateSmokeTemplate(ctx, sock, tmpl); err != nil {
+			warnings = append(warnings, fmt.Sprintf("template %s: %v", tmpl, err))
+		}
+	}
+	if len(warnings) == len(templates) {
+		return nil, fmt.Errorf("all %d templates failed smoke checks: %s", len(templates), strings.Join(warnings, "; "))
+	}
+	return warnings, nil
+}
+
+func selfUpdateSmokeTemplate(ctx context.Context, sock, tmpl string) error {
 	branch := "smoke/self-update-" + time.Now().Format("20060102-150405")
 	creq, rreq, err := selfUpdateSmokeRequests(tmpl, address.LocalHostName(), branch)
 	if err != nil {
 		return err
 	}
-	cres, cerr := (ops.Env{SocketPath: sock}).Create(ctx, creq)
+	_, cerr := (ops.Env{SocketPath: sock}).Create(ctx, creq)
 	if cerr != nil && !selfUpdateSmokeCreateSkippable(cerr) {
 		e := ops.AsError(cerr)
 		return fmt.Errorf("dry-run create: %s: %s", e.Reason, e.Detail)
@@ -242,7 +293,6 @@ func selfUpdateSmokeGateway(ctx context.Context, sock string) error {
 		e := ops.AsError(rerr)
 		return fmt.Errorf("dry-run run: %s: %s", e.Reason, e.Detail)
 	}
-	_ = cres
 	return nil
 }
 

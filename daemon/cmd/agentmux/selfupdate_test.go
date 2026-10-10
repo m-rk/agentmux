@@ -332,6 +332,24 @@ func TestSelfUpdateSmokeSkipsOnlyNonGitCreateTemplate(t *testing.T) {
 	}
 }
 
+func TestRecordSmokeWarningOncePerSHA(t *testing.T) {
+	home := t.TempDir()
+	sha := "2fe1a235a6f68f54bafcdcf2479e85c97b47a32e"
+	if err := recordSmokeWarning(home, sha, "template worker: bad config"); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordSmokeWarning(home, sha, "template another: bad address"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(selfupdate.LogPath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), "warning agentmux@"+sha); got != 1 {
+		t.Fatalf("warning count = %d, want one: %s", got, data)
+	}
+}
+
 func TestInstalledDoctorTime(t *testing.T) {
 	dir := t.TempDir()
 	home := dir + "/home"

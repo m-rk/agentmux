@@ -43,10 +43,12 @@ and installs atomically (temp file, then rename). See AMUX-29.
   to `~/.agentmux/self-update/update.log`; a local session that is
   mid-deploy holds `deploy.lock` (`agentmux deploy begin|end`) and the
   run skips while it exists.
-- Smoke test and rollback: after installing and restarting, the same
-  dry-run create+run the hub deploy uses must pass. On failure the
-  kept previous binary goes back, services restart, and the failure
-  logs. The Mac is never left on a failed build.
+- Smoke test and rollback: after installing and restarting, the updater
+  checks the daemon and gateway, then probes each instance template. A
+  daemon or gateway failure, or a failure shared by every template,
+  rolls back. Template-specific failures are logged as one warning per
+  shipped SHA and the update remains installed; the warning appears in
+  `sessions versions` and `sessions selfupdate-log`.
 - Visibility: the installed commit per repo lives in
   `~/.agentmux/self-update/versions.json`; the gate in `shipped.json`.
   The gateway serves both plus the log tail, so the orchestrator can
