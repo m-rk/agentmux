@@ -129,7 +129,6 @@ func ArchiveManaged(instance string) (string, error) {
 		for _, unit := range artifactUnits(instance) {
 			systemctl("disable", "--now", unit)
 		}
-		systemctl("daemon-reload")
 	} else {
 		for _, label := range artifactLabels(instance) {
 			launchctlBootout(label)
@@ -153,6 +152,7 @@ func ArchiveManaged(instance string) (string, error) {
 				return "", err
 			}
 		}
+		systemctl("daemon-reload")
 	} else {
 		home := runas.CurrentUserHome()
 		for _, label := range artifactLabels(instance) {
