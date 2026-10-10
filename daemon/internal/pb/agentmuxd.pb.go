@@ -1901,6 +1901,150 @@ func (x *SendTextResponse) GetMessage() string {
 	return ""
 }
 
+type RunTaskCheckRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Instance      string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RunTaskCheckRequest) Reset() {
+	*x = RunTaskCheckRequest{}
+	mi := &file_agentmuxd_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunTaskCheckRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunTaskCheckRequest) ProtoMessage() {}
+
+func (x *RunTaskCheckRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agentmuxd_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunTaskCheckRequest.ProtoReflect.Descriptor instead.
+func (*RunTaskCheckRequest) Descriptor() ([]byte, []int) {
+	return file_agentmuxd_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *RunTaskCheckRequest) GetInstance() string {
+	if x != nil {
+		return x.Instance
+	}
+	return ""
+}
+
+type RunTaskCheckResponse struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Ok              bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"` // false means the request was refused or could not be run
+	Message         string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Project         string                 `protobuf:"bytes,3,opt,name=project,proto3" json:"project,omitempty"`
+	Result          string                 `protobuf:"bytes,4,opt,name=result,proto3" json:"result,omitempty"`                      // passed, sandbox_denial, test_failure, mixed_failure, execution_error
+	Output          string                 `protobuf:"bytes,5,opt,name=output,proto3" json:"output,omitempty"`                      // combined stdout and stderr
+	ExitCode        int32                  `protobuf:"varint,6,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"` // original command exit code; -1 if it could not start
+	DurationMs      int64                  `protobuf:"varint,7,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	OutputTruncated bool                   `protobuf:"varint,8,opt,name=output_truncated,json=outputTruncated,proto3" json:"output_truncated,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *RunTaskCheckResponse) Reset() {
+	*x = RunTaskCheckResponse{}
+	mi := &file_agentmuxd_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunTaskCheckResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunTaskCheckResponse) ProtoMessage() {}
+
+func (x *RunTaskCheckResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_agentmuxd_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunTaskCheckResponse.ProtoReflect.Descriptor instead.
+func (*RunTaskCheckResponse) Descriptor() ([]byte, []int) {
+	return file_agentmuxd_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *RunTaskCheckResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+func (x *RunTaskCheckResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *RunTaskCheckResponse) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *RunTaskCheckResponse) GetResult() string {
+	if x != nil {
+		return x.Result
+	}
+	return ""
+}
+
+func (x *RunTaskCheckResponse) GetOutput() string {
+	if x != nil {
+		return x.Output
+	}
+	return ""
+}
+
+func (x *RunTaskCheckResponse) GetExitCode() int32 {
+	if x != nil {
+		return x.ExitCode
+	}
+	return 0
+}
+
+func (x *RunTaskCheckResponse) GetDurationMs() int64 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
+func (x *RunTaskCheckResponse) GetOutputTruncated() bool {
+	if x != nil {
+		return x.OutputTruncated
+	}
+	return false
+}
+
 var File_agentmuxd_proto protoreflect.FileDescriptor
 
 const file_agentmuxd_proto_rawDesc = "" +
@@ -2013,7 +2157,19 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\x06submit\x18\x03 \x01(\bR\x06submit\"<\n" +
 	"\x10SendTextResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage*R\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"1\n" +
+	"\x13RunTaskCheckRequest\x12\x1a\n" +
+	"\binstance\x18\x01 \x01(\tR\binstance\"\xf3\x01\n" +
+	"\x14RunTaskCheckResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12\x18\n" +
+	"\aproject\x18\x03 \x01(\tR\aproject\x12\x16\n" +
+	"\x06result\x18\x04 \x01(\tR\x06result\x12\x16\n" +
+	"\x06output\x18\x05 \x01(\tR\x06output\x12\x1b\n" +
+	"\texit_code\x18\x06 \x01(\x05R\bexitCode\x12\x1f\n" +
+	"\vduration_ms\x18\a \x01(\x03R\n" +
+	"durationMs\x12)\n" +
+	"\x10output_truncated\x18\b \x01(\bR\x0foutputTruncated*R\n" +
 	"\x06Status\x12\x12\n" +
 	"\x0eSTATUS_UNKNOWN\x10\x00\x12\x12\n" +
 	"\x0eSTATUS_RUNNING\x10\x01\x12\x0f\n" +
@@ -2027,7 +2183,7 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\x0fCONTROL_UNKNOWN\x10\x00\x12\x11\n" +
 	"\rCONTROL_START\x10\x01\x12\x10\n" +
 	"\fCONTROL_STOP\x10\x02\x12\x13\n" +
-	"\x0fCONTROL_RESTART\x10\x032\x99\b\n" +
+	"\x0fCONTROL_RESTART\x10\x032\xf0\b\n" +
 	"\x0eAgentmuxDaemon\x12X\n" +
 	"\rListInstances\x12\".agentmuxd.v1.ListInstancesRequest\x1a#.agentmuxd.v1.ListInstancesResponse\x12P\n" +
 	"\fStreamEvents\x12!.agentmuxd.v1.StreamEventsRequest\x1a\x1b.agentmuxd.v1.InstanceEvent0\x01\x12F\n" +
@@ -2040,7 +2196,8 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\x0eRetireInstance\x12#.agentmuxd.v1.RetireInstanceRequest\x1a$.agentmuxd.v1.RetireInstanceResponse\x12I\n" +
 	"\bViewPane\x12\x1d.agentmuxd.v1.ViewPaneRequest\x1a\x1e.agentmuxd.v1.ViewPaneResponse\x12I\n" +
 	"\bSendKeys\x12\x1d.agentmuxd.v1.SendKeysRequest\x1a\x1e.agentmuxd.v1.SendKeysResponse\x12I\n" +
-	"\bSendText\x12\x1d.agentmuxd.v1.SendTextRequest\x1a\x1e.agentmuxd.v1.SendTextResponseB-Z+github.com/m-rk/agentmux/daemon/internal/pbb\x06proto3"
+	"\bSendText\x12\x1d.agentmuxd.v1.SendTextRequest\x1a\x1e.agentmuxd.v1.SendTextResponse\x12U\n" +
+	"\fRunTaskCheck\x12!.agentmuxd.v1.RunTaskCheckRequest\x1a\".agentmuxd.v1.RunTaskCheckResponseB-Z+github.com/m-rk/agentmux/daemon/internal/pbb\x06proto3"
 
 var (
 	file_agentmuxd_proto_rawDescOnce sync.Once
@@ -2055,7 +2212,7 @@ func file_agentmuxd_proto_rawDescGZIP() []byte {
 }
 
 var file_agentmuxd_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_agentmuxd_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
+var file_agentmuxd_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
 var file_agentmuxd_proto_goTypes = []any{
 	(Status)(0),                           // 0: agentmuxd.v1.Status
 	(EventType)(0),                        // 1: agentmuxd.v1.EventType
@@ -2088,6 +2245,8 @@ var file_agentmuxd_proto_goTypes = []any{
 	(*SendKeysResponse)(nil),              // 28: agentmuxd.v1.SendKeysResponse
 	(*SendTextRequest)(nil),               // 29: agentmuxd.v1.SendTextRequest
 	(*SendTextResponse)(nil),              // 30: agentmuxd.v1.SendTextResponse
+	(*RunTaskCheckRequest)(nil),           // 31: agentmuxd.v1.RunTaskCheckRequest
+	(*RunTaskCheckResponse)(nil),          // 32: agentmuxd.v1.RunTaskCheckResponse
 }
 var file_agentmuxd_proto_depIdxs = []int32{
 	0,  // 0: agentmuxd.v1.Instance.status:type_name -> agentmuxd.v1.Status
@@ -2110,20 +2269,22 @@ var file_agentmuxd_proto_depIdxs = []int32{
 	25, // 17: agentmuxd.v1.AgentmuxDaemon.ViewPane:input_type -> agentmuxd.v1.ViewPaneRequest
 	27, // 18: agentmuxd.v1.AgentmuxDaemon.SendKeys:input_type -> agentmuxd.v1.SendKeysRequest
 	29, // 19: agentmuxd.v1.AgentmuxDaemon.SendText:input_type -> agentmuxd.v1.SendTextRequest
-	5,  // 20: agentmuxd.v1.AgentmuxDaemon.ListInstances:output_type -> agentmuxd.v1.ListInstancesResponse
-	7,  // 21: agentmuxd.v1.AgentmuxDaemon.StreamEvents:output_type -> agentmuxd.v1.InstanceEvent
-	11, // 22: agentmuxd.v1.AgentmuxDaemon.Attach:output_type -> agentmuxd.v1.ServerMessage
-	13, // 23: agentmuxd.v1.AgentmuxDaemon.Control:output_type -> agentmuxd.v1.ControlResponse
-	15, // 24: agentmuxd.v1.AgentmuxDaemon.CreateInstance:output_type -> agentmuxd.v1.CreateInstanceResponse
-	17, // 25: agentmuxd.v1.AgentmuxDaemon.GetCreateOptions:output_type -> agentmuxd.v1.GetCreateOptionsResponse
-	20, // 26: agentmuxd.v1.AgentmuxDaemon.ListResumableSessions:output_type -> agentmuxd.v1.ListResumableSessionsResponse
-	22, // 27: agentmuxd.v1.AgentmuxDaemon.RenameInstance:output_type -> agentmuxd.v1.RenameInstanceResponse
-	24, // 28: agentmuxd.v1.AgentmuxDaemon.RetireInstance:output_type -> agentmuxd.v1.RetireInstanceResponse
-	26, // 29: agentmuxd.v1.AgentmuxDaemon.ViewPane:output_type -> agentmuxd.v1.ViewPaneResponse
-	28, // 30: agentmuxd.v1.AgentmuxDaemon.SendKeys:output_type -> agentmuxd.v1.SendKeysResponse
-	30, // 31: agentmuxd.v1.AgentmuxDaemon.SendText:output_type -> agentmuxd.v1.SendTextResponse
-	20, // [20:32] is the sub-list for method output_type
-	8,  // [8:20] is the sub-list for method input_type
+	31, // 20: agentmuxd.v1.AgentmuxDaemon.RunTaskCheck:input_type -> agentmuxd.v1.RunTaskCheckRequest
+	5,  // 21: agentmuxd.v1.AgentmuxDaemon.ListInstances:output_type -> agentmuxd.v1.ListInstancesResponse
+	7,  // 22: agentmuxd.v1.AgentmuxDaemon.StreamEvents:output_type -> agentmuxd.v1.InstanceEvent
+	11, // 23: agentmuxd.v1.AgentmuxDaemon.Attach:output_type -> agentmuxd.v1.ServerMessage
+	13, // 24: agentmuxd.v1.AgentmuxDaemon.Control:output_type -> agentmuxd.v1.ControlResponse
+	15, // 25: agentmuxd.v1.AgentmuxDaemon.CreateInstance:output_type -> agentmuxd.v1.CreateInstanceResponse
+	17, // 26: agentmuxd.v1.AgentmuxDaemon.GetCreateOptions:output_type -> agentmuxd.v1.GetCreateOptionsResponse
+	20, // 27: agentmuxd.v1.AgentmuxDaemon.ListResumableSessions:output_type -> agentmuxd.v1.ListResumableSessionsResponse
+	22, // 28: agentmuxd.v1.AgentmuxDaemon.RenameInstance:output_type -> agentmuxd.v1.RenameInstanceResponse
+	24, // 29: agentmuxd.v1.AgentmuxDaemon.RetireInstance:output_type -> agentmuxd.v1.RetireInstanceResponse
+	26, // 30: agentmuxd.v1.AgentmuxDaemon.ViewPane:output_type -> agentmuxd.v1.ViewPaneResponse
+	28, // 31: agentmuxd.v1.AgentmuxDaemon.SendKeys:output_type -> agentmuxd.v1.SendKeysResponse
+	30, // 32: agentmuxd.v1.AgentmuxDaemon.SendText:output_type -> agentmuxd.v1.SendTextResponse
+	32, // 33: agentmuxd.v1.AgentmuxDaemon.RunTaskCheck:output_type -> agentmuxd.v1.RunTaskCheckResponse
+	21, // [21:34] is the sub-list for method output_type
+	8,  // [8:21] is the sub-list for method input_type
 	8,  // [8:8] is the sub-list for extension type_name
 	8,  // [8:8] is the sub-list for extension extendee
 	0,  // [0:8] is the sub-list for field type_name
@@ -2149,7 +2310,7 @@ func file_agentmuxd_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agentmuxd_proto_rawDesc), len(file_agentmuxd_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   28,
+			NumMessages:   30,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

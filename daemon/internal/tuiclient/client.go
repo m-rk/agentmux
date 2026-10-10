@@ -129,6 +129,10 @@ func (c *Client) SendText(ctx context.Context, req *pb.SendTextRequest) (*pb.Sen
 	return c.api.SendText(ctx, req)
 }
 
+func (c *Client) RunTaskCheck(ctx context.Context, req *pb.RunTaskCheckRequest) (*pb.RunTaskCheckResponse, error) {
+	return c.api.RunTaskCheck(ctx, req)
+}
+
 func (c *Client) ViewPane(ctx context.Context, req *pb.ViewPaneRequest) (*pb.ViewPaneResponse, error) {
 	return c.api.ViewPane(ctx, req)
 }

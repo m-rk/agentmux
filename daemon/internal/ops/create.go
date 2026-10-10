@@ -396,7 +396,15 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 		return CreateResult{}, Refuse(safesend.ReasonFailed, "recording branch for %s: %v", req.Instance, err)
 	}
 	sess := SessionFrom(tmpl.Host, inst)
-	sess.Project = ProjectOf(inst.Name, inst.Workdir, ProjectKeys())
+	// Resolve the project from the source template, whose registry or project
+	// mapping is authoritative for the assigned checkout, then persist it on
+	// the task instance for host-side project checks.
+	sess.Project = ProjectOf(tmpl.Instance, tmplWorkdir, ProjectKeys())
+	if sess.Project != "" {
+		if err := session.SetRegistryField(req.Instance, "AGENTMUX_PROJECT", sess.Project); err != nil {
+			return CreateResult{}, Refuse(safesend.ReasonFailed, "recording project for %s: %v", req.Instance, err)
+		}
+	}
 	res := CreateResult{Session: sess, Branch: req.Branch, Created: created}
 	if agent == "codex" && len(allow) > 0 {
 		res.Warnings = append(res.Warnings, "codex has no per-file allowlist: -allow-file is stored but not applied; the run is confined to its worktree"+codexAddDirsNote(fields))

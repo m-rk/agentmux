@@ -100,24 +100,22 @@ were created with; recreate them to pick up the grant.
 
 ### Full project tests from a Codex task
 
-Run `scripts/codex-test.sh` from the worktree to execute the approved full
-daemon suite (`go test ./...`). The command is fixed in the script and accepts
-no arguments. It runs with `nice -n 10`, puts `GOCACHE`, `GOTMPDIR`, and its
-captured output under the task worktree's private `.agentmux-codex-test/`
-directory, and streams test output to the calling thread. Its final
-`CODEX_TEST_RESULT` line includes the exit code and elapsed seconds. A failed
-command containing permission, read-only filesystem, namespace, or local
-network denial markers is labeled `sandbox_denial`; Go failure lines are
-reported as `test_failure`. If both appear, the result is
-`sandbox_denial_and_test_failure`. The script returns the original test
-command's exit code in every failure case.
+Inside a Codex task session run `agentmux sessions check`. The CLI sends only
+the stamped task instance name to the local daemon. The daemon reads the
+project, worktree and run user from that instance's registry. It accepts only
+the fixed `go test ./...` check for `m-rk/agentmux`, and `go vet ./...` followed
+by `go test ./...` for `m-rk/mergentic`. It runs the commands as the ordinary
+task user with `nice -n 10`, module downloads and automatic toolchain downloads
+disabled, and a private cache/temp directory inside that worktree. The
+directory is removed when the check finishes.
 
-This is the project-specific entry point for a one-command sandbox approval
-when the task runner requires one for test listeners. It does not change
-Codex's sandbox mode, approvals, or network access for later commands. A
-`sandbox_denial` means the suite did not produce a trustworthy pass/fail result;
-rerun through the task runner's approved command path. The normal ship check
-remains authoritative.
+The CLI prints combined stdout/stderr and a final result line with project,
+exit code and duration in the same Codex thread. `sandbox_denial` identifies
+host permission or local-listener restrictions, `test_failure` identifies a
+failed check, `mixed_failure` reports both, and `execution_error` means the
+check could not start or finish. The RPC accepts no arbitrary command or path
+and does not change Codex's sandbox settings. The normal ship check remains
+authoritative.
 
 ## Spend
 

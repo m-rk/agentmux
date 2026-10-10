@@ -31,6 +31,7 @@ const (
 	AgentmuxDaemon_ViewPane_FullMethodName              = "/agentmuxd.v1.AgentmuxDaemon/ViewPane"
 	AgentmuxDaemon_SendKeys_FullMethodName              = "/agentmuxd.v1.AgentmuxDaemon/SendKeys"
 	AgentmuxDaemon_SendText_FullMethodName              = "/agentmuxd.v1.AgentmuxDaemon/SendText"
+	AgentmuxDaemon_RunTaskCheck_FullMethodName          = "/agentmuxd.v1.AgentmuxDaemon/RunTaskCheck"
 )
 
 // AgentmuxDaemonClient is the client API for AgentmuxDaemon service.
@@ -88,6 +89,10 @@ type AgentmuxDaemonClient interface {
 	// as SendKeys applies; the readiness checks, provenance and audit for
 	// orchestrator sends live in the caller (`agentmux sessions send`).
 	SendText(ctx context.Context, in *SendTextRequest, opts ...grpc.CallOption) (*SendTextResponse, error)
+	// Runs the trusted full Go check for one registered Codex task. The caller
+	// supplies only the instance name; workdir, project and run user come from
+	// that instance's registry. No command or path is accepted from the client.
+	RunTaskCheck(ctx context.Context, in *RunTaskCheckRequest, opts ...grpc.CallOption) (*RunTaskCheckResponse, error)
 }
 
 type agentmuxDaemonClient struct {
@@ -230,6 +235,16 @@ func (c *agentmuxDaemonClient) SendText(ctx context.Context, in *SendTextRequest
 	return out, nil
 }
 
+func (c *agentmuxDaemonClient) RunTaskCheck(ctx context.Context, in *RunTaskCheckRequest, opts ...grpc.CallOption) (*RunTaskCheckResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RunTaskCheckResponse)
+	err := c.cc.Invoke(ctx, AgentmuxDaemon_RunTaskCheck_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AgentmuxDaemonServer is the server API for AgentmuxDaemon service.
 // All implementations must embed UnimplementedAgentmuxDaemonServer
 // for forward compatibility.
@@ -285,6 +300,10 @@ type AgentmuxDaemonServer interface {
 	// as SendKeys applies; the readiness checks, provenance and audit for
 	// orchestrator sends live in the caller (`agentmux sessions send`).
 	SendText(context.Context, *SendTextRequest) (*SendTextResponse, error)
+	// Runs the trusted full Go check for one registered Codex task. The caller
+	// supplies only the instance name; workdir, project and run user come from
+	// that instance's registry. No command or path is accepted from the client.
+	RunTaskCheck(context.Context, *RunTaskCheckRequest) (*RunTaskCheckResponse, error)
 	mustEmbedUnimplementedAgentmuxDaemonServer()
 }
 
@@ -330,6 +349,9 @@ func (UnimplementedAgentmuxDaemonServer) SendKeys(context.Context, *SendKeysRequ
 }
 func (UnimplementedAgentmuxDaemonServer) SendText(context.Context, *SendTextRequest) (*SendTextResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SendText not implemented")
+}
+func (UnimplementedAgentmuxDaemonServer) RunTaskCheck(context.Context, *RunTaskCheckRequest) (*RunTaskCheckResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RunTaskCheck not implemented")
 }
 func (UnimplementedAgentmuxDaemonServer) mustEmbedUnimplementedAgentmuxDaemonServer() {}
 func (UnimplementedAgentmuxDaemonServer) testEmbeddedByValue()                        {}
@@ -550,6 +572,24 @@ func _AgentmuxDaemon_SendText_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AgentmuxDaemon_RunTaskCheck_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RunTaskCheckRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentmuxDaemonServer).RunTaskCheck(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentmuxDaemon_RunTaskCheck_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentmuxDaemonServer).RunTaskCheck(ctx, req.(*RunTaskCheckRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AgentmuxDaemon_ServiceDesc is the grpc.ServiceDesc for AgentmuxDaemon service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -596,6 +636,10 @@ var AgentmuxDaemon_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SendText",
 			Handler:    _AgentmuxDaemon_SendText_Handler,
+		},
+		{
+			MethodName: "RunTaskCheck",
+			Handler:    _AgentmuxDaemon_RunTaskCheck_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

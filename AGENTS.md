@@ -122,6 +122,7 @@ headless CLI equivalent:
 | (list) | `agentmux list` (`-json` for scripts) |
 | — | `agentmux view -instance NAME` — read-only pane snapshot |
 | — | `agentmux send-keys -instance NAME KEY...` — type into a pane |
+| — | `agentmux sessions check` — run the registered Codex task's fixed project check on the daemon host and return output/status |
 | — | `agentmux doctor -dry-run` — preview the host-wide health/recovery pass |
 | — | `agentmux threadwatch status` — open thread-watch intervene signals |
 | — | `agentmux threadwatch jev-test` — check a configured TypeSafe key |

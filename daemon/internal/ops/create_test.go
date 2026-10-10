@@ -118,7 +118,7 @@ func wantReason(t *testing.T, err error, r safesend.Reason) {
 }
 
 func TestCreateMakesWorktreeAndInstance(t *testing.T) {
-	c := newCreateEnv(t)
+	c := newCreateEnv(t, "AGENTMUX_PROJECT=m-rk/agentmux")
 	res, err := c.env.Create(context.Background(), c.req())
 	if err != nil {
 		t.Fatal(err)
@@ -132,6 +132,10 @@ func TestCreateMakesWorktreeAndInstance(t *testing.T) {
 	}
 	if len(c.d.created) != 1 {
 		t.Fatalf("created = %d instances", len(c.d.created))
+	}
+	taskFields, err := session.ReadRegistry("task-1")
+	if err != nil || taskFields["AGENTMUX_PROJECT"] != "m-rk/agentmux" {
+		t.Fatalf("task project registry = %q, %v", taskFields["AGENTMUX_PROJECT"], err)
 	}
 	r := c.d.created[0]
 	if r.InstanceName != "task-1" || r.Agent != "opencode" || r.Provider != "ollama" || r.Model != "m1" ||

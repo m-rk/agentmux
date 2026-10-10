@@ -3,3 +3,6 @@
 /kilo.json
 /opencode.json
 /.agentmux-codex-test/
+/.agentmux-test-*/
+/daemon/.agentmux-codex-test/
+/daemon/.agentmux-test-*/

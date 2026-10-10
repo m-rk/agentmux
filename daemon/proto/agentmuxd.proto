@@ -67,6 +67,11 @@ service AgentmuxDaemon {
   // as SendKeys applies; the readiness checks, provenance and audit for
   // orchestrator sends live in the caller (`agentmux sessions send`).
   rpc SendText(SendTextRequest) returns (SendTextResponse);
+
+  // Runs the trusted full Go check for one registered Codex task. The caller
+  // supplies only the instance name; workdir, project and run user come from
+  // that instance's registry. No command or path is accepted from the client.
+  rpc RunTaskCheck(RunTaskCheckRequest) returns (RunTaskCheckResponse);
 }
 
 enum Status {
@@ -312,4 +317,19 @@ message SendTextRequest {
 message SendTextResponse {
   bool ok = 1;
   string message = 2;
+}
+
+message RunTaskCheckRequest {
+  string instance = 1;
+}
+
+message RunTaskCheckResponse {
+  bool ok = 1;               // false means the request was refused or could not be run
+  string message = 2;
+  string project = 3;
+  string result = 4;         // passed, sandbox_denial, test_failure, mixed_failure, execution_error
+  string output = 5;         // combined stdout and stderr
+  int32 exit_code = 6;       // original command exit code; -1 if it could not start
+  int64 duration_ms = 7;
+  bool output_truncated = 8;
 }

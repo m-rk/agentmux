@@ -38,6 +38,7 @@ const sessionsUsage = `usage:
                            [-base BRANCH] [-worktree NAME] [-allow-file PATH ...] [-model MODEL] [-effort EFFORT]
   agentmux sessions template add -from <instance>@<host> -agent codex [-name NAME] [-dry-run] [-json]
   agentmux sessions run [-json] [-dry-run] [-hosts PATH] [-thread THREAD_ID] [-title TEXT] [-mode MODE] [-template NAME] -file PATH|- <instance>@<host>[#<thread>]
+  agentmux sessions check [-json]
   agentmux sessions retire [-json] [-dry-run] [-hosts PATH] <instance>@<host>
   agentmux amp sweep [-json] [-dry-run] [-run-user USER]
                                archive junk amp threads that belong to no task instance
@@ -77,6 +78,8 @@ func runSessionsCmd(args []string) {
 		}
 	case "run":
 		runSessionsRun(args[1:])
+	case "check":
+		runSessionsCheck(args[1:])
 	case "retire":
 		runSessionsRetire(args[1:])
 	case "ship":

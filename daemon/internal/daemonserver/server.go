@@ -19,16 +19,59 @@ import (
 	"github.com/m-rk/agentmux/daemon/internal/pb"
 	"github.com/m-rk/agentmux/daemon/internal/provision"
 	"github.com/m-rk/agentmux/daemon/internal/runas"
+	"github.com/m-rk/agentmux/daemon/internal/session"
+	"github.com/m-rk/agentmux/daemon/internal/taskcheck"
+	"google.golang.org/grpc/peer"
 )
 
 const pollInterval = 2 * time.Second
 
 type Server struct {
 	pb.UnimplementedAgentmuxDaemonServer
+	runTaskCheck func(context.Context, taskcheck.Target) taskcheck.Result
 }
 
 func New() *Server {
-	return &Server{}
+	return &Server{runTaskCheck: taskcheck.Run}
+}
+
+// RunTaskCheck runs the registered task project's trusted full test check.
+// The RPC accepts only an instance name; paths, project IDs and command
+// arguments are taken from the registry or fixed by taskcheck.
+func (s *Server) RunTaskCheck(ctx context.Context, req *pb.RunTaskCheckRequest) (*pb.RunTaskCheckResponse, error) {
+	if req == nil {
+		return &pb.RunTaskCheckResponse{Message: "missing task instance", ExitCode: -1}, nil
+	}
+	if p, ok := peer.FromContext(ctx); ok && p.Addr != nil && p.Addr.Network() != "unix" && p.Addr.Network() != "bufconn" {
+		return &pb.RunTaskCheckResponse{Message: "project check is available only through the local daemon socket", ExitCode: -1}, nil
+	}
+	if err := provision.ValidateInstanceName(req.Instance); err != nil || !strings.HasPrefix(req.Instance, "task-") {
+		return &pb.RunTaskCheckResponse{Message: "project check is available only to task-* instances", ExitCode: -1}, nil
+	}
+	fields, err := session.ReadRegistry(req.Instance)
+	if err != nil {
+		return &pb.RunTaskCheckResponse{Message: fmt.Sprintf("reading task registry: %v", err), ExitCode: -1}, nil
+	}
+	target, err := taskcheck.Resolve(req.Instance, fields)
+	if err != nil {
+		return &pb.RunTaskCheckResponse{Message: err.Error(), ExitCode: -1}, nil
+	}
+	runner := s.runTaskCheck
+	if runner == nil {
+		runner = taskcheck.Run
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+	defer cancel()
+	result := runner(checkCtx, target)
+	return &pb.RunTaskCheckResponse{
+		Ok:              true,
+		Project:         result.Project,
+		Result:          result.Category,
+		Output:          result.Output,
+		ExitCode:        int32(result.ExitCode),
+		DurationMs:      result.Duration.Milliseconds(),
+		OutputTruncated: result.OutputTruncated,
+	}, nil
 }
 
 func (s *Server) ListInstances(ctx context.Context, _ *pb.ListInstancesRequest) (*pb.ListInstancesResponse, error) {
