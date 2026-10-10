@@ -169,6 +169,79 @@ func TestResolveSelfUpdateGoKeepsStableSymlink(t *testing.T) {
 	}
 }
 
+func TestSelfUpdateModuleDir(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		module string
+	}{
+		{name: "root", module: "."},
+		{name: "daemon", module: "daemon"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workdir := t.TempDir()
+			moduleDir := filepath.Join(workdir, tc.module)
+			if err := os.MkdirAll(moduleDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(moduleDir, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got, err := selfUpdateModuleDir(workdir)
+			if err != nil || got != moduleDir {
+				t.Fatalf("module directory = %q, %v; want %q", got, err, moduleDir)
+			}
+		})
+	}
+	if _, err := selfUpdateModuleDir(t.TempDir()); err == nil {
+		t.Fatal("missing Go module was accepted")
+	}
+}
+
+func TestSelfUpdateBuildUsesModuleDir(t *testing.T) {
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("Go executable unavailable")
+	}
+	for _, tc := range []struct {
+		repo   string
+		module string
+		pkg    string
+	}{
+		{repo: "agentmux", module: "daemon", pkg: "./cmd/agentmux"},
+		{repo: "mergentic", module: ".", pkg: "./cmd/mergentic"},
+	} {
+		t.Run(tc.repo, func(t *testing.T) {
+			workdir := t.TempDir()
+			moduleDir := filepath.Join(workdir, tc.module)
+			if err := os.MkdirAll(moduleDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(moduleDir, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			found, err := selfUpdateModuleDir(workdir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			called := false
+			run := func(dir, name string, args ...string) (string, error) {
+				called = true
+				if dir != moduleDir || name != goBin || len(args) != 4 || args[0] != "build" || args[1] != "-o" || args[3] != tc.pkg {
+					t.Fatalf("build command: dir=%q name=%q args=%q", dir, name, args)
+				}
+				if _, err := os.Stat(filepath.Dir(args[2])); err != nil {
+					t.Fatalf("build output directory: %v", err)
+				}
+				return "", nil
+			}
+			out, err := selfUpdateBuild(tc.repo, selfUpdateHostConfig{GoBin: goBin}, workdir, found, run)
+			if err != nil || !called || out != filepath.Join(workdir, "self-update-build", tc.repo) {
+				t.Fatalf("build = %q, %v; called=%t", out, err, called)
+			}
+		})
+	}
+}
+
 func TestInstalledDoctorTime(t *testing.T) {
 	dir := t.TempDir()
 	home := dir + "/home"

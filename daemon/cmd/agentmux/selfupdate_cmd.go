@@ -297,11 +297,15 @@ func selfUpdateOneRepo(home string, cfg selfUpdateHostConfig, r selfUpdateRepo, 
 		return recordFail(home, r.name, wantSHA, fmt.Sprintf("worktree: %v", err))
 	}
 	defer run(r.dir, "git", "worktree", "remove", "--force", workdir)
-	if out, err := run(workdir, goBin, "vet", "./..."); err != nil {
+	moduleDir, err := selfUpdateModuleDir(workdir)
+	if err != nil {
+		return recordFail(home, r.name, wantSHA, err.Error())
+	}
+	if out, err := run(moduleDir, goBin, "vet", "./..."); err != nil {
 		return recordFail(home, r.name, wantSHA, fmt.Sprintf("go vet: %v: %s", err, strings.TrimSpace(out)))
 	}
 	cfg.GoBin = goBin
-	bin, err := selfUpdateBuild(r.name, cfg, workdir, run)
+	bin, err := selfUpdateBuild(r.name, cfg, workdir, moduleDir, run)
 	if err != nil {
 		return recordFail(home, r.name, wantSHA, err.Error())
 	}
@@ -311,20 +315,38 @@ func selfUpdateOneRepo(home string, cfg selfUpdateHostConfig, r selfUpdateRepo, 
 	return nil
 }
 
+// selfUpdateModuleDir locates the Go module in either supported repository
+// layout. The checkout is a detached worktree at the shipped main commit.
+func selfUpdateModuleDir(workdir string) (string, error) {
+	for _, dir := range []string{workdir, filepath.Join(workdir, "daemon")} {
+		info, err := os.Stat(filepath.Join(dir, "go.mod"))
+		if err == nil && info.Mode().IsRegular() {
+			return dir, nil
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return "", fmt.Errorf("locating Go module: %w", err)
+		}
+	}
+	return "", fmt.Errorf("Go module not found at repository root or daemon/")
+}
+
 // selfUpdateBuild compiles repo in a temporary worktree and returns the
 // built binary path. agentmux builds ./cmd/agentmux; mergentic builds
 // ./cmd/mergentic.
-func selfUpdateBuild(repo string, cfg selfUpdateHostConfig, workdir string, run func(dir, name string, args ...string) (string, error)) (string, error) {
+func selfUpdateBuild(repo string, cfg selfUpdateHostConfig, workdir, moduleDir string, run func(dir, name string, args ...string) (string, error)) (string, error) {
 	pkg := "./cmd/agentmux"
 	if repo == "mergentic" {
 		pkg = "./cmd/mergentic"
 	}
 	out := filepath.Join(workdir, "self-update-build", repo)
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		return "", fmt.Errorf("creating self-update build directory: %w", err)
+	}
 	goBin, err := resolveSelfUpdateGo(cfg.GoBin, os.Getenv("PATH"))
 	if err != nil {
 		return "", err
 	}
-	if out, err := run(workdir, goBin, "build", "-o", out, pkg); err != nil {
+	if out, err := run(moduleDir, goBin, "build", "-o", out, pkg); err != nil {
 		return "", fmt.Errorf("go build %s: %w: %s", pkg, err, strings.TrimSpace(out))
 	}
 	_ = cfg
