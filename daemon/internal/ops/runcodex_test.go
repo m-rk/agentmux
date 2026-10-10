@@ -202,6 +202,27 @@ func TestRunCodexRefusesUnsafeSandbox(t *testing.T) {
 	}
 }
 
+func TestRunCodexUsesInstanceDefaultsOnRunAndResume(t *testing.T) {
+	_, workdir := newCodexEnv(t, "AGENTMUX_CODEX_EFFORT=medium", "AGENTMUX_CODEX_SANDBOX=read-only")
+	argvLog := filepath.Join(t.TempDir(), "argv")
+	t.Setenv("FAKE_CODEX_ARGV_LOG", argvLog)
+	t.Setenv("FAKE_CODEX_SCENARIO", "success")
+	for _, addr := range []string{codexAddr(""), codexAddr(codexTestThread)} {
+		if _, err := (Env{}).Run(context.Background(), RunRequest{Address: addr, Text: "use defaults"}); err != nil {
+			t.Fatalf("Run(%s): %v", addr, err)
+		}
+		argv, err := os.ReadFile(argvLog)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"-C\n" + workdir, "-s\nread-only", "-m\ntest-model", "model_reasoning_effort=medium"} {
+			if !strings.Contains(string(argv), want) {
+				t.Errorf("Run(%s) argv missing instance default %q:\n%s", addr, want, argv)
+			}
+		}
+	}
+}
+
 func TestRunCodexDryRunStartsNothing(t *testing.T) {
 	home, _ := newCodexEnv(t)
 	res, err := Env{}.Run(context.Background(), RunRequest{Address: codexAddr(""), Text: "x", DryRun: true})

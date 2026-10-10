@@ -30,11 +30,19 @@ func (e Env) runCodex(ctx context.Context, req RunRequest, addr address.Address,
 	if model == "" {
 		model = fields["AGENTMUX_MODEL"]
 	}
+	effort := strings.TrimSpace(req.Effort)
+	if effort == "" {
+		effort = fields["AGENTMUX_CODEX_EFFORT"]
+	}
+	sandbox := strings.TrimSpace(req.Sandbox)
+	if sandbox == "" {
+		sandbox = fields["AGENTMUX_CODEX_SANDBOX"]
+	}
 	argv, err := session.CodexRunArgs(session.CodexRunOptions{
 		Workdir:     workdir,
 		Model:       model,
-		Effort:      req.Effort,
-		Sandbox:     req.Sandbox,
+		Effort:      effort,
+		Sandbox:     sandbox,
 		AddDirs:     session.CodexAddDirs(fields[session.CodexAddDirsKey]),
 		AllowUnsafe: fields[session.CodexUnsafeSandboxEnv] == "1",
 	}, thread)
