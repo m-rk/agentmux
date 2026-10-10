@@ -19,6 +19,7 @@ import (
 	"github.com/m-rk/agentmux/daemon/internal/gatewayclient"
 	"github.com/m-rk/agentmux/daemon/internal/hostsconfig"
 	"github.com/m-rk/agentmux/daemon/internal/ops"
+	"github.com/m-rk/agentmux/daemon/internal/safesend"
 	"github.com/m-rk/agentmux/daemon/internal/selfupdate"
 )
 
@@ -232,7 +233,7 @@ func selfUpdateSmokeGateway(ctx context.Context, sock string) error {
 		return err
 	}
 	cres, cerr := (ops.Env{SocketPath: sock}).Create(ctx, creq)
-	if cerr != nil && !smokeCreateSkippable(cerr) {
+	if cerr != nil && !selfUpdateSmokeCreateSkippable(cerr) {
 		e := ops.AsError(cerr)
 		return fmt.Errorf("dry-run create: %s: %s", e.Reason, e.Detail)
 	}
@@ -242,6 +243,16 @@ func selfUpdateSmokeGateway(ctx context.Context, sock string) error {
 	}
 	_ = cres
 	return nil
+}
+
+// A template outside a Git checkout cannot support a create probe. The
+// following dry-run run still checks the installed daemon and runner path.
+func selfUpdateSmokeCreateSkippable(err error) bool {
+	if smokeCreateSkippable(err) {
+		return true
+	}
+	e := ops.AsError(err)
+	return e.Reason == safesend.ReasonUnsupported && strings.Contains(e.Detail, "is not in a Git checkout")
 }
 
 func selfUpdateSmokeRequests(template, host, branch string) (ops.CreateRequest, ops.RunRequest, error) {

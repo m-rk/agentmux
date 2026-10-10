@@ -7,6 +7,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/m-rk/agentmux/daemon/internal/ops"
+	"github.com/m-rk/agentmux/daemon/internal/safesend"
 )
 
 func TestRenderSelfUpdatePlist(t *testing.T) {
@@ -255,6 +258,25 @@ func TestSelfUpdateSmokeRequestsUseFullAddresses(t *testing.T) {
 	}
 	if _, _, err := selfUpdateSmokeRequests("worker", "bad host", "smoke/test"); err == nil {
 		t.Fatal("invalid host address was accepted")
+	}
+}
+
+func TestSelfUpdateSmokeSkipsOnlyNonGitCreateTemplate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		skip bool
+	}{
+		{name: "no grant", err: ops.Refuse(safesend.ReasonForbidden, "no create grant"), skip: true},
+		{name: "non Git template", err: ops.Refuse(safesend.ReasonUnsupported, "template worker workdir /workspace is not in a Git checkout"), skip: true},
+		{name: "other unsupported", err: ops.Refuse(safesend.ReasonUnsupported, "template worker has no repository"), skip: false},
+		{name: "invalid address", err: ops.Refuse(safesend.ReasonInvalid, "bad address"), skip: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := selfUpdateSmokeCreateSkippable(tc.err); got != tc.skip {
+				t.Fatalf("skip = %t, want %t", got, tc.skip)
+			}
+		})
 	}
 }
 
