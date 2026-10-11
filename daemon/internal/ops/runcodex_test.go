@@ -186,6 +186,28 @@ func TestRunCodexContinueRefusesWhileRunning(t *testing.T) {
 	waitCodexState(t, home, codexTestThread, "done")
 }
 
+func TestRunCodexContinuesAfterLauncherDiesWithoutExit(t *testing.T) {
+	home, _ := newCodexEnv(t)
+	logPath := session.CodexRunLogPath(home, "cx", codexTestThread)
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dead := `{"type":"agentmux.start","run":"dead","pid":2147483647}` + "\n" +
+		`{"type":"thread.started","thread_id":"` + codexTestThread + `"}` + "\n" +
+		`{"type":"turn.started"}` + "\n"
+	if err := os.WriteFile(logPath, []byte(dead), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if st := session.CodexRunStateOf(logPath); st.State != "failed" {
+		t.Fatalf("dead run state = %+v, want failed", st)
+	}
+	t.Setenv("FAKE_CODEX_SCENARIO", "success")
+	if _, err := (Env{}).Run(context.Background(), RunRequest{Address: codexAddr(codexTestThread), Text: "resume"}); err != nil {
+		t.Fatalf("continue after dead launcher: %v", err)
+	}
+	waitCodexState(t, home, codexTestThread, "done")
+}
+
 func TestRunCodexRefusesUnsafeSandbox(t *testing.T) {
 	home, _ := newCodexEnv(t)
 	_, err := Env{}.Run(context.Background(), RunRequest{Address: codexAddr(""), Text: "x", Sandbox: "danger-full-access"})

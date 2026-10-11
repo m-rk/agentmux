@@ -45,6 +45,7 @@ func TestCodexRunStateOf(t *testing.T) {
 		{"success", []string{evStart, evThread, evTurn, evDone, evExit0}, "done", "", false},
 		{"success without exit record yet", []string{evStart, evThread, evTurn, evDone}, "done", "", false},
 		{"running", []string{evStart, evThread, evTurn}, "running", "", false},
+		{"dead launcher without exit record", []string{`{"type":"agentmux.start","run":"dead","pid":2147483647}`, evThread, evTurn}, "failed", "process exited", false},
 		{"turn failed", []string{evStart, evThread, evTurn, evBadFail, evExit1}, "failed", "invalid_request_error: bad model (status 400)", false},
 		{"rate limit", []string{evStart, evThread, evTurn, evRateErr, evRateFail, evExit1}, "failed", "rate_limit_error: slow down (status 429)", true},
 		{"non-fatal error item is not failure", []string{evStart, evThread, evTurn,

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -325,9 +326,8 @@ func startCodexProcessDetached(ctx context.Context, instance string, argv []stri
 		os.Remove(promptPath)
 		return nil, "", fmt.Errorf("writing codex prompt: %w", err)
 	}
-	// Double fork through sh as for amp: the middle child backgrounds a
-	// subshell and exits, so codex is reparented to init. The subshell holds
-	// the log open on fd 3 (so ops.Run can rename the pending log to its
+	// A detached sh process owns the run and holds the log open on fd 3 (so
+	// ops.Run can rename the pending log to its
 	// thread name while codex keeps appending) and brackets codex's output
 	// with agentmux.start and agentmux.exit records: the exit record is how
 	// the parser tells "exited without a result" from "still working", and
@@ -338,18 +338,16 @@ func startCodexProcessDetached(ctx context.Context, instance string, argv []stri
 	// file's random suffix, which tells this run's records from those of an
 	// older run still being killed), $5...=codex args.
 	runID := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(promptPath), "codex-prompt-"), ".txt")
-	launch := "f=\"$1\"; p=\"$2\"; d=\"$3\"; r=\"$4\"; shift 4; cd \"$d\" || exit 1; unset OPENAI_API_KEY CODEX_API_KEY; " +
-		"( exec 3>>\"$f\"; echo \"{\\\"type\\\":\\\"agentmux.start\\\",\\\"run\\\":\\\"$r\\\"}\" >&3; \"$0\" \"$@\" <\"$p\" >&3 2>&3; c=$?; " +
-		"rm -f \"$p\"; echo \"{\\\"type\\\":\\\"agentmux.exit\\\",\\\"run\\\":\\\"$r\\\",\\\"code\\\":$c}\" >&3 ) & exit 0"
+	launch := "f=\"$1\"; p=\"$2\"; d=\"$3\"; r=\"$4\"; shift 4; cd \"$d\" || exit 1; unset OPENAI_API_KEY CODEX_API_KEY; exec 3>>\"$f\"; " +
+		"echo \"{\\\"type\\\":\\\"agentmux.start\\\",\\\"run\\\":\\\"$r\\\",\\\"pid\\\":$$}\" >&3; " +
+		"\"$0\" \"$@\" <\"$p\" >&3 2>&3; c=$?; rm -f \"$p\"; " +
+		"echo \"{\\\"type\\\":\\\"agentmux.exit\\\",\\\"run\\\":\\\"$r\\\",\\\"code\\\":$c}\" >&3"
 	midArgs := append([]string{"-c", launch, bin, logPath, promptPath, workdir, runID}, rest...)
 	mid := runas.CurrentUserCommandContext(ctx, "sh", midArgs...)
 	mid.Env = cmd.Env
 	mid.Stdin = strings.NewReader("")
-	// Reparenting to init isn't enough: the backgrounded subshell and codex
-	// stay in the caller's process group and session, so a caller that
-	// kills its group on exit (an agent's shell tool, a timed-out command)
-	// takes the run with it right after turn.started. A new session puts
-	// the launcher and everything it starts out of the caller's reach.
+	// A new session puts the launcher and codex out of the caller's process
+	// group, so an agent's shell tool or timed-out command cannot kill a run.
 	detachSession(mid)
 	if err := mid.Start(); err != nil {
 		return nil, "", fmt.Errorf("spawning codex run: %w", err)
@@ -361,6 +359,7 @@ type codexEvent struct {
 	Type     string `json:"type"`
 	Run      string `json:"run"`
 	Code     int    `json:"code"`
+	PID      int    `json:"pid"`
 	ThreadID string `json:"thread_id"`
 	Message  string `json:"message"`
 	Error    *struct {
@@ -471,6 +470,7 @@ func CodexRunStateOf(logPath string) CodexRunState {
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
 	var lastErr, curRun string
+	var curPID int
 	var exited bool
 	var exitCode int
 	for sc.Scan() {
@@ -481,6 +481,7 @@ func CodexRunStateOf(logPath string) CodexRunState {
 		switch ev.Type {
 		case "agentmux.start":
 			curRun = ev.Run
+			curPID = ev.PID
 			st.State, st.Reason, st.RateLimited, lastErr = "running", "", false, ""
 			exited = false
 		case "thread.started":
@@ -529,8 +530,22 @@ func CodexRunStateOf(logPath string) CodexRunState {
 		}
 		return st
 	}
+	if curPID > 0 && !codexRunPIDAlive(curPID) {
+		st.State = "failed"
+		st.Reason = "codex process exited without an exit record: " + ampLogTail(logPath)
+		return st
+	}
 	st.Stalled = CodexRunLogStalled(logPath)
 	return st
+}
+
+func codexRunPIDAlive(pid int) bool {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	err = proc.Signal(syscall.Signal(0))
+	return err == nil || errors.Is(err, os.ErrPermission)
 }
 
 // codexErrorReason flattens codex's error message, usually a JSON string
