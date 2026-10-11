@@ -66,15 +66,19 @@ func (c *Client) PreviewPost(title, body string, extraTags []string, opts AskOpt
 	if err := opts.validate(); err != nil {
 		return AskPreview{}, err
 	}
-	user, err := c.mentionUser()
-	if err != nil {
-		return AskPreview{}, err
+	user := ""
+	var err error
+	if !opts.NoMention {
+		user, err = c.mentionUser()
+		if err != nil {
+			return AskPreview{}, err
+		}
 	}
 	clean := cleanOneLine(title)
 	if clean == "" {
 		return AskPreview{}, fmt.Errorf("title is required")
 	}
-	content, err := askContent(user, true, body)
+	content, err := askContent(user, !opts.NoMention, body)
 	if err != nil {
 		return AskPreview{}, err
 	}
@@ -107,7 +111,7 @@ func (c *Client) PreviewPost(title, body string, extraTags []string, opts AskOpt
 		Content:         content,
 		Tags:            tags,
 		MentionUserID:   user,
-		AllowedMentions: c.mentionPayload(user, true),
+		AllowedMentions: c.mentionPayload(user, !opts.NoMention),
 		Options:         opts,
 	}, nil
 }

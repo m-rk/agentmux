@@ -252,9 +252,12 @@ func (c *Client) PostAsk(ctx context.Context, title, body string, extraTags []st
 	if err := opts.validate(); err != nil {
 		return "", "", err
 	}
-	user, err := c.mentionUser()
-	if err != nil {
-		return "", "", err
+	user := ""
+	if !opts.NoMention {
+		user, err = c.mentionUser()
+		if err != nil {
+			return "", "", err
+		}
 	}
 	title = cleanOneLine(title)
 	if title == "" {
@@ -263,7 +266,7 @@ func (c *Client) PostAsk(ctx context.Context, title, body string, extraTags []st
 	if utf8.RuneCountInString(title) > 100 {
 		return "", "", fmt.Errorf("title is longer than Discord's 100-character limit")
 	}
-	content, err := askContent(user, true, body)
+	content, err := askContent(user, !opts.NoMention, body)
 	if err != nil {
 		return "", "", err
 	}
@@ -292,7 +295,7 @@ func (c *Client) PostAsk(ctx context.Context, title, body string, extraTags []st
 		"thread_name":      title,
 		"username":         asksUsername,
 		"applied_tags":     tags,
-		"allowed_mentions": c.mentionPayload(user, true),
+		"allowed_mentions": c.mentionPayload(user, !opts.NoMention),
 	}
 	opts.applyEmbedFlag(payload)
 	if len(opts.Buttons) > 0 {
@@ -302,7 +305,7 @@ func (c *Client) PostAsk(ctx context.Context, title, body string, extraTags []st
 			"applied_tags": tags,
 			"message": map[string]any{
 				"content":          content,
-				"allowed_mentions": c.mentionPayload(user, true),
+				"allowed_mentions": c.mentionPayload(user, !opts.NoMention),
 				"components":       c.buttonRowsWithGuild(ctx, guildID, opts.Buttons),
 			},
 		}
@@ -335,11 +338,15 @@ func (c *Client) PostAskInThread(ctx context.Context, threadID, title, body stri
 	if err := opts.validate(); err != nil {
 		return "", err
 	}
-	user, err := c.mentionUser()
-	if err != nil {
-		return "", err
+	user := ""
+	var err error
+	if !opts.NoMention {
+		user, err = c.mentionUser()
+		if err != nil {
+			return "", err
+		}
 	}
-	content, err := askContent(user, true, body)
+	content, err := askContent(user, !opts.NoMention, body)
 	if err != nil {
 		return "", err
 	}
@@ -374,7 +381,7 @@ func (c *Client) PostAskInThread(ctx context.Context, threadID, title, body stri
 	if len(opts.Buttons) > 0 {
 		botPayload := map[string]any{
 			"content":          content,
-			"allowed_mentions": c.mentionPayload(user, true),
+			"allowed_mentions": c.mentionPayload(user, !opts.NoMention),
 			"components":       c.buttonRowsWithGuild(ctx, forum.GuildID, opts.Buttons),
 		}
 		opts.applyEmbedFlag(botPayload)
@@ -385,7 +392,7 @@ func (c *Client) PostAskInThread(ctx context.Context, threadID, title, body stri
 		payload := map[string]any{
 			"content":          content,
 			"username":         asksUsername,
-			"allowed_mentions": c.mentionPayload(user, true),
+			"allowed_mentions": c.mentionPayload(user, !opts.NoMention),
 		}
 		opts.applyEmbedFlag(payload)
 		query := url.Values{"wait": {"true"}, "thread_id": {threadID}}

@@ -124,10 +124,10 @@ Discord only lets an app edit its own messages.)
 ## Commands
 
 ```sh
-agentmux discord post -title T -body-file F [-tag NAME ...] [-react 1️⃣,2️⃣,⏸️] [-button LABEL ...] [-buttons-json FILE] [-embeds] -json
+agentmux discord post -title T -body-file F [-tag NAME ...] [-react 1️⃣,2️⃣,⏸️] [-button LABEL ...] [-buttons-json FILE] [-no-mention] [-embeds] -json
 # {"thread_id":"…","message_id":"…"}  (link unfurls suppressed unless -embeds)
 
-agentmux discord post -thread ID [-title T] -body-file F [-tag NAME ...] [-embeds] -json
+agentmux discord post -thread ID [-title T] -body-file F [-tag NAME ...] [-no-mention] [-embeds] -json
 # {"thread_id":"…","message_id":"…"}  (thread_id is the one passed in)
 
 agentmux discord reply -thread ID -body-file F [-mention] [-embeds]
@@ -194,13 +194,16 @@ agentmux discord prune [-thread ID] [-older-than DUR] [-dry-run] [-json]
 - `post` applies `task` and `needs me` plus any `-tag`s (Discord allows five
   per post). Put `{{mention}}` in the call-to-action sentence to place `<@user>`
   there. If omitted, agentmux puts the mention at the start of the body's last
-  paragraph. A post that should not ping anyone must use a non-mentioning path.
+  paragraph. Add `-no-mention` to post quietly; it removes the configured-user
+  mention and keeps Discord allowed mentions disabled. This works for new posts
+  and `post -thread` replies.
   A `-tag` naming a state tag
   (e.g. `-tag blocked`) replaces the default `needs me`; type and project
   tags are kept alongside. New posts also get the longest auto-archive
   duration (7 days), so live task threads stay open.
 - `post -thread ID` adds an ask message to an existing task thread
-  instead of creating a post. It @-mentions the configured user, unarchives
+  instead of creating a post. It @-mentions the configured user by default;
+  `-no-mention` suppresses it. It unarchives
   the thread if needed (unlocked only; archived threads reopen with the
   longest auto-archive duration, and are left unlocked so the next ask can
   reopen them), swaps any state tag for `needs me` (plus

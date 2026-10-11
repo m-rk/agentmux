@@ -178,7 +178,7 @@ Usage:
   agentmux collab read -instance NAME [-thread ID]
   agentmux collab post -instance NAME -topic TOPIC -summary SENTENCE [-shared] [-details FILE.md]
   agentmux collab post -instance NAME -thread ID -summary TEXT [-details FILE.md]
-  agentmux discord post -title T -body-file F [-tag NAME ...] [-json] post an ask that mentions the configured user
+  agentmux discord post -title T -body-file F [-tag NAME ...] [-no-mention] [-json] post an ask (mentions the configured user by default)
   agentmux discord reply -thread ID -body-file F [-mention]
   agentmux discord read -thread ID [-after MESSAGE_ID] [-json]
   agentmux discord react -thread ID -message ID -emoji EMOJI [-replace]

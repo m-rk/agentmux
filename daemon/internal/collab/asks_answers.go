@@ -52,6 +52,7 @@ const suppressEmbedsFlag = 4
 type AskOptions struct {
 	Reactions []string    // emoji the bot adds, in order
 	Buttons   []AskButton // buttons, in order
+	NoMention bool        // suppresses the configured-user mention on posts
 	// Embeds keeps link unfurls on this send. Default suppresses them.
 	Embeds bool
 }

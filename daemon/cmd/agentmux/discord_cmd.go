@@ -59,7 +59,7 @@ func runDiscordCmd(args []string) {
 
 func discordUsage() {
 	fmt.Fprintln(os.Stderr, `usage:
-  agentmux discord post (-title T | -thread ID [-title T]) -body-file F [-tag NAME ...] [-react EMOJI,EMOJI,...] [-button LABEL ...] [-buttons-json FILE] [-embeds] [-json] [-dry-run]
+  agentmux discord post (-title T | -thread ID [-title T]) -body-file F [-tag NAME ...] [-react EMOJI,EMOJI,...] [-button LABEL ...] [-buttons-json FILE] [-no-mention] [-embeds] [-json] [-dry-run]
   agentmux discord reply -thread ID -body-file F [-mention] [-embeds] [-dry-run]
   agentmux discord read -thread ID [-after MESSAGE_ID] [-json]
   agentmux discord react -thread ID -message ID -emoji EMOJI [-replace]
@@ -129,13 +129,14 @@ func runDiscordPost(args []string) error {
 	buttonsJSON := fs.String("buttons-json", "", "file with a JSON array of {label, emoji?, style?} buttons ('-' for stdin); appended after -button labels")
 	embeds := fs.Bool("embeds", false, "keep link unfurls (embeds) on this send; default suppresses them")
 	dryRun := fs.Bool("dry-run", false, "print the Discord payload instead of sending it")
+	noMention := fs.Bool("no-mention", false, "post without mentioning the configured user")
 	var tags, buttons tagFlags
 	fs.Var(&tags, "tag", "extra forum tag; repeatable")
 	fs.Var(&buttons, "button", "button label (needs 'discord serve' running to record clicks); repeatable")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	opts := collab.AskOptions{Embeds: *embeds}
+	opts := collab.AskOptions{Embeds: *embeds, NoMention: *noMention}
 	for _, label := range buttons {
 		opts.Buttons = append(opts.Buttons, collab.AskButton{Label: label})
 	}
