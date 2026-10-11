@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/m-rk/agentmux/daemon/internal/runas"
@@ -344,6 +345,12 @@ func startCodexProcessDetached(ctx context.Context, instance string, argv []stri
 	mid := runas.CurrentUserCommandContext(ctx, "sh", midArgs...)
 	mid.Env = cmd.Env
 	mid.Stdin = strings.NewReader("")
+	// Reparenting to init isn't enough: the backgrounded subshell and codex
+	// stay in the caller's process group and session, so a caller that
+	// kills its group on exit (an agent's shell tool, a timed-out command)
+	// takes the run with it right after turn.started. A new session puts
+	// the launcher and everything it starts out of the caller's reach.
+	detachSession(mid)
 	if err := mid.Start(); err != nil {
 		return nil, "", fmt.Errorf("spawning codex run: %w", err)
 	}
@@ -643,3 +650,13 @@ func codexRunCmdlineMatch(cmdlinePath string) bool {
 // CodexErrorIsRateLimit reports whether a turn.failed error message is a
 // 429 or rate/usage limit.
 func CodexErrorIsRateLimit(msg string) bool { return codexRateLimited(msg) }
+
+// detachSession starts cmd in a new session (and so a new process group),
+// keeping any SysProcAttr already set, such as a run-as credential.
+func detachSession(cmd *exec.Cmd) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Setsid = true
+	cmd.SysProcAttr.Setpgid = false
+}
