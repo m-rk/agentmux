@@ -69,10 +69,9 @@ func runSelfUpdateCmd(args []string) {
 	}
 }
 
-const (
-	selfUpdateStage2Command = "stage2-v1"
-	selfUpdateStage2Timeout = 5 * time.Minute
-)
+const selfUpdateStage2Command = "stage2-v1"
+
+var selfUpdateStage2Timeout = 5 * time.Minute
 
 // runSelfUpdateStage2 is deliberately implemented by the candidate binary:
 // its smoke and install logic are therefore the code being evaluated.

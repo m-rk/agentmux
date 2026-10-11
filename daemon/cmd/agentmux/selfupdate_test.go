@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/m-rk/agentmux/daemon/internal/ops"
 	"github.com/m-rk/agentmux/daemon/internal/safesend"
@@ -167,13 +168,14 @@ func TestSelfUpdateHandoffRunsCandidateAndRestoresAfterCrash(t *testing.T) {
 	installed := filepath.Join(dir, "agentmux")
 	candidate := filepath.Join(dir, "candidate")
 	marker := filepath.Join(dir, "candidate-ran")
-	if err := os.WriteFile(old, []byte("old build"), 0o755); err != nil {
+	oldSmoke := "#!/bin/sh\nprintf installed-smoke-fail > \"$MARKER\"\nexit 1\n"
+	if err := os.WriteFile(old, []byte(oldSmoke), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(installed, []byte("old build"), 0o755); err != nil {
+	if err := os.WriteFile(installed, []byte(oldSmoke), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(candidate, []byte("#!/bin/sh\nprintf candidate > \"$MARKER\"\nexit 0\n"), 0o755); err != nil {
+	if err := os.WriteFile(candidate, []byte("#!/bin/sh\nprintf candidate-smoke-pass > \"$MARKER\"\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("MARKER", marker)
@@ -181,8 +183,11 @@ func TestSelfUpdateHandoffRunsCandidateAndRestoresAfterCrash(t *testing.T) {
 	if err := selfUpdateHandoff(candidate, old, cfg, func() error { t.Fatal("unexpected recovery"); return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := os.ReadFile(marker); err != nil || string(got) != "candidate" {
-		t.Fatalf("candidate marker = %q, %v", got, err)
+	if got, err := os.ReadFile(marker); err != nil || string(got) != "candidate-smoke-pass" {
+		t.Fatalf("candidate smoke result = %q, %v", got, err)
+	}
+	if got, err := os.ReadFile(installed); err != nil || string(got) != oldSmoke {
+		t.Fatalf("installed smoke logic changed on successful handoff = %q, %v", got, err)
 	}
 
 	if err := os.WriteFile(installed, []byte("candidate installed"), 0o755); err != nil {
@@ -196,8 +201,38 @@ func TestSelfUpdateHandoffRunsCandidateAndRestoresAfterCrash(t *testing.T) {
 	if err == nil || !recovered {
 		t.Fatalf("handoff error = %v; recovered = %v", err, recovered)
 	}
-	if got, readErr := os.ReadFile(installed); readErr != nil || string(got) != "old build" {
+	if got, readErr := os.ReadFile(installed); readErr != nil || string(got) != oldSmoke {
 		t.Fatalf("installed after crash = %q, %v", got, readErr)
+	}
+}
+
+func TestSelfUpdateHandoffTimesOutAndRestores(t *testing.T) {
+	dir := t.TempDir()
+	old := filepath.Join(dir, "old-agentmux")
+	installed := filepath.Join(dir, "agentmux")
+	candidate := filepath.Join(dir, "candidate")
+	for path, body := range map[string]string{
+		old:       "old build",
+		installed: "candidate build",
+		candidate: "#!/bin/sh\nexec sleep 5\n",
+	} {
+		if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	previousTimeout := selfUpdateStage2Timeout
+	selfUpdateStage2Timeout = 50 * time.Millisecond
+	t.Cleanup(func() { selfUpdateStage2Timeout = previousTimeout })
+	recovered := false
+	err := selfUpdateHandoff(candidate, old, selfUpdateHostConfig{AgentmuxBin: installed}, func() error {
+		recovered = true
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "timed out") || !recovered {
+		t.Fatalf("handoff error = %v; recovered = %v", err, recovered)
+	}
+	if got, readErr := os.ReadFile(installed); readErr != nil || string(got) != "old build" {
+		t.Fatalf("installed after timeout = %q, %v", got, readErr)
 	}
 }
 
