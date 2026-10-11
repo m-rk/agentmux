@@ -328,7 +328,7 @@ func (c *Client) PostAsk(ctx context.Context, title, body string, extraTags []st
 
 // PostAskInThread adds an ask message to an existing task thread instead of
 // creating a post. It unarchives the thread (unlocked only), swaps any state
-// tag for `needs me` (adding extraTags), optionally renames it, then posts
+// tag for `needs me` (or the state in extraTags), optionally renames it, then posts
 // the message with a mention of the configured user. Like close, the thread
 // edit needs the bot (Manage Threads on the forum).
 func (c *Client) PostAskInThread(ctx context.Context, threadID, title, body string, extraTags []string, opts AskOptions) (string, error) {
@@ -354,7 +354,11 @@ func (c *Client) PostAskInThread(ctx context.Context, threadID, title, body stri
 	var tags []string
 	if _, err := c.withRefreshedForum(ctx, func(f Channel) ([]string, error) {
 		var err error
-		tags, err = swapStateTags(f, thread.AppliedTags, DefaultOpenTag, extraTags)
+		outcome, extras, err := stateOverride(extraTags)
+		if err != nil {
+			return nil, err
+		}
+		tags, err = swapStateTags(f, thread.AppliedTags, outcome, extras)
 		return tags, err
 	}); err != nil {
 		return "", err
@@ -390,6 +394,32 @@ func (c *Client) PostAskInThread(ctx context.Context, threadID, title, body stri
 		}
 	}
 	return message.ID, c.seedReactions(ctx, threadID, message.ID, opts.Reactions)
+}
+
+// stateOverride selects the requested state tag, defaulting to needs me, and
+// removes it from extras so swapStateTags applies exactly one state.
+func stateOverride(extra []string) (string, []string, error) {
+	outcome := DefaultOpenTag
+	var states []string
+	var extras []string
+	for _, name := range extra {
+		isState := false
+		for _, state := range AskStateTags {
+			if strings.EqualFold(name, state) {
+				isState = true
+				states = append(states, name)
+				outcome = name
+				break
+			}
+		}
+		if !isState {
+			extras = append(extras, name)
+		}
+	}
+	if len(states) > 1 {
+		return "", nil, fmt.Errorf("at most one state tag may be requested")
+	}
+	return outcome, extras, nil
 }
 
 // hasStateTag reports whether any of the applied ids is a state tag.

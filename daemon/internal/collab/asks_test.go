@@ -220,6 +220,29 @@ func TestPostAskInThreadNoTitleKeepsName(t *testing.T) {
 	}
 }
 
+func TestPostAskInThreadStateTagReplacesNeedsMe(t *testing.T) {
+	f := &fakeAsks{}
+	s := f.server(t, map[string]Channel{"900": {ID: "900", ParentID: "forum", AppliedTags: []string{"t-task", "t-needsme"}}}, nil)
+	defer s.Close()
+	if _, err := asksClientFor(s.URL).PostAskInThread(context.Background(), "900", "", "survey", []string{"done"}, AskOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	tags := f.patched["applied_tags"].([]any)
+	if len(tags) != 2 || tags[0] != "t-task" || tags[1] != "t-done" {
+		t.Fatalf("tags = %#v", tags)
+	}
+}
+
+func TestPostAskInThreadRejectsMultipleStateTags(t *testing.T) {
+	f := &fakeAsks{}
+	s := f.server(t, map[string]Channel{"900": {ID: "900", ParentID: "forum", AppliedTags: []string{"t-task", "t-needsme"}}}, nil)
+	defer s.Close()
+	_, err := asksClientFor(s.URL).PostAskInThread(context.Background(), "900", "", "survey", []string{"done", "working"}, AskOptions{})
+	if err == nil || !strings.Contains(err.Error(), "at most one state tag") || f.patched != nil || len(f.hook) != 0 {
+		t.Fatalf("err = %v, patched = %#v, posts = %d", err, f.patched, len(f.hook))
+	}
+}
+
 func TestPostAskInThreadRefusesNonAskThread(t *testing.T) {
 	f := &fakeAsks{}
 	s := f.server(t, map[string]Channel{"901": {ID: "901", ParentID: "forum"}}, nil)
