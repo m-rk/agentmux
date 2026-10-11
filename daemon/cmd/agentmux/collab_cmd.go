@@ -76,6 +76,12 @@ func runCollabDoctor(args []string) error {
 
 type avatarFlags map[string]string
 
+var validateCollaborationSetup = func(cfg discordnotify.CollaborationConfig) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return collab.NewClient(cfg).Doctor(ctx)
+}
+
 func (a avatarFlags) String() string { return "AGENT=https://…" }
 
 func (a avatarFlags) Set(value string) error {
@@ -166,10 +172,8 @@ func runCollabSetup(args []string) error {
 		return fmt.Errorf("-test-thread must be a numeric Discord thread id")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
 	resolved.TestThreadID = cfg.Collaboration.TestThreadID
-	if err := collab.NewClient(resolved).Doctor(ctx); err != nil {
+	if err := validateCollaborationSetup(resolved); err != nil {
 		return fmt.Errorf("validation failed; not saving: %w", err)
 	}
 	if _, err := ops.EnsureCodexDefaults(runas.CurrentUserHome()); err != nil {
