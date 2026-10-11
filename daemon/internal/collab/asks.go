@@ -2,6 +2,7 @@ package collab
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -9,6 +10,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 	"unicode/utf8"
 )
 
@@ -607,6 +610,118 @@ func (c *Client) ReadAsk(ctx context.Context, threadID, after string) ([]AskMess
 			return out, nil
 		}
 		after = batch[len(batch)-1].ID
+	}
+}
+
+// BatchAskResult contains one thread's messages, or its error. Keeping errors
+// beside successful results lets callers make progress when one thread fails.
+type BatchAskResult struct {
+	Messages      []AskMessage `json:"messages,omitempty"`
+	LastMessageID string       `json:"last_message_id,omitempty"`
+	Error         string       `json:"error,omitempty"`
+}
+
+// ReadAsks reads a bounded number of ask threads concurrently. Discord 429s
+// are retried once using Discord's retry_after value.
+func (c *Client) ReadAsks(ctx context.Context, threads []string, after map[string]string) map[string]BatchAskResult {
+	return c.batchAsks(ctx, threads, func(id string) (any, error) {
+		return c.ReadAsk(ctx, id, after[id])
+	})
+}
+
+// AskHeads returns each thread's newest message ID, or an error for that
+// thread. Only one message is fetched from each thread.
+func (c *Client) AskHeads(ctx context.Context, threads []string) map[string]BatchAskResult {
+	return c.batchAsks(ctx, threads, func(id string) (any, error) {
+		msgs, err := c.Messages(ctx, id, "", 1)
+		if err != nil {
+			return nil, err
+		}
+		head := ""
+		if len(msgs) > 0 {
+			head = msgs[len(msgs)-1].ID
+		}
+		return head, nil
+	})
+}
+
+func (c *Client) batchAsks(ctx context.Context, threads []string, fetch func(string) (any, error)) map[string]BatchAskResult {
+	out := make(map[string]BatchAskResult, len(threads))
+	var mu sync.Mutex
+	sem := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+	for _, id := range threads {
+		id := strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				mu.Lock()
+				out[id] = BatchAskResult{Error: ctx.Err().Error()}
+				mu.Unlock()
+				return
+			}
+			defer func() { <-sem }()
+			value, err := fetch(id)
+			if isRateLimited(err) {
+				waitDiscordRateLimit(ctx, err)
+				if ctx.Err() == nil {
+					value, err = fetch(id)
+				} else {
+					err = ctx.Err()
+				}
+			}
+			result := BatchAskResult{}
+			if err != nil {
+				result.Error = err.Error()
+			} else {
+				switch v := value.(type) {
+				case []AskMessage:
+					result.Messages = v
+				case string:
+					result.LastMessageID = v
+				}
+			}
+			mu.Lock()
+			out[id] = result
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	return out
+}
+
+func isRateLimited(err error) bool {
+	var api *apiError
+	return errors.As(err, &api) && api.Status == http.StatusTooManyRequests
+}
+
+func waitDiscordRateLimit(ctx context.Context, err error) {
+	var api *apiError
+	if !errors.As(err, &api) {
+		return
+	}
+	var body struct {
+		RetryAfter float64 `json:"retry_after"`
+	}
+	_ = json.Unmarshal([]byte(api.Body), &body)
+	wait := time.Duration(body.RetryAfter*float64(time.Second)) + 50*time.Millisecond
+	if wait > 5*time.Second {
+		wait = 5 * time.Second
+	}
+	if wait < 0 {
+		wait = 0
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
 	}
 }
 

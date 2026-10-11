@@ -133,6 +133,12 @@ agentmux discord post -thread ID [-title T] -body-file F [-tag NAME ...] [-no-me
 agentmux discord reply -thread ID -body-file F [-mention] [-embeds]
 
 agentmux discord read -thread ID [-after MESSAGE_ID] -json
+
+agentmux discord read -threads ID1,ID2 [-after-map '{"ID1":"MESSAGE_ID"}'] -json
+# {"ID1":{"messages":[…]},"ID2":{"messages":[…]}}; failed threads have an `error` field
+
+agentmux discord heads -threads ID1,ID2 -json
+# {"ID1":{"last_message_id":"…"},"ID2":{"last_message_id":"…"}}
 # [{"id","author_id","author_name","author_is_configured_user","text","timestamp","answers":[…]}, …] oldest first
 
 agentmux discord react -thread ID -message ID -emoji 🤖 [-replace]   # bot adds a reaction to a posted message

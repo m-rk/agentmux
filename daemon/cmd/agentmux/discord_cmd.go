@@ -31,6 +31,8 @@ func runDiscordCmd(args []string) {
 		err = runDiscordReply(args[1:])
 	case "read":
 		err = runDiscordRead(args[1:])
+	case "heads":
+		err = runDiscordHeads(args[1:])
 	case "react":
 		err = runDiscordReact(args[1:])
 	case "edit":
@@ -62,6 +64,8 @@ func discordUsage() {
   agentmux discord post (-title T | -thread ID [-title T]) -body-file F [-tag NAME ...] [-react EMOJI,EMOJI,...] [-button LABEL ...] [-buttons-json FILE] [-no-mention] [-embeds] [-json] [-dry-run]
   agentmux discord reply -thread ID -body-file F [-mention] [-embeds] [-dry-run]
   agentmux discord read -thread ID [-after MESSAGE_ID] [-json]
+  agentmux discord read -threads ID1,ID2 [-after-map JSON] -json
+  agentmux discord heads -threads ID1,ID2 -json
   agentmux discord react -thread ID -message ID -emoji EMOJI [-replace]
   agentmux discord edit -thread ID -message ID [-body-file F] [-buttons-json FILE] [-disable-buttons] [-chosen LABEL] [-embeds]
   agentmux discord pin THREAD MESSAGE
@@ -305,10 +309,36 @@ func runDiscordReply(args []string) error {
 func runDiscordRead(args []string) error {
 	fs := flag.NewFlagSet("discord read", flag.ContinueOnError)
 	thread := fs.String("thread", "", "ask thread ID")
+	threads := fs.String("threads", "", "comma-separated ask thread IDs")
 	after := fs.String("after", "", "only messages after this message ID")
+	afterMap := fs.String("after-map", "", "JSON map of thread IDs to message IDs")
 	asJSON := fs.Bool("json", false, "print JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *threads != "" {
+		if *thread != "" || *after != "" {
+			return fmt.Errorf("use -threads instead of -thread/-after")
+		}
+		if !*asJSON {
+			return fmt.Errorf("-threads requires -json")
+		}
+		c, err := asksClient()
+		if err != nil {
+			return err
+		}
+		cursors := map[string]string{}
+		if *afterMap != "" {
+			if err := json.Unmarshal([]byte(*afterMap), &cursors); err != nil {
+				return fmt.Errorf("invalid -after-map JSON: %w", err)
+			}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		return json.NewEncoder(os.Stdout).Encode(c.ReadAsks(ctx, strings.Split(*threads, ","), cursors))
+	}
+	if *afterMap != "" {
+		return fmt.Errorf("-after-map requires -threads")
 	}
 	client, err := asksClient()
 	if err != nil {
@@ -337,6 +367,26 @@ func runDiscordRead(args []string) error {
 		}
 	}
 	return nil
+}
+
+// runDiscordHeads returns each thread's latest message ID.
+func runDiscordHeads(args []string) error {
+	fs := flag.NewFlagSet("discord heads", flag.ContinueOnError)
+	threads := fs.String("threads", "", "comma-separated ask thread IDs")
+	asJSON := fs.Bool("json", false, "print JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *threads == "" || !*asJSON {
+		return fmt.Errorf("-threads and -json are required")
+	}
+	client, err := asksClient()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	return json.NewEncoder(os.Stdout).Encode(client.AskHeads(ctx, strings.Split(*threads, ",")))
 }
 
 // runDiscordTag replaces a task thread's tags with exactly -set, resolved by

@@ -181,6 +181,8 @@ Usage:
   agentmux discord post -title T -body-file F [-tag NAME ...] [-no-mention] [-json] post an ask (mentions the configured user by default)
   agentmux discord reply -thread ID -body-file F [-mention]
   agentmux discord read -thread ID [-after MESSAGE_ID] [-json]
+  agentmux discord read -threads ID1,ID2 [-after-map JSON] -json
+  agentmux discord heads -threads ID1,ID2 -json
   agentmux discord react -thread ID -message ID -emoji EMOJI [-replace]
   agentmux discord edit -thread ID -message ID [-body-file F] [-buttons-json FILE] [-disable-buttons] [-chosen LABEL]
   agentmux discord pin THREAD MESSAGE

@@ -11,10 +11,11 @@ import (
 )
 
 type fakeAsks struct {
-	mu      sync.Mutex
-	hook    []map[string]any
-	hookQ   []string
-	patched map[string]any
+	mu          sync.Mutex
+	hook        []map[string]any
+	hookQ       []string
+	patched     map[string]any
+	rateLimited map[string]int
 }
 
 func (f *fakeAsks) server(t *testing.T, threads map[string]Channel, messages []Message) *httptest.Server {
@@ -38,6 +39,13 @@ func (f *fakeAsks) server(t *testing.T, threads map[string]Channel, messages []M
 			f.hookQ = append(f.hookQ, r.URL.RawQuery)
 			writeJSON(t, w, Message{ID: "500", ChannelID: "900"})
 		case strings.HasSuffix(r.URL.Path, "/messages"):
+			threadID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/channels/"), "/messages")
+			if f.rateLimited != nil && f.rateLimited[threadID] > 0 {
+				f.rateLimited[threadID]--
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"retry_after":0}`))
+				return
+			}
 			writeJSON(t, w, messages)
 		case strings.HasPrefix(r.URL.Path, "/api/channels/") && r.Method == http.MethodPatch:
 			_ = json.NewDecoder(r.Body).Decode(&f.patched)
@@ -54,6 +62,26 @@ func (f *fakeAsks) server(t *testing.T, threads map[string]Channel, messages []M
 			http.NotFound(w, r)
 		}
 	}))
+}
+
+func TestBatchReadAndHeadsPartialFailureAndRateLimit(t *testing.T) {
+	f := &fakeAsks{rateLimited: map[string]int{"900": 1}}
+	threads := map[string]Channel{
+		"900": {ID: "900", ParentID: "forum", AppliedTags: []string{"t-task"}},
+		"902": {ID: "902", ParentID: "forum", AppliedTags: []string{"t-task"}},
+	}
+	msgs := []Message{{ID: "41", Content: "latest", Author: Author{ID: "777", Username: "alice"}}}
+	s := f.server(t, threads, msgs)
+	defer s.Close()
+	c := asksClientFor(s.URL)
+	got := c.ReadAsks(context.Background(), []string{"900", "missing"}, map[string]string{"900": "40"})
+	if got["900"].Error != "" || len(got["900"].Messages) != 1 || got["missing"].Error == "" {
+		t.Fatalf("batch read = %#v", got)
+	}
+	heads := c.AskHeads(context.Background(), []string{"900", "902"})
+	if heads["900"].LastMessageID != "41" || heads["902"].LastMessageID != "41" || heads["900"].Error != "" {
+		t.Fatalf("heads = %#v", heads)
+	}
 }
 
 func asksClientFor(url string) *Client {
