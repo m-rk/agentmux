@@ -1,9 +1,14 @@
 package collab
 
 import (
+	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/gif"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -89,7 +94,7 @@ func TestReplyAskImageValidatesAndUploadsMultipart(t *testing.T) {
 	defer s.Close()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "private-name.png")
-	data, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAEElEQVR4nGL6//8/IAAA//8GBgMAt2YRIQAAAABJRU5ErkJggg==")
+	data := encodeTestImage(t, "png")
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -107,6 +112,48 @@ func TestReplyAskImageValidatesAndUploadsMultipart(t *testing.T) {
 	if f.fileName != "image.png" || f.fileBytes != len(data) {
 		t.Fatalf("uploaded file = %q (%d bytes), want generic image.png (%d bytes)", f.fileName, f.fileBytes, len(data))
 	}
+}
+
+func TestReadAskImageSupportsPNGJPEGAndGIF(t *testing.T) {
+	for _, format := range []string{"png", "jpeg", "gif"} {
+		t.Run(format, func(t *testing.T) {
+			data := encodeTestImage(t, format)
+			path := filepath.Join(t.TempDir(), "input."+format)
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			got, filename, err := readAskImage(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantName := map[string]string{"png": "image.png", "jpeg": "image.jpg", "gif": "image.gif"}[format]
+			if filename != wantName || !bytes.Equal(got, data) {
+				t.Fatalf("readAskImage = %q, %d bytes; want %q, %d bytes", filename, len(got), wantName, len(data))
+			}
+		})
+	}
+}
+
+func encodeTestImage(t *testing.T, format string) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	img.Set(0, 0, color.RGBA{R: 32, G: 64, B: 96, A: 255})
+	var out bytes.Buffer
+	var err error
+	switch format {
+	case "png":
+		err = png.Encode(&out, img)
+	case "jpeg":
+		err = jpeg.Encode(&out, img, &jpeg.Options{Quality: 90})
+	case "gif":
+		err = gif.Encode(&out, img, nil)
+	default:
+		t.Fatalf("unknown fixture format %q", format)
+	}
+	if err != nil {
+		t.Fatalf("encoding %s fixture: %v", format, err)
+	}
+	return out.Bytes()
 }
 
 func TestReplyAskImageInvalidDoesNotContactDiscord(t *testing.T) {
