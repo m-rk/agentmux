@@ -270,6 +270,9 @@ func runDiscordReply(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if *dryRun && *imageFile != "" {
+		return fmt.Errorf("-dry-run does not preview image attachments")
+	}
 	body, err := readBodyFile(*bodyFile)
 	if err != nil {
 		return err
