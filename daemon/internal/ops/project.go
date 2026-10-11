@@ -36,13 +36,14 @@ type RunnerAddRequest struct {
 	DryRun            bool
 }
 type RunnerAddResult struct {
-	Name    string   `json:"name"`
-	Agent   string   `json:"agent"`
-	Project string   `json:"project"`
-	Workdir string   `json:"workdir"`
-	Created bool     `json:"created"`
-	DryRun  bool     `json:"dry_run,omitempty"`
-	Plan    []string `json:"plan,omitempty"`
+	Name     string   `json:"name"`
+	Agent    string   `json:"agent"`
+	Project  string   `json:"project"`
+	Workdir  string   `json:"workdir"`
+	Created  bool     `json:"created"`
+	DryRun   bool     `json:"dry_run,omitempty"`
+	Plan     []string `json:"plan,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // AddRunner provisions an instance from an existing project's instance.
@@ -99,7 +100,11 @@ func (e Env) AddRunner(ctx context.Context, req RunnerAddRequest) (RunnerAddResu
 		return RunnerAddResult{}, Refuse(safesend.ReasonUnsupported, "source instance has no workdir")
 	}
 	plan := []string{fmt.Sprintf("create %s (codex) in %s as %s", name, workdir, runUser)}
+	defaults, defaultErr := EnsureCodexDefaults(runas.CurrentUserHome())
 	dirs := session.CodexAddDirs(fields[session.CodexAddDirsKey])
+	for _, d := range defaults {
+		dirs = appendUnique(dirs, d)
+	}
 	for _, d := range defaultCodexAddDirs() {
 		dirs = appendUnique(dirs, d)
 	}
@@ -107,8 +112,15 @@ func (e Env) AddRunner(ctx context.Context, req RunnerAddRequest) (RunnerAddResu
 	if len(dirs) > 0 {
 		plan = append(plan, fmt.Sprintf("grant %d configured and Git directories to Codex", len(dirs)))
 	}
+	warnings := []string{}
+	if defaultErr != nil {
+		warnings = append(warnings, "could not create Codex write-directory defaults: "+defaultErr.Error())
+	}
+	if len(defaults) == 0 {
+		warnings = append(warnings, "Codex write-directory defaults are missing; configure mergentic state and vault paths in ~/.config/agentmux/codex.yaml")
+	}
 	if req.DryRun {
-		return RunnerAddResult{Name: name, Agent: req.Agent, Project: project, Workdir: workdir, DryRun: true, Plan: plan}, nil
+		return RunnerAddResult{Name: name, Agent: req.Agent, Project: project, Workdir: workdir, DryRun: true, Plan: plan, Warnings: warnings}, nil
 	}
 	resp, err := d.CreateInstance(ctx, &pb.CreateInstanceRequest{InstanceName: name, Agent: "codex", Workdir: workdir, RunUser: runUser})
 	if err != nil {
@@ -125,7 +137,7 @@ func (e Env) AddRunner(ctx context.Context, req RunnerAddRequest) (RunnerAddResu
 	if err := session.SetRegistryField(name, "AGENTMUX_PROJECT", project); err != nil {
 		return RunnerAddResult{}, fmt.Errorf("recording project for %s: %w", name, err)
 	}
-	return RunnerAddResult{Name: name, Agent: req.Agent, Project: project, Workdir: workdir, Created: true}, nil
+	return RunnerAddResult{Name: name, Agent: req.Agent, Project: project, Workdir: workdir, Created: true, Warnings: warnings}, nil
 }
 
 // ProjectOf is the project of the instance name with the given workdir, as

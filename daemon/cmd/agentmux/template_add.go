@@ -63,4 +63,7 @@ func runTemplateAdd(args []string) {
 	} else {
 		fmt.Printf("%s %s (%s) for %s\n", map[bool]string{true: "created", false: "reused"}[res.Created], res.Name, res.Agent, res.Project)
 	}
+	for _, warning := range res.Warnings {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", warning)
+	}
 }
