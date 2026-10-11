@@ -31,6 +31,8 @@ func main() {
 		runDeployCmd(args[1:])
 	case "new":
 		runWizard(args[1:])
+	case "repo":
+		runRepoCmd(args[1:])
 	case "rename":
 		runRenameCmd(args[1:])
 	case "remove":
@@ -135,6 +137,7 @@ Usage:
                                service, verify versions, and run the cross-host smoke test
   agentmux new                 interactive wizard to create a new instance
   agentmux new -y ...          create an instance non-interactively (see -h)
+  agentmux repo add OWNER/REPO [-agent amp] [-host local]  clone and provision an instance
   agentmux new -y -instance NAME -agent kilo -provider custom -provider-base-url URL -model M
                                 update an existing instance's provider/model too (re-run with the same instance+agent)
   agentmux rename ...          rename an instance's tmux session/display name
