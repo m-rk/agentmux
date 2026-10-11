@@ -13,6 +13,7 @@ import (
 
 	"github.com/m-rk/agentmux/daemon/internal/collab"
 	"github.com/m-rk/agentmux/daemon/internal/discordnotify"
+	"github.com/m-rk/agentmux/daemon/internal/ops"
 	"github.com/m-rk/agentmux/daemon/internal/provision"
 	"github.com/m-rk/agentmux/daemon/internal/runas"
 	"github.com/m-rk/agentmux/daemon/internal/session"
@@ -160,6 +161,9 @@ func runCollabSetup(args []string) error {
 	defer cancel()
 	if err := collab.NewClient(cfg.Collaboration).Doctor(ctx); err != nil {
 		return fmt.Errorf("validation failed; not saving: %w", err)
+	}
+	if _, err := ops.EnsureCodexDefaults(runas.CurrentUserHome()); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not create Codex write-directory defaults: %v\n", err)
 	}
 	if err := discordnotify.Save(path, cfg); err != nil {
 		return err

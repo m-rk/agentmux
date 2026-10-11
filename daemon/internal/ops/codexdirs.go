@@ -2,7 +2,6 @@ package ops
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,7 +13,11 @@ import (
 // defaultCodexAddDirs reads the optional host-wide writable-directory defaults.
 func defaultCodexAddDirs() []string {
 	home := runas.CurrentUserHome()
-	data, err := os.ReadFile(filepath.Join(home, ".config", "agentmux", "codex.yaml"))
+	return readCodexAddDirs(filepath.Join(home, ".config", "agentmux", "codex.yaml"))
+}
+
+func readCodexAddDirs(path string) []string {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
@@ -43,7 +46,7 @@ func EnsureCodexDefaults(home string) ([]string, error) {
 	}
 	path := filepath.Join(home, ".config", "agentmux", "codex.yaml")
 	if _, err := os.Stat(path); err == nil {
-		return defaultCodexAddDirs(), nil
+		return readCodexAddDirs(path), nil
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
@@ -51,6 +54,7 @@ func EnsureCodexDefaults(home string) ([]string, error) {
 	if localState == "" {
 		localState = filepath.Join(home, ".agents", "local")
 	}
+	localState = resolveMergenticPath(home, localState)
 	var cfg struct {
 		VaultPath string `json:"vault_path"`
 	}
@@ -67,6 +71,9 @@ func EnsureCodexDefaults(home string) ([]string, error) {
 	if vault == "" {
 		vault = cfg.VaultPath
 	}
+	if vault != "" {
+		vault = resolveMergenticPath(home, vault)
+	}
 	dirs := []string{localState}
 	if vault != "" {
 		dirs = append(dirs, filepath.Join(vault, "projects"))
@@ -74,13 +81,28 @@ func EnsureCodexDefaults(home string) ([]string, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return dirs, err
 	}
-	var body strings.Builder
-	body.WriteString("add_dirs:\n")
-	for _, dir := range dirs {
-		fmt.Fprintf(&body, "  - %s\n", dir)
+	body, err := yaml.Marshal(struct {
+		AddDirs []string `yaml:"add_dirs"`
+	}{AddDirs: dirs})
+	if err != nil {
+		return dirs, err
 	}
-	if err := os.WriteFile(path, []byte(body.String()), 0o600); err != nil {
+	if err := os.WriteFile(path, body, 0o600); err != nil {
 		return dirs, err
 	}
 	return dirs, nil
+}
+
+func resolveMergenticPath(home, path string) string {
+	path = strings.TrimSpace(path)
+	if path == "~" {
+		return home
+	}
+	if strings.HasPrefix(path, "~/") {
+		path = filepath.Join(home, path[2:])
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(home, path)
+	}
+	return filepath.Clean(path)
 }
