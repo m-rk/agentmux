@@ -6,6 +6,8 @@ package taskcheck
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -16,16 +18,30 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/m-rk/agentmux/daemon/internal/runas"
 )
 
 // Keep the unary result under gRPC's default 4 MiB message limit.
 const maxOutputBytes = 3 << 20
 
-var taskTestCommand = func(ctx context.Context, runUser string, args ...string) *exec.Cmd {
-	argv := append([]string{"-n", "10", trustedGoPath()}, args...)
-	return runas.CommandContext(ctx, runUser, "/usr/bin/nice", argv...)
+var taskCheckEUID = os.Geteuid
+var systemdRun = runSystemd
+var stopSystemdUnit = stopUnit
+var makeTaskCheckTempRoot = func() (string, error) {
+	return os.MkdirTemp("/run/agentmux", ".taskcheck-")
+}
+
+func runSystemd(ctx context.Context, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "/usr/bin/systemd-run", args...)
+	var output boundedBuffer
+	cmd.Stdout, cmd.Stderr = &output, &output
+	err := cmd.Run()
+	return output.Bytes(), err
+}
+
+func stopUnit(name string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_ = exec.CommandContext(ctx, "/usr/bin/systemctl", "stop", name).Run()
 }
 
 // trustedGoPath resolves Go from the daemon's own PATH, never the task user's
@@ -108,9 +124,10 @@ var projectChecks = map[string][][]string{
 	"m-rk/mergentic": {{"vet", "./..."}, {"test", "./..."}},
 }
 
-// Run executes the approved check for the registry project as the registered
-// task user. Temporary files and the Go build cache are private to this
-// worktree and removed when the synchronous call completes.
+// Run executes the approved check in a root-managed system unit. The task
+// user receives a read-only bind of its checkout and one private writable
+// directory for home, temp files and the Go cache. There is no unsandboxed
+// fallback when systemd isolation is unavailable.
 func Run(ctx context.Context, target Target) Result {
 	started := time.Now()
 	result := Result{Project: target.Project, ExitCode: -1}
@@ -121,14 +138,20 @@ func Run(ctx context.Context, target Target) Result {
 		result.Duration = time.Since(started)
 		return result
 	}
-	workdir, err := validateWorkdir(target)
+	if taskCheckEUID() != 0 {
+		result.Category = "execution_error"
+		result.Output = "project checks require the root-managed system service sandbox\n"
+		result.Duration = time.Since(started)
+		return result
+	}
+	worktree, workdir, err := validateWorkdir(target)
 	if err != nil {
 		result.Category = "execution_error"
 		result.Output = err.Error() + "\n"
 		result.Duration = time.Since(started)
 		return result
 	}
-	tmpRoot, err := makePrivateDirs(workdir, target.RunUser)
+	tmpRoot, err := makePrivateDirs(target.RunUser)
 	if err != nil {
 		result.Category = "execution_error"
 		result.Output = err.Error() + "\n"
@@ -136,26 +159,31 @@ func Run(ctx context.Context, target Target) Result {
 		return result
 	}
 	defer os.RemoveAll(tmpRoot)
-	cacheDir, tempDir := filepath.Join(tmpRoot, "cache"), filepath.Join(tmpRoot, "tmp")
+	privatePath := "/tmp/agentmux-taskcheck"
+	cacheDir, tempDir := filepath.Join(privatePath, "cache"), filepath.Join(privatePath, "tmp")
 
 	// nice and every Go argv are fixed by projectChecks. GOPROXY=off and
 	// GOTOOLCHAIN=local prevent downloads during the check.
 	var output boundedBuffer
 	for _, args := range checks {
-		cmd := taskTestCommand(ctx, target.RunUser, args...)
-		cmd.Dir = workdir
-		cmd.Env = safeEnv(cmd.Env, map[string]string{
-			"GOCACHE":     cacheDir,
-			"GOTMPDIR":    tempDir,
-			"TMPDIR":      tempDir,
-			"GOPROXY":     "off",
-			"GOTOOLCHAIN": "local",
-			"GOENV":       "off",
-			"GOFLAGS":     "",
-			"GOWORK":      "off",
-		})
-		cmd.Stdout, cmd.Stderr = &output, &output
-		err = cmd.Run()
+		commandArgs, argErr := sandboxArgs(target, worktree, workdir, tmpRoot, privatePath, args, cacheDir, tempDir)
+		if argErr != nil {
+			result.Category = "execution_error"
+			result.Output = argErr.Error() + "\n"
+			result.Duration = time.Since(started)
+			return result
+		}
+		chunk, runErr := systemdRun(ctx, commandArgs...)
+		_, _ = output.Write(chunk)
+		err = runErr
+		if ctx.Err() != nil {
+			for _, arg := range commandArgs {
+				if strings.HasPrefix(arg, "--unit=") {
+					stopSystemdUnit(strings.TrimPrefix(arg, "--unit="))
+					break
+				}
+			}
+		}
 		if err != nil {
 			break
 		}
@@ -172,46 +200,104 @@ func Run(ctx context.Context, target Target) Result {
 		return result
 	}
 	var exitErr *exec.ExitError
+	if unitStartupRE.MatchString(result.Output) {
+		result.Category = "execution_error"
+		result.Output += "the root-managed systemd sandbox did not start; no unsandboxed check was run\n"
+		return result
+	}
 	if errors.As(err, &exitErr) {
 		result.ExitCode = exitErr.ExitCode()
 	} else {
-		result.Output += err.Error() + "\n"
+		result.Output += "starting isolated project check: " + err.Error() + "\n"
 		result.Category = "execution_error"
-		if ctx.Err() != nil {
-			result.ExitCode = 124
-		}
 		return result
 	}
 	result.Category = Classify(result.Output)
 	return result
 }
 
-func validateWorkdir(target Target) (string, error) {
-	projectDir := target.Workdir
+func sandboxArgs(target Target, worktree, workdir, tmpRoot, privatePath string, check []string, cacheDir, tempDir string) ([]string, error) {
+	unitID := make([]byte, 8)
+	if _, err := rand.Read(unitID); err != nil {
+		return nil, fmt.Errorf("creating isolated check unit ID: %w", err)
+	}
+	for _, path := range []string{worktree, workdir, tmpRoot} {
+		if strings.ContainsAny(path, ":\\\x00\r\n") {
+			return nil, fmt.Errorf("task paths contain characters unsupported by systemd bind properties")
+		}
+	}
+	unitName := "agentmuxd-taskcheck-" + hex.EncodeToString(unitID) + ".service"
+	args := []string{
+		"--system", "--wait", "--pipe", "--collect", "--quiet", "--unit=" + unitName,
+		"--property=Type=exec",
+		"--property=User=" + target.RunUser,
+		"--property=Nice=10",
+		"--property=PrivateNetwork=yes",
+		"--property=PrivateTmp=yes",
+		"--property=ProtectHome=tmpfs",
+		"--property=ProtectSystem=strict",
+		"--property=InaccessiblePaths=/run",
+		"--property=BindReadOnlyPaths=" + worktree,
+		"--property=BindPaths=" + tmpRoot + ":" + privatePath,
+		"--property=NoNewPrivileges=yes",
+		"--property=PrivateDevices=yes",
+		"--property=ProtectKernelTunables=yes",
+		"--property=ProtectKernelModules=yes",
+		"--property=ProtectControlGroups=yes",
+		"--property=RestrictSUIDSGID=yes",
+		"--property=CapabilityBoundingSet=",
+		"--property=AmbientCapabilities=",
+		"--property=WorkingDirectory=" + workdir,
+		"--setenv=HOME=" + privatePath + "/home",
+		"--setenv=PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin",
+		"--setenv=GOCACHE=" + cacheDir,
+		"--setenv=GOTMPDIR=" + tempDir,
+		"--setenv=TMPDIR=" + tempDir,
+		"--setenv=GOPROXY=off",
+		"--setenv=GOTOOLCHAIN=local",
+		"--setenv=GOENV=off",
+		"--setenv=GOFLAGS=",
+		"--setenv=GOWORK=off",
+		"--", trustedGoPath(),
+	}
+	args = append(args, check...)
+	return args, nil
+}
+
+func validateWorkdir(target Target) (string, string, error) {
+	worktree, err := filepath.EvalSymlinks(target.Workdir)
+	if err != nil {
+		return "", "", fmt.Errorf("resolving task worktree: %w", err)
+	}
+	projectDir := worktree
 	switch target.Project {
 	case "m-rk/agentmux":
 		projectDir = filepath.Join(projectDir, "daemon")
 	case "m-rk/mergentic":
 		// Its Go module is at the registered checkout root.
 	default:
-		return "", fmt.Errorf("no trusted check directory configured for project %q", target.Project)
+		return "", "", fmt.Errorf("no trusted check directory configured for project %q", target.Project)
 	}
 	workdir, err := filepath.EvalSymlinks(projectDir)
 	if err != nil {
-		return "", fmt.Errorf("resolving task worktree: %w", err)
+		return "", "", fmt.Errorf("resolving task project directory: %w", err)
+	}
+	rel, err := filepath.Rel(worktree, workdir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", "", fmt.Errorf("configured project directory escapes the assigned task worktree")
 	}
 	info, err := os.Stat(workdir)
 	if err != nil || !info.IsDir() {
-		return "", fmt.Errorf("task worktree is unavailable")
+		return "", "", fmt.Errorf("task worktree is unavailable")
 	}
 	goMod, err := os.Stat(filepath.Join(workdir, "go.mod"))
 	if err != nil || !goMod.Mode().IsRegular() {
-		return "", fmt.Errorf("approved Go project check requires go.mod in its configured project directory")
+		return "", "", fmt.Errorf("approved Go project check requires go.mod in its configured project directory")
 	}
-	return workdir, nil
+	return worktree, workdir, nil
 }
 
-func makePrivateDirs(workdir, runUser string) (string, error) {
+func makePrivateDirs(runUser string) (string, error) {
 	u, err := user.Lookup(runUser)
 	if err != nil {
 		return "", fmt.Errorf("looking up task user: %w", err)
@@ -227,52 +313,28 @@ func makePrivateDirs(workdir, runUser string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("invalid task user gid: %w", err)
 	}
-	root, err := os.MkdirTemp(workdir, ".agentmux-test-")
+	root, err := makeTaskCheckTempRoot()
 	if err != nil {
 		return "", fmt.Errorf("creating private test directory: %w", err)
 	}
 	cleanup := func(err error) (string, error) { _ = os.RemoveAll(root); return "", err }
-	for _, name := range []string{"cache", "tmp"} {
+	// Keep the bind source itself root-owned so the task user cannot replace
+	// it with a symlink between validation and systemd's mount setup.
+	if err := os.Chmod(root, 0o711); err != nil {
+		return cleanup(fmt.Errorf("securing private test directory: %w", err))
+	}
+	for _, name := range []string{"cache", "tmp", "home"} {
 		path := filepath.Join(root, name)
 		if err := os.Mkdir(path, 0o700); err != nil {
 			return cleanup(fmt.Errorf("creating private test %s: %w", name, err))
 		}
 	}
-	if os.Geteuid() != uid {
-		if err := os.Chown(root, uid, gid); err != nil {
-			return cleanup(fmt.Errorf("assigning private test directory to task user: %w", err))
-		}
-		for _, name := range []string{"cache", "tmp"} {
-			if err := os.Chown(filepath.Join(root, name), uid, gid); err != nil {
-				return cleanup(fmt.Errorf("assigning private test %s to task user: %w", name, err))
-			}
+	for _, name := range []string{"cache", "tmp", "home"} {
+		if err := os.Chown(filepath.Join(root, name), uid, gid); err != nil {
+			return cleanup(fmt.Errorf("assigning private test %s to task user: %w", name, err))
 		}
 	}
 	return root, nil
-}
-
-func safeEnv(env []string, overrides map[string]string) []string {
-	base := map[string]string{}
-	for _, item := range env {
-		key, _, ok := strings.Cut(item, "=")
-		if !ok {
-			continue
-		}
-		if key == "HOME" || key == "PATH" || key == "LANG" || strings.HasPrefix(key, "LC_") {
-			_, value, _ := strings.Cut(item, "=")
-			base[key] = value
-		}
-	}
-	for key, value := range overrides {
-		base[key] = value
-	}
-	var out []string
-	for _, key := range []string{"HOME", "PATH", "LANG", "LC_ALL", "GOCACHE", "GOTMPDIR", "TMPDIR", "GOPROXY", "GOTOOLCHAIN", "GOENV", "GOFLAGS", "GOWORK"} {
-		if value, ok := base[key]; ok {
-			out = append(out, key+"="+value)
-		}
-	}
-	return out
 }
 
 // Classify reports known host sandbox denials separately from ordinary test
@@ -292,6 +354,7 @@ func Classify(output string) string {
 
 var (
 	sandboxDenialRE = regexp.MustCompile(`(?i)(operation not permitted|permission denied|read-only file system|network is unreachable|listen tcp[^\n]*operation not permitted|failed to create[^\n]*(namespace|network))`)
+	unitStartupRE   = regexp.MustCompile(`(?i)(failed to (start|connect to|set) (transient )?(service|unit|bus|properties)|job for [^\n]+ failed)`)
 	testAssertionRE = regexp.MustCompile(`(?m)(?:[^\n]+\.go:\d+:\d+:\s+\S|_test\.go:\d+:\s+[^\n]*(?:want|got|expected|unexpected|assert|mismatch)|\b(Error|Errorf|Fatal|Fatalf):)`)
 )
 

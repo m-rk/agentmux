@@ -104,10 +104,16 @@ Inside a Codex task session run `agentmux sessions check`. The CLI sends only
 the stamped task instance name to the local daemon. The daemon reads the
 project, worktree and run user from that instance's registry. It accepts only
 the fixed `go test ./...` check for `m-rk/agentmux`, and `go vet ./...` followed
-by `go test ./...` for `m-rk/mergentic`. It runs the commands as the ordinary
-task user with `nice -n 10`, module downloads and automatic toolchain downloads
-disabled, and a private cache/temp directory inside that worktree. The
-directory is removed when the check finishes.
+by `go test ./...` for `m-rk/mergentic`. A root-managed transient systemd
+service runs the fixed Go command as the ordinary task user with low CPU
+priority. The service uses a private network namespace with loopback, private
+temporary storage, hides home and runtime socket directories, makes system
+paths read-only, and bind-mounts only the assigned worktree read-only. A
+root-owned bind source exposes private writable home, cache, and temp
+directories to that service. Module and automatic
+toolchain downloads are disabled, and the private directories are removed
+when the check finishes. If the root system service cannot enforce these
+properties, the check fails without an unsandboxed fallback.
 
 The CLI prints combined stdout/stderr and a final result line with project,
 exit code and duration in the same Codex thread. `sandbox_denial` identifies

@@ -2,11 +2,14 @@ package taskcheck
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -70,20 +73,6 @@ func TestClassifySeparatesSandboxDenialsFromTestFailures(t *testing.T) {
 	}
 }
 
-func TestSafeEnvDropsInheritedSecretsAndGoOverrides(t *testing.T) {
-	env := safeEnv([]string{"HOME=/home/worker", "PATH=/usr/bin", "OPENAI_API_KEY=secret", "GOFLAGS=-exec=evil", "GOENV=/tmp/env"}, map[string]string{
-		"GOFLAGS": "",
-		"GOENV":   "off",
-	})
-	joined := strings.Join(env, "\n")
-	if strings.Contains(joined, "secret") || strings.Contains(joined, "evil") {
-		t.Fatalf("unsafe inherited env retained: %q", env)
-	}
-	if !strings.Contains(joined, "GOFLAGS=") || !strings.Contains(joined, "GOENV=off") || !strings.Contains(joined, "PATH=/usr/bin") {
-		t.Fatalf("required env missing: %q", env)
-	}
-}
-
 func TestRunUsesFixedCommandPrivateDirsAndReturnsExit(t *testing.T) {
 	u, err := user.Current()
 	if err != nil {
@@ -106,33 +95,56 @@ func TestRunUsesFixedCommandPrivateDirsAndReturnsExit(t *testing.T) {
 	}
 	target := Target{Instance: "task-9", Agent: "codex", Project: "m-rk/agentmux", Workdir: root, RunUser: currentUsername(t)}
 
-	old := taskTestCommand
-	t.Cleanup(func() { taskTestCommand = old })
-	var gotUser string
-	var gotArgs [][]string
-	var invoked *exec.Cmd
-	taskTestCommand = func(ctx context.Context, user string, args ...string) *exec.Cmd {
-		gotUser = user
-		gotArgs = append(gotArgs, append([]string(nil), args...))
-		invoked = exec.CommandContext(ctx, "sh", "-c", "printf 'stdout check\\n'; printf 'stderr detail\\n' >&2; exit 7")
-		return invoked
+	oldUID, oldSystemd, oldStop, oldTempRoot := taskCheckEUID, systemdRun, stopSystemdUnit, makeTaskCheckTempRoot
+	taskCheckEUID = func() int { return 0 }
+	tempBase := t.TempDir()
+	makeTaskCheckTempRoot = func() (string, error) { return os.MkdirTemp(tempBase, ".agentmux-taskcheck-") }
+	var gotArgs []string
+	t.Cleanup(func() {
+		taskCheckEUID, systemdRun, stopSystemdUnit, makeTaskCheckTempRoot = oldUID, oldSystemd, oldStop, oldTempRoot
+	})
+	// An ExitError is the systemd-run result for a non-zero service exit.
+	systemdRun = func(_ context.Context, args ...string) ([]byte, error) {
+		gotArgs = append([]string(nil), args...)
+		return []byte("stdout check\nstderr detail\n"), exitError(7)
 	}
 	result := Run(context.Background(), target)
-	if gotUser != target.RunUser || !reflect.DeepEqual(gotArgs, [][]string{{"test", "./..."}}) {
-		t.Fatalf("command user/argv = %q %q", gotUser, gotArgs)
-	}
 	if result.ExitCode != 7 || result.Category != "test_failure" || !strings.Contains(result.Output, "stdout check") || !strings.Contains(result.Output, "stderr detail") {
 		t.Fatalf("Run result = %+v", result)
 	}
 	checkRoot := filepath.Join(root, "daemon")
-	if invoked.Dir != checkRoot || !hasEnvPrefix(invoked.Env, "GOCACHE="+checkRoot+string(os.PathSeparator)+".agentmux-test-") || !hasEnvPrefix(invoked.Env, "TMPDIR="+checkRoot+string(os.PathSeparator)+".agentmux-test-") {
-		t.Fatalf("command dir/cache/temp are not scoped to worktree: dir=%q env=%q", invoked.Dir, invoked.Env)
+	if !reflect.DeepEqual(gotArgs[len(gotArgs)-4:], []string{"--", trustedGoPath(), "test", "./..."}) {
+		t.Fatalf("fixed check argv = %q", gotArgs)
 	}
-	if hasEnvPrefix(invoked.Env, "OPENAI_API_KEY=") || hasEnvPrefix(invoked.Env, "CODEX_API_KEY=") {
-		t.Fatalf("task check inherited an API secret: %q", invoked.Env)
+	for _, property := range []string{
+		"--system", "--property=User=" + target.RunUser, "--property=Nice=10",
+		"--property=PrivateNetwork=yes", "--property=ProtectHome=tmpfs",
+		"--property=PrivateTmp=yes", "--property=ProtectSystem=strict",
+		"--property=InaccessiblePaths=/run", "--property=BindReadOnlyPaths=" + root,
+		"--property=NoNewPrivileges=yes", "--property=CapabilityBoundingSet=",
+		"--property=AmbientCapabilities=", "--property=BindPaths=",
+	} {
+		found := slices.Contains(gotArgs, property)
+		if strings.HasSuffix(property, "=") {
+			for _, arg := range gotArgs {
+				found = found || strings.HasPrefix(arg, property)
+			}
+		}
+		if !found {
+			t.Errorf("sandbox invocation missing %q: %v", property, gotArgs)
+		}
 	}
-	if strings.Contains(result.Output, ".agentmux-test-") {
-		t.Fatalf("private path leaked to output: %q", result.Output)
+	var privateRoot string
+	for _, arg := range gotArgs {
+		if strings.HasPrefix(arg, "--property=BindPaths=") {
+			privateRoot = strings.TrimSuffix(strings.TrimPrefix(arg, "--property=BindPaths="), ":/tmp/agentmux-taskcheck")
+		}
+	}
+	if privateRoot == "" {
+		t.Fatal("sandbox invocation did not expose a private writable directory")
+	}
+	if _, err := os.Stat(privateRoot); !os.IsNotExist(err) {
+		t.Fatalf("private bind source was not cleaned up: %q, %v", privateRoot, err)
 	}
 	entries, err := os.ReadDir(checkRoot)
 	if err != nil {
@@ -145,30 +157,81 @@ func TestRunUsesFixedCommandPrivateDirsAndReturnsExit(t *testing.T) {
 	}
 }
 
-func hasEnvPrefix(env []string, prefix string) bool {
-	for _, value := range env {
-		if strings.HasPrefix(value, prefix) {
-			return true
+func TestRunFailsClosedWhenRootManagedSandboxCannotStart(t *testing.T) {
+	worktree := t.TempDir()
+	projectDir := filepath.Join(worktree, "daemon")
+	if err := os.Mkdir(projectDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "go.mod"), []byte("module example.test/check\n\ngo 1.23\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldUID, oldSystemd, oldStop, oldTempRoot := taskCheckEUID, systemdRun, stopSystemdUnit, makeTaskCheckTempRoot
+	taskCheckEUID = func() int { return 0 }
+	tempBase := t.TempDir()
+	makeTaskCheckTempRoot = func() (string, error) { return os.MkdirTemp(tempBase, ".agentmux-taskcheck-") }
+	called := 0
+	systemdRun = func(context.Context, ...string) ([]byte, error) {
+		called++
+		return []byte("Failed to start transient service unit: systemd property unavailable"), exitError(1)
+	}
+	t.Cleanup(func() {
+		taskCheckEUID, systemdRun, stopSystemdUnit, makeTaskCheckTempRoot = oldUID, oldSystemd, oldStop, oldTempRoot
+	})
+	target := Target{Project: "m-rk/agentmux", Workdir: worktree, RunUser: currentUsername(t)}
+	result := Run(context.Background(), target)
+	if called != 1 || result.Category != "execution_error" || result.ExitCode != -1 || !strings.Contains(result.Output, "no unsandboxed check was run") {
+		t.Fatalf("failed sandbox result = %+v, calls=%d", result, called)
+	}
+}
+
+func TestUnitStartupFailuresAreExecutionErrors(t *testing.T) {
+	for _, output := range []string{
+		"Failed to start transient service unit: namespace unavailable",
+		"Failed to set unit properties: property unsupported",
+		"Failed to connect to bus: access denied",
+	} {
+		if !unitStartupRE.MatchString(output) {
+			t.Errorf("unit startup failure not recognized: %q", output)
 		}
 	}
-	return false
+}
+
+func TestRunRefusesToExecuteWithoutRootManagedDaemon(t *testing.T) {
+	oldUID, oldSystemd := taskCheckEUID, systemdRun
+	taskCheckEUID = func() int { return 1000 }
+	called := false
+	systemdRun = func(context.Context, ...string) ([]byte, error) {
+		called = true
+		return nil, nil
+	}
+	t.Cleanup(func() { taskCheckEUID, systemdRun = oldUID, oldSystemd })
+	result := Run(context.Background(), Target{Project: "m-rk/agentmux"})
+	if called || result.Category != "execution_error" || !strings.Contains(result.Output, "root-managed system service sandbox") {
+		t.Fatalf("unprivileged daemon result = %+v, called=%t", result, called)
+	}
+}
+
+func exitError(code int) error {
+	cmd := exec.Command("sh", "-c", "exit "+strconv.Itoa(code))
+	err := cmd.Run()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != code {
+		panic("failed to construct test exit error")
+	}
+	return exitErr
 }
 
 func TestMakePrivateDirsRejectsRoot(t *testing.T) {
 	if _, err := user.Lookup("root"); err != nil {
 		t.Skip("root account unavailable")
 	}
-	if _, err := makePrivateDirs(t.TempDir(), "root"); err == nil || !strings.Contains(err.Error(), "may not run as root") {
+	if _, err := makePrivateDirs("root"); err == nil || !strings.Contains(err.Error(), "may not run as root") {
 		t.Fatalf("makePrivateDirs(root) error = %v", err)
 	}
 }
 
-func TestDefaultTaskTestCommandIsFixed(t *testing.T) {
-	cmd := taskTestCommand(context.Background(), currentUsername(t), "test", "./...")
-	want := []string{"/usr/bin/nice", "-n", "10", trustedGoPath(), "test", "./..."}
-	if strings.Join(cmd.Args, " ") != strings.Join(want, " ") {
-		t.Fatalf("trusted check argv = %q, want %q", cmd.Args, want)
-	}
+func TestProjectChecksAreFixed(t *testing.T) {
 	if got, want := projectChecks["m-rk/mergentic"], [][]string{{"vet", "./..."}, {"test", "./..."}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("mergentic check argv = %q, want %q", got, want)
 	}
