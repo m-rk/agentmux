@@ -62,7 +62,7 @@ func runDiscordCmd(args []string) {
 func discordUsage() {
 	fmt.Fprintln(os.Stderr, `usage:
   agentmux discord post (-title T | -thread ID [-title T]) -body-file F [-tag NAME ...] [-react EMOJI,EMOJI,...] [-button LABEL ...] [-buttons-json FILE] [-no-mention] [-embeds] [-json] [-dry-run]
-  agentmux discord reply -thread ID -body-file F [-mention] [-embeds] [-dry-run]
+  agentmux discord reply -thread ID -body-file F [-image FILE] [-mention] [-embeds] [-dry-run]
   agentmux discord read -thread ID [-after MESSAGE_ID] [-json]
   agentmux discord read -threads ID1,ID2 [-after-map JSON] -json
   agentmux discord heads -threads ID1,ID2 -json
@@ -262,6 +262,7 @@ func runDiscordReply(args []string) error {
 	fs := flag.NewFlagSet("discord reply", flag.ContinueOnError)
 	thread := fs.String("thread", "", "ask thread ID")
 	bodyFile := fs.String("body-file", "", "file with the reply body ('-' for stdin)")
+	imageFile := fs.String("image", "", "local PNG, JPEG, or GIF image to attach (max 8 MiB)")
 	mention := fs.Bool("mention", false, "mention the configured user")
 	embeds := fs.Bool("embeds", false, "keep link unfurls (embeds) on this send; default suppresses them")
 	dryRun := fs.Bool("dry-run", false, "print the Discord payload instead of sending it")
@@ -291,6 +292,28 @@ func runDiscordReply(args []string) error {
 			return nil
 		}
 		fmt.Print(preview.Format())
+		return nil
+	}
+	if *imageFile != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		target := *thread
+		test := liveguard.IsTaskSession()
+		if test {
+			target, err = client.TestThreadID()
+			if err != nil {
+				return err
+			}
+		}
+		id, link, err := client.ReplyAskImage(ctx, target, body, *imageFile, *mention, test, testTaskID())
+		if err != nil {
+			return err
+		}
+		if *asJSON {
+			fmt.Printf("{\"message_id\":%q,\"attachment_url\":%q}\n", id, link)
+			return nil
+		}
+		fmt.Printf("Replied to ask thread %s (message %s): %s\n", target, id, link)
 		return nil
 	}
 	if liveguard.IsTaskSession() {

@@ -2,9 +2,13 @@ package collab
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +20,9 @@ type fakeAsks struct {
 	hookQ       []string
 	patched     map[string]any
 	rateLimited map[string]int
+	fileName    string
+	fileBytes   int
+	requests    int
 }
 
 func (f *fakeAsks) server(t *testing.T, threads map[string]Channel, messages []Message) *httptest.Server {
@@ -29,15 +36,27 @@ func (f *fakeAsks) server(t *testing.T, threads map[string]Channel, messages []M
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		f.requests++
 		switch {
 		case r.URL.Path == "/api/channels/forum":
 			writeJSON(t, w, forum)
 		case r.URL.Path == "/hook" && r.Method == http.MethodPost:
 			var body map[string]any
-			_ = json.NewDecoder(r.Body).Decode(&body)
+			if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+				_ = r.ParseMultipartForm(10 << 20)
+				_ = json.Unmarshal([]byte(r.FormValue("payload_json")), &body)
+				if file, header, err := r.FormFile("files[0]"); err == nil {
+					f.fileName = header.Filename
+					data, _ := io.ReadAll(file)
+					f.fileBytes = len(data)
+					file.Close()
+				}
+			} else {
+				_ = json.NewDecoder(r.Body).Decode(&body)
+			}
 			f.hook = append(f.hook, body)
 			f.hookQ = append(f.hookQ, r.URL.RawQuery)
-			writeJSON(t, w, Message{ID: "500", ChannelID: "900"})
+			writeJSON(t, w, Message{ID: "500", ChannelID: "900", Attachments: []Attachment{{ID: "1", Filename: "image.png", URL: "https://cdn.discord.test/image.png"}}})
 		case strings.HasSuffix(r.URL.Path, "/messages"):
 			threadID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/channels/"), "/messages")
 			if f.rateLimited != nil && f.rateLimited[threadID] > 0 {
@@ -62,6 +81,48 @@ func (f *fakeAsks) server(t *testing.T, threads map[string]Channel, messages []M
 			http.NotFound(w, r)
 		}
 	}))
+}
+
+func TestReplyAskImageValidatesAndUploadsMultipart(t *testing.T) {
+	f := &fakeAsks{}
+	s := f.server(t, map[string]Channel{"900": {ID: "900", ParentID: "forum", AppliedTags: []string{"t-task"}}}, nil)
+	defer s.Close()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "private-name.png")
+	data, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p0sAAAAASUVORK5CYII=")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	id, link, err := asksClientFor(s.URL).ReplyAskImage(context.Background(), "900", "diagram", path, false, false, "")
+	if err != nil || id != "500" || link != "https://cdn.discord.test/image.png" {
+		t.Fatalf("reply = %q %q %v", id, link, err)
+	}
+	if f.hook[0]["content"] != "diagram" || !strings.Contains(f.hookQ[0], "thread_id=900") || !strings.Contains(f.hookQ[0], "wait=true") {
+		t.Fatalf("payload=%#v query=%q", f.hook[0], f.hookQ[0])
+	}
+	encoded, _ := json.Marshal(f.hook[0])
+	if strings.Contains(string(encoded), dir) || strings.Contains(string(encoded), "private-name") {
+		t.Fatal("local path or filename leaked")
+	}
+	if f.fileName != "image.png" || f.fileBytes != len(data) {
+		t.Fatalf("uploaded file = %q (%d bytes), want generic image.png (%d bytes)", f.fileName, f.fileBytes, len(data))
+	}
+}
+
+func TestReplyAskImageInvalidDoesNotContactDiscord(t *testing.T) {
+	f := &fakeAsks{}
+	s := f.server(t, nil, nil)
+	defer s.Close()
+	path := filepath.Join(t.TempDir(), "bad.png")
+	if err := os.WriteFile(path, []byte("not an image"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := asksClientFor(s.URL).ReplyAskImage(context.Background(), "900", "caption", path, false, false, ""); err == nil {
+		t.Fatal("invalid image accepted")
+	}
+	if f.requests != 0 {
+		t.Fatal("Discord contacted for invalid image")
+	}
 }
 
 func TestBatchReadAndHeadsPartialFailureAndRateLimit(t *testing.T) {

@@ -1,12 +1,22 @@
 package collab
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
+	"io"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -14,6 +24,40 @@ import (
 	"time"
 	"unicode/utf8"
 )
+
+const maxAskImageBytes = 8 * 1024 * 1024
+
+// readAskImage accepts bounded PNG, JPEG, or GIF files and assigns a generic
+// upload name so local paths and filenames never reach Discord.
+func readAskImage(path string) ([]byte, string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, "", fmt.Errorf("cannot read image")
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxAskImageBytes+1))
+	if err != nil {
+		return nil, "", fmt.Errorf("cannot read image")
+	}
+	if len(data) == 0 || len(data) > maxAskImageBytes {
+		return nil, "", fmt.Errorf("image must be between 1 byte and %d bytes", maxAskImageBytes)
+	}
+	config, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, "", fmt.Errorf("input is not a readable PNG, JPEG, or GIF image")
+	}
+	if config.Width < 1 || config.Height < 1 || config.Width > 4096 || config.Height > 4096 || int64(config.Width)*int64(config.Height) > 16*1024*1024 {
+		return nil, "", fmt.Errorf("image dimensions exceed the 4096 by 4096 limit")
+	}
+	if _, _, err := image.Decode(bytes.NewReader(data)); err != nil {
+		return nil, "", fmt.Errorf("input is not a readable PNG, JPEG, or GIF image")
+	}
+	ext := map[string]string{"png": "png", "jpeg": "jpg", "gif": "gif"}[format]
+	if ext == "" {
+		return nil, "", fmt.Errorf("input is not a supported image")
+	}
+	return data, "image." + ext, nil
+}
 
 // Asks are messages in threads in the collaboration forum that @-mention
 // one configured user. Thread tags describe the thread, not the ask: every
@@ -566,6 +610,89 @@ func (c *Client) ReplyAsk(ctx context.Context, threadID, body string, mention bo
 		return "", fmt.Errorf("replying to Discord ask: %w", err)
 	}
 	return message.ID, nil
+}
+
+// ReplyAskImage attaches a validated image to an existing ask thread.
+func (c *Client) ReplyAskImage(ctx context.Context, threadID, caption, path string, mention bool, testThread bool, task string) (string, string, error) {
+	data, filename, err := readAskImage(path)
+	if err != nil {
+		return "", "", err
+	}
+	user := ""
+	if mention && !testThread {
+		user, err = c.mentionUser()
+		if err != nil {
+			return "", "", err
+		}
+	}
+	content, err := askContent(user, mention && !testThread, caption)
+	if testThread {
+		content, err = testContent(task, caption)
+	}
+	if err != nil {
+		return "", "", err
+	}
+	if _, _, err := c.askThread(ctx, threadID); err != nil {
+		return "", "", err
+	}
+	payload := map[string]any{"content": content, "attachments": []map[string]any{{"id": 0, "filename": filename}}}
+	if testThread {
+		payload["allowed_mentions"] = map[string]any{"parse": []string{}, "users": []string{}, "roles": []string{}}
+	} else {
+		payload["username"] = asksUsername
+		payload["allowed_mentions"] = c.mentionPayload(user, mention)
+	}
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	part, err := w.CreateFormField("payload_json")
+	if err != nil {
+		return "", "", err
+	}
+	if err = json.NewEncoder(part).Encode(payload); err != nil {
+		return "", "", err
+	}
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", `form-data; name="files[0]"; filename="`+filename+`"`)
+	h.Set("Content-Type", map[string]string{"png": "image/png", "jpg": "image/jpeg", "gif": "image/gif"}[strings.TrimPrefix(filepath.Ext(filename), ".")])
+	part, err = w.CreatePart(h)
+	if err != nil {
+		return "", "", err
+	}
+	if _, err = part.Write(data); err != nil {
+		return "", "", err
+	}
+	if err = w.Close(); err != nil {
+		return "", "", err
+	}
+	var req *http.Request
+	if testThread {
+		base := strings.TrimRight(c.APIBaseURL, "/")
+		if base == "" {
+			base = discordAPIBaseURL
+		}
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, base+"/channels/"+url.PathEscape(threadID)+"/messages", &buf)
+		if err == nil {
+			req.Header.Set("Authorization", "Bot "+c.Config.BotToken)
+		}
+	} else {
+		var endpoint string
+		endpoint, err = c.webhookEndpoint(url.Values{"wait": {"true"}, "thread_id": {threadID}})
+		if err == nil {
+			req, err = http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &buf)
+		}
+	}
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	var message Message
+	if err = c.doJSON(req, &message); err != nil {
+		return "", "", fmt.Errorf("replying with image to Discord ask: %w", err)
+	}
+	if len(message.Attachments) == 0 || message.Attachments[0].URL == "" {
+		return message.ID, "", fmt.Errorf("Discord did not return an attachment URL")
+	}
+	return message.ID, message.Attachments[0].URL, nil
 }
 
 // ReadAsk returns messages in an ask thread after the given message ID

@@ -130,7 +130,7 @@ agentmux discord post -title T -body-file F [-tag NAME ...] [-react 1️⃣,2️
 agentmux discord post -thread ID [-title T] -body-file F [-tag NAME ...] [-no-mention] [-embeds] -json
 # {"thread_id":"…","message_id":"…"}  (thread_id is the one passed in)
 
-agentmux discord reply -thread ID -body-file F [-mention] [-embeds]
+agentmux discord reply -thread ID -body-file F [-image FILE] [-mention] [-embeds]
 
 agentmux discord read -thread ID [-after MESSAGE_ID] -json
 
@@ -246,6 +246,18 @@ agentmux discord prune [-thread ID] [-older-than DUR] [-dry-run] [-json]
 - On create, `-title` is the thread name (up to 100 characters), e.g.
   `MERG-4 combine related ready tasks…`.
 - `reply` only mentions with `-mention`.
+- `reply -image FILE` attaches a local PNG, JPEG, or GIF (up to 8 MiB) to
+  the existing thread, using the `-body-file` text as its caption. Add `-json`
+  to print `message_id` and `attachment_url`; callers such as MERG-245 and
+  MERG-254 should store `attachment_url` in the task note. For example:
+
+  ```sh
+  agentmux discord reply -thread THREAD_ID -body-file caption.txt -image screenshot.png -json
+  ```
+
+  The file is validated locally before any Discord request, and Discord gets
+  a generic filename rather than the local filename or path. Task sessions
+  attach through the configured test thread, as with text replies.
 - `read` also returns the opening post and any replies from the webhook;
   `author_is_configured_user` is true only for a real message from the
   configured user, so mergentic can pick out replies after the opening post
