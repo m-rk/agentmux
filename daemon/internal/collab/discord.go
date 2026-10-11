@@ -28,7 +28,7 @@ type Client struct {
 	Config     discordnotify.CollaborationConfig
 	HTTPClient *http.Client
 	APIBaseURL string
-	// ClicksPath is where `asks serve` records button clicks; empty disables
+	// ClicksPath is where `discord serve` records button clicks; empty disables
 	// reading them.
 	ClicksPath string
 

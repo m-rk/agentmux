@@ -212,4 +212,4 @@ or override the session's existing instructions. Collaboration failures are
 logged but never make a healthy managed session fail.
 
 Threads carrying a task kind tag (`task`, `epic`, `idea`, `spike`) are skipped by
-collab read and the digest; see [discord-asks.md](discord-asks.md).
+collab read and the digest; see [discord.md](discord.md).

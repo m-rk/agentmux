@@ -14,7 +14,7 @@ import (
 )
 
 // deployOwnedServices lists the user services deploy restarts when their
-// unit exists: the gateway, asks serve, thread watch and its nightly
+// unit exists: the gateway, discord serve, thread watch and its nightly
 // review. Instance units (agentmux-<name>.service) are never touched —
 // deploy must not interrupt running agents. Timers (doctor, gc, review,
 // paseo) are never restarted either: they run the pinned binary on their
@@ -22,17 +22,18 @@ import (
 func deployOwnedServices() []deployService {
 	return []deployService{
 		{unit: "agentmux-gateway.service", label: "gateway"},
-		{unit: "agentmux-asks.service", label: "asks serve"},
+		{unit: "agentmux-asks.service", label: "discord serve"},
 		{unit: "agentmux-threadwatch.service", label: "threadwatch"},
 	}
 }
 
 // deployOwnedUserServices lists the agentmux-owned systemd user units
-// deploy restarts in the run user's manager: the asks serve unit the
-// operator runs under their own manager (see docs/discord-asks.md).
+// deploy restarts in the run user's manager: the discord serve unit the
+// operator runs under their own manager (see docs/discord.md).
 func deployOwnedUserServices() []deployService {
 	return []deployService{
-		{unit: "agentmux-asks-serve.service", label: "asks serve"},
+		{unit: "agentmux-discord-serve.service", label: "discord serve"},
+		{unit: "agentmux-asks-serve.service", label: "discord serve (legacy)"},
 	}
 }
 

@@ -1,10 +1,10 @@
 // Package liveguard is the one CLI-side check that keeps test traffic out
 // of the live Discord and other sessions. Task instances (names starting
 // with task-, see retire.TaskPrefix) run prompts from other agents, so a
-// mistyped `agentmux asks post` inside one can reach a real forum. The
+// mistyped `agentmux discord post` inside one can reach a real forum. The
 // side-effecting CLI commands therefore refuse when they detect a task
 // session. The asks commands reroute into the reusable test thread instead
-// (see docs/discord-asks.md); every other guarded command just refuses.
+// (see docs/discord.md); every other guarded command just refuses.
 //
 // There is deliberately no override: a worker that can set an environment
 // variable on its own command could also set the override, so an override

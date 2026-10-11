@@ -60,7 +60,7 @@ func TestDeployOwnedServicesNeverTouchInstances(t *testing.T) {
 		if s.unit == "" || s.label == "" {
 			t.Errorf("user service = %+v, want unit and label", s)
 		}
-		if s.unit != "agentmux-asks-serve.service" {
+		if s.unit != "agentmux-discord-serve.service" && s.unit != "agentmux-asks-serve.service" {
 			t.Errorf("user service %q is not a known owned user service", s.unit)
 		}
 	}

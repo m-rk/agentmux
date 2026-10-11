@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"runtime/debug"
 )
@@ -63,8 +64,13 @@ func main() {
 		runNotifyCmd(args[1:])
 	case "collab":
 		runCollabCmd(args[1:])
+	case "discord":
+		runDiscordCmd(args[1:])
 	case "asks":
-		runAsksCmd(args[1:])
+		if info, err := os.Stderr.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
+			printAsksAliasNotice(os.Stderr, true)
+		}
+		runDiscordCmd(args[1:])
 	case "threadwatch":
 		runThreadwatchCmd(args[1:])
 	case "paseo":
@@ -171,14 +177,14 @@ Usage:
   agentmux collab read -instance NAME [-thread ID]
   agentmux collab post -instance NAME -topic TOPIC -summary SENTENCE [-shared] [-details FILE.md]
   agentmux collab post -instance NAME -thread ID -summary TEXT [-details FILE.md]
-  agentmux asks post -title T -body-file F [-tag NAME ...] [-json]   post an ask that mentions the configured user
-  agentmux asks reply -thread ID -body-file F [-mention]
-  agentmux asks read -thread ID [-after MESSAGE_ID] [-json]
-  agentmux asks react -thread ID -message ID -emoji EMOJI [-replace]
-  agentmux asks edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL]
-  agentmux asks close -thread ID [-tag NAME]
-  agentmux asks list [-open|-archived|-all] [-tag NAME] [-since DUR] [-json]
-  agentmux asks serve                                          record Discord button clicks for asks
+  agentmux discord post -title T -body-file F [-tag NAME ...] [-json] post an ask that mentions the configured user
+  agentmux discord reply -thread ID -body-file F [-mention]
+  agentmux discord read -thread ID [-after MESSAGE_ID] [-json]
+  agentmux discord react -thread ID -message ID -emoji EMOJI [-replace]
+  agentmux discord edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL]
+  agentmux discord close -thread ID [-tag NAME]
+  agentmux discord list [-open|-archived|-all] [-tag NAME] [-since DUR] [-json]
+  agentmux discord serve                                        record Discord button clicks
   agentmux threadwatch serve [-dry-run] [-once]   follow agent sessions and alert on Discord (see -h)
   agentmux threadwatch status [-since 24h] [-json]   show open intervene signals
   agentmux threadwatch install -run-user USER     (Linux, root) install agentmux-threadwatch.service
@@ -195,4 +201,10 @@ Usage:
                                refuse when the branch carries agent trailers, naming each commit (see docs/gateway.md)
   agentmux deploy begin|end                        hold/release the lock the pull updater skips on
   agentmux help                show this message`)
+}
+
+func printAsksAliasNotice(w io.Writer, terminal bool) {
+	if terminal {
+		fmt.Fprintln(w, "asks is now agentmux discord; the alias will be removed")
+	}
 }

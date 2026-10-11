@@ -32,16 +32,16 @@ type CollaborationConfig struct {
 	AgentAvatarURLs   map[string]string `yaml:"agent_avatar_urls,omitempty"`
 	ProjectKeys       map[string]string `yaml:"project_keys,omitempty"`
 	SessionAvatarURLs map[string]string `yaml:"session_avatar_urls,omitempty"`
-	// AskMentionUserID is the one Discord user that `agentmux asks` may
+	// AskMentionUserID is the one Discord user that `agentmux discord` may
 	// @-mention, and whose replies are flagged when reading an ask.
 	AskMentionUserID string `yaml:"ask_mention_user_id,omitempty"`
 	// TestThreadID is the one reusable thread in the asks forum that task
-	// sessions may write to. From a task session `asks post` becomes a
+	// sessions may write to. From a task session `discord post` becomes a
 	// reply into this thread (never a new forum post) and reply/react/edit
 	// work only here; close/tag/list are no-ops. Empty means task sessions
 	// refuse every sending command. Stays in host config, never in a repo.
 	TestThreadID string `yaml:"test_thread,omitempty"`
-	// UnlockLog is a file `asks tag/close -unlock` appends one line to per
+	// UnlockLog is a file `discord tag/close -unlock` appends one line to per
 	// unlock (thread, who, time) — the autopilot log. Empty falls back to
 	// the process log. Stays in host config.
 	UnlockLog string `yaml:"unlock_log,omitempty"`

@@ -18,55 +18,55 @@ import (
 	"github.com/m-rk/agentmux/daemon/internal/liveguard"
 )
 
-func runAsksCmd(args []string) {
+func runDiscordCmd(args []string) {
 	if len(args) == 0 {
-		asksUsage()
+		discordUsage()
 		os.Exit(1)
 	}
 	var err error
 	switch args[0] {
 	case "post":
-		err = runAsksPost(args[1:])
+		err = runDiscordPost(args[1:])
 	case "reply":
-		err = runAsksReply(args[1:])
+		err = runDiscordReply(args[1:])
 	case "read":
-		err = runAsksRead(args[1:])
+		err = runDiscordRead(args[1:])
 	case "react":
-		err = runAsksReact(args[1:])
+		err = runDiscordReact(args[1:])
 	case "edit":
-		err = runAsksEdit(args[1:])
+		err = runDiscordEdit(args[1:])
 	case "tag":
-		err = runAsksTag(args[1:])
+		err = runDiscordTag(args[1:])
 	case "close":
-		err = runAsksClose(args[1:])
+		err = runDiscordClose(args[1:])
 	case "list":
-		err = runAsksList(args[1:])
+		err = runDiscordList(args[1:])
 	case "serve":
-		err = runAsksServe(args[1:])
+		err = runDiscordServe(args[1:])
 	case "prune":
-		err = runAsksPrune(args[1:])
+		err = runDiscordPrune(args[1:])
 	default:
-		asksUsage()
+		discordUsage()
 		os.Exit(1)
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "asks %s: %v\n", args[0], err)
+		fmt.Fprintf(os.Stderr, "discord %s: %v\n", args[0], err)
 		os.Exit(1)
 	}
 }
 
-func asksUsage() {
+func discordUsage() {
 	fmt.Fprintln(os.Stderr, `usage:
-  agentmux asks post (-title T | -thread ID [-title T]) -body-file F [-tag NAME ...] [-react EMOJI,EMOJI,...] [-button LABEL ...] [-buttons-json FILE] [-embeds] [-json] [-dry-run]
-  agentmux asks reply -thread ID -body-file F [-mention] [-embeds] [-dry-run]
-  agentmux asks read -thread ID [-after MESSAGE_ID] [-json]
-  agentmux asks react -thread ID -message ID -emoji EMOJI [-replace]
-  agentmux asks edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL] [-embeds]
-  agentmux asks tag -thread ID -set "task,working" [-unarchive] [-force] [-unlock]
-  agentmux asks close -thread ID [-tag NAME] [-lock] [-unlock]
-  agentmux asks list [-open|-archived|-all] [-tag NAME] [-since DUR] [-json]
-  agentmux asks serve                      hold the Discord gateway open to record button clicks
-  agentmux asks prune [-thread ID] [-older-than DUR] [-dry-run] [-json]
+  agentmux discord post (-title T | -thread ID [-title T]) -body-file F [-tag NAME ...] [-react EMOJI,EMOJI,...] [-button LABEL ...] [-buttons-json FILE] [-embeds] [-json] [-dry-run]
+  agentmux discord reply -thread ID -body-file F [-mention] [-embeds] [-dry-run]
+  agentmux discord read -thread ID [-after MESSAGE_ID] [-json]
+  agentmux discord react -thread ID -message ID -emoji EMOJI [-replace]
+  agentmux discord edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL] [-embeds]
+  agentmux discord tag -thread ID -set "task,working" [-unarchive] [-force] [-unlock]
+  agentmux discord close -thread ID [-tag NAME] [-lock] [-unlock]
+  agentmux discord list [-open|-archived|-all] [-tag NAME] [-since DUR] [-json]
+  agentmux discord serve                      hold the Discord gateway open to record button clicks
+  agentmux discord prune [-thread ID] [-older-than DUR] [-dry-run] [-json]
                        delete old test-thread messages (task sessions: only the test thread)
 
 -dry-run prints the Discord payload instead of sending it.
@@ -116,8 +116,8 @@ func readBodyFile(path string) (string, error) {
 	return string(data), err
 }
 
-func runAsksPost(args []string) error {
-	fs := flag.NewFlagSet("asks post", flag.ContinueOnError)
+func runDiscordPost(args []string) error {
+	fs := flag.NewFlagSet("discord post", flag.ContinueOnError)
 	title := fs.String("title", "", "forum post title (with -thread: rename the thread)")
 	thread := fs.String("thread", "", "add the ask to this existing ask thread instead of creating a post")
 	bodyFile := fs.String("body-file", "", "file with the post body ('-' for stdin)")
@@ -128,7 +128,7 @@ func runAsksPost(args []string) error {
 	dryRun := fs.Bool("dry-run", false, "print the Discord payload instead of sending it")
 	var tags, buttons tagFlags
 	fs.Var(&tags, "tag", "extra forum tag; repeatable")
-	fs.Var(&buttons, "button", "button label (needs 'asks serve' running to record clicks); repeatable")
+	fs.Var(&buttons, "button", "button label (needs 'discord serve' running to record clicks); repeatable")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -160,7 +160,7 @@ func runAsksPost(args []string) error {
 		return printAsksPostPreview(client, *title, *thread, body, tags, opts, *asJSON)
 	}
 	if liveguard.IsTaskSession() {
-		return runAsksPostAsTest(client, *title, *thread, tags, body, opts, *asJSON)
+		return runDiscordPostAsTest(client, *title, *thread, tags, body, opts, *asJSON)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -250,8 +250,8 @@ func readButtonsJSON(path string) ([]collab.AskButton, error) {
 	return buttons, nil
 }
 
-func runAsksReply(args []string) error {
-	fs := flag.NewFlagSet("asks reply", flag.ContinueOnError)
+func runDiscordReply(args []string) error {
+	fs := flag.NewFlagSet("discord reply", flag.ContinueOnError)
 	thread := fs.String("thread", "", "ask thread ID")
 	bodyFile := fs.String("body-file", "", "file with the reply body ('-' for stdin)")
 	mention := fs.Bool("mention", false, "mention the configured user")
@@ -286,7 +286,7 @@ func runAsksReply(args []string) error {
 		return nil
 	}
 	if liveguard.IsTaskSession() {
-		return runAsksReplyAsTest(client, *thread, *mention, body, *asJSON)
+		return runDiscordReplyAsTest(client, *thread, *mention, body, *asJSON)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -298,8 +298,8 @@ func runAsksReply(args []string) error {
 	return nil
 }
 
-func runAsksRead(args []string) error {
-	fs := flag.NewFlagSet("asks read", flag.ContinueOnError)
+func runDiscordRead(args []string) error {
+	fs := flag.NewFlagSet("discord read", flag.ContinueOnError)
 	thread := fs.String("thread", "", "ask thread ID")
 	after := fs.String("after", "", "only messages after this message ID")
 	asJSON := fs.Bool("json", false, "print JSON")
@@ -335,13 +335,13 @@ func runAsksRead(args []string) error {
 	return nil
 }
 
-// runAsksTag replaces a task thread's tags with exactly -set, resolved by
+// runDiscordTag replaces a task thread's tags with exactly -set, resolved by
 // name from the forum's available tags. The set must keep one kind tag
 // (task, epic, idea, spike by default); -force re-applies one after a
 // thread already lost it (console and orchestrator only — TagAsk is already
 // a no-op in task sessions). A retag never posts.
-func runAsksTag(args []string) error {
-	fs := flag.NewFlagSet("asks tag", flag.ContinueOnError)
+func runDiscordTag(args []string) error {
+	fs := flag.NewFlagSet("discord tag", flag.ContinueOnError)
 	thread := fs.String("thread", "", "task thread ID")
 	set := fs.String("set", "", `comma-separated tag names, e.g. "task,working"`)
 	unarchive := fs.Bool("unarchive", false, "unarchive an archived thread first, re-archive after")
@@ -387,8 +387,8 @@ func runAsksTag(args []string) error {
 	return nil
 }
 
-func runAsksClose(args []string) error {
-	fs := flag.NewFlagSet("asks close", flag.ContinueOnError)
+func runDiscordClose(args []string) error {
+	fs := flag.NewFlagSet("discord close", flag.ContinueOnError)
 	thread := fs.String("thread", "", "ask thread ID")
 	tag := fs.String("tag", collab.DefaultCloseTag, "state tag (any forum state tag by name)")
 	lock := fs.Bool("lock", false, "also lock the thread (default: archive only, so a later ask can reopen it)")
@@ -421,8 +421,8 @@ func runAsksClose(args []string) error {
 	return nil
 }
 
-func runAsksReact(args []string) error {
-	fs := flag.NewFlagSet("asks react", flag.ContinueOnError)
+func runDiscordReact(args []string) error {
+	fs := flag.NewFlagSet("discord react", flag.ContinueOnError)
 	thread := fs.String("thread", "", "ask thread ID")
 	message := fs.String("message", "", "message ID to react to")
 	emoji := fs.String("emoji", "", "emoji for the bot to add (e.g. 🤖)")
@@ -459,8 +459,8 @@ func runAsksReact(args []string) error {
 	return nil
 }
 
-func runAsksEdit(args []string) error {
-	fs := flag.NewFlagSet("asks edit", flag.ContinueOnError)
+func runDiscordEdit(args []string) error {
+	fs := flag.NewFlagSet("discord edit", flag.ContinueOnError)
 	thread := fs.String("thread", "", "ask thread ID")
 	message := fs.String("message", "", "message ID to edit")
 	bodyFile := fs.String("body-file", "", "file with the replacement body ('-' for stdin); empty keeps the message")
@@ -517,11 +517,11 @@ func runAsksEdit(args []string) error {
 	return nil
 }
 
-// runAsksList prints the asks forum's threads. Listing is read-only, but
+// runDiscordList prints the asks forum's threads. Listing is read-only, but
 // from a task session it is a dry-run style no-op that names the test
 // thread instead: nothing in a task session may enumerate live asks.
-func runAsksList(args []string) error {
-	fs := flag.NewFlagSet("asks list", flag.ContinueOnError)
+func runDiscordList(args []string) error {
+	fs := flag.NewFlagSet("discord list", flag.ContinueOnError)
 	open := fs.Bool("open", false, "only open (unarchived) threads (default)")
 	archived := fs.Bool("archived", false, "only archived threads")
 	all := fs.Bool("all", false, "open and archived threads")
@@ -607,10 +607,10 @@ func boolCount(flags ...bool) int {
 	return n
 }
 
-// runAsksServe holds the Discord gateway connection that button clicks need,
-// until interrupted. Run it under a service manager; see docs/discord-asks.md.
-func runAsksServe(args []string) error {
-	fs := flag.NewFlagSet("asks serve", flag.ContinueOnError)
+// runDiscordServe holds the Discord gateway connection that button clicks need,
+// until interrupted. Run it under a service manager; see docs/discord.md.
+func runDiscordServe(args []string) error {
+	fs := flag.NewFlagSet("discord serve", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -645,13 +645,13 @@ func testTaskID() string {
 	return ""
 }
 
-// runAsksPostAsTest routes a task session's `asks post` into the reusable
+// runDiscordPostAsTest routes a task session's `discord post` into the reusable
 // test thread: a bot reply there (mentions off, prefixed with the task
 // id), never a new forum post. Title, thread and tags are dropped — test
 // messages carry none — and the output says so when any were passed.
 // Needs test_thread in discord.yaml; without it the command refuses as
 // before.
-func runAsksPostAsTest(client *collab.Client, title, thread string, tags []string, body string, opts collab.AskOptions, asJSON bool) error {
+func runDiscordPostAsTest(client *collab.Client, title, thread string, tags []string, body string, opts collab.AskOptions, asJSON bool) error {
 	test, terr := client.TestThreadID()
 	if terr != nil {
 		return liveguard.Check()
@@ -683,10 +683,10 @@ func runAsksPostAsTest(client *collab.Client, title, thread string, tags []strin
 	return nil
 }
 
-// runAsksReplyAsTest routes a task session's `asks reply` the same way:
+// runDiscordReplyAsTest routes a task session's `discord reply` the same way:
 // a bot message in the test thread, never touching the named thread and
 // never mentioning anyone.
-func runAsksReplyAsTest(client *collab.Client, thread string, mention bool, body string, asJSON bool) error {
+func runDiscordReplyAsTest(client *collab.Client, thread string, mention bool, body string, asJSON bool) error {
 	test, terr := client.TestThreadID()
 	if terr != nil {
 		return liveguard.Check()
@@ -711,7 +711,7 @@ func runAsksReplyAsTest(client *collab.Client, thread string, mention bool, body
 	return nil
 }
 
-// runAsksPrune is `agentmux asks prune`: delete the bot's own messages in
+// runDiscordPrune is `agentmux discord prune`: delete the bot's own messages in
 // a thread older than -older-than (default 24h), keeping the starter
 // message. From a task session only the configured test thread is
 // reachable (any other -thread is refused); a person may name another
@@ -719,8 +719,8 @@ func runAsksReplyAsTest(client *collab.Client, thread string, mention bool, body
 // configured. The reconcile job calls this against the test thread so
 // yesterday's tests don't pile up; it never takes a thread id from a
 // thread listing.
-func runAsksPrune(args []string) error {
-	fs := flag.NewFlagSet("asks prune", flag.ContinueOnError)
+func runDiscordPrune(args []string) error {
+	fs := flag.NewFlagSet("discord prune", flag.ContinueOnError)
 	thread := fs.String("thread", "", "thread to prune (default: the configured test thread)")
 	olderThan := fs.String("older-than", "24h", "delete the bot's own messages older than this (e.g. 24h, 30m)")
 	dryRun := fs.Bool("dry-run", false, "list what would go without deleting anything")

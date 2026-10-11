@@ -19,7 +19,7 @@ import (
 
 // One-tap answers to an ask: emoji reactions the bot seeds and the
 // configured user taps, or buttons the bot posts and a gateway listener
-// (`agentmux asks serve`) records. Both surface in `asks read` as
+// (`agentmux discord serve`) records. Both surface in `discord read` as
 // AskMessage.Answers.
 
 const (
@@ -262,7 +262,7 @@ type Click struct {
 }
 
 // Input records metadata for a configured user's typed reply. Message content
-// stays in Discord and is fetched by asks read when MESSAGE_CONTENT is off.
+// stays in Discord and is fetched by discord read when MESSAGE_CONTENT is off.
 type Input struct {
 	ThreadID  string    `json:"thread_id"`
 	MessageID string    `json:"message_id"`
@@ -300,7 +300,7 @@ func (s *ClickStore) AppendInput(input Input) (bool, error) {
 }
 
 // ClickStore is an append-only JSONL file shared by the listener (writer)
-// and `asks read` (reader). The first click on a message wins.
+// and `discord read` (reader). The first click on a message wins.
 type ClickStore struct {
 	Path string
 	mu   sync.Mutex

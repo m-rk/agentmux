@@ -23,7 +23,7 @@ import (
 // TestRunTaskChildRefusesLivePost is the AMUX-34 integration test: it
 // starts a run through the same code `sessions run` uses, with a fake
 // `amp` binary that — after printing the stream init record — execs a
-// real `agentmux asks post` (dry-run off) against a fake Discord gateway.
+// real `agentmux discord post` (dry-run off) against a fake Discord gateway.
 // The post must be refused by the live guard, with the fake gateway
 // untouched. No environment is set by hand for the child: its cwd is a
 // neutral temp dir, so the refusal can only come from the identity
@@ -152,7 +152,7 @@ func TestRunTaskChildRefusesLivePost(t *testing.T) {
 
 // TestRunTaskChildRoutesPostIntoTestThread is the AMUX-39 integration
 // test: the same harness as TestRunTaskChildRefusesLivePost, but with a
-// test thread configured. The task run child's `agentmux asks post`
+// test thread configured. The task run child's `agentmux discord post`
 // (dry-run off) must succeed as a reply into the test thread — one bot
 // message POST, no forum post, no webhook hit. The old
 // AGENTMUX_ALLOW_LIVE=1 override is set on purpose and must change

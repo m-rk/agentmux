@@ -15,9 +15,9 @@ sudo agentmux deploy -template agentmux-amp -base main
 2. **Rewrite** the daemon, doctor and gc units for the new binary, keeping
    the installed doctor timer's time unless `-doctor-time HH:MM` is given.
 3. **Restart** the daemon plus every installed agentmux-owned user service
-   (the gateway, `asks serve`, thread watch when their units exist) and
+   (the gateway, `discord serve`, thread watch when their units exist) and
    every installed agentmux-owned user unit in the invoking user's
-   (`SUDO_USER`) manager — `agentmux-asks-serve.service` when it exists —
+   (`SUDO_USER`) manager — `agentmux-discord-serve.service` and the legacy `agentmux-asks-serve.service` when installed —
    via `systemctl --user -M <user>@`, and wait for each to become active.
    Timers are left alone — they run the pinned binary on their next tick.
    Instance units (`agentmux-<name>`)

@@ -116,7 +116,7 @@ func TestTaskPostRoutesIntoTestThread(t *testing.T) {
 	taskAsksHome(t, gw.URL, "4242")
 	body := writeBody(t, "render me")
 	out, err := captureStdout(t, func() error {
-		return runAsksPost([]string{"-title", "probe", "-body-file", body})
+		return runDiscordPost([]string{"-title", "probe", "-body-file", body})
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +137,7 @@ func TestTaskPostWithoutTestThreadRefuses(t *testing.T) {
 	defer gw.Close()
 	taskAsksHome(t, gw.URL, "")
 	body := writeBody(t, "render me")
-	err := runAsksPost([]string{"-title", "probe", "-body-file", body})
+	err := runDiscordPost([]string{"-title", "probe", "-body-file", body})
 	if err == nil || err.Error() != liveguard.Refusal {
 		t.Fatalf("err = %v, want the refusal %q", err, liveguard.Refusal)
 	}
@@ -153,11 +153,11 @@ func TestTaskReactEditOnlyTestThread(t *testing.T) {
 	gw := f.server(t)
 	defer gw.Close()
 	taskAsksHome(t, gw.URL, "4242")
-	if err := runAsksReact([]string{"-thread", "900", "-message", "501", "-emoji", "🤖"}); err == nil {
+	if err := runDiscordReact([]string{"-thread", "900", "-message", "501", "-emoji", "🤖"}); err == nil {
 		t.Fatal("react on a real thread allowed from a task session")
 	}
 	out, err := captureStdout(t, func() error {
-		return runAsksReact([]string{"-thread", "4242", "-message", "501", "-emoji", "🤖"})
+		return runDiscordReact([]string{"-thread", "4242", "-message", "501", "-emoji", "🤖"})
 	})
 	if err != nil || !strings.HasPrefix(out, "test thread: ") {
 		t.Fatalf("out = %q err = %v", out, err)
@@ -167,7 +167,7 @@ func TestTaskReactEditOnlyTestThread(t *testing.T) {
 	}
 	body := writeBody(t, "edited")
 	out, err = captureStdout(t, func() error {
-		return runAsksEdit([]string{"-thread", "4242", "-message", "501", "-body-file", body})
+		return runDiscordEdit([]string{"-thread", "4242", "-message", "501", "-body-file", body})
 	})
 	if err != nil || !strings.HasPrefix(out, "test thread: ") {
 		t.Fatalf("out = %q err = %v", out, err)
@@ -184,19 +184,19 @@ func TestTaskCloseTagListAreNoOps(t *testing.T) {
 	defer gw.Close()
 	taskAsksHome(t, gw.URL, "4242")
 	out, err := captureStdout(t, func() error {
-		return runAsksClose([]string{"-thread", "900"})
+		return runDiscordClose([]string{"-thread", "900"})
 	})
 	if err != nil || !strings.HasPrefix(out, "test thread: ") {
 		t.Fatalf("close: out = %q err = %v", out, err)
 	}
 	out, err = captureStdout(t, func() error {
-		return runAsksTag([]string{"-thread", "900", "-set", "task,working"})
+		return runDiscordTag([]string{"-thread", "900", "-set", "task,working"})
 	})
 	if err != nil || !strings.HasPrefix(out, "test thread: ") {
 		t.Fatalf("tag: out = %q err = %v", out, err)
 	}
 	out, err = captureStdout(t, func() error {
-		return runAsksList([]string{"-all"})
+		return runDiscordList([]string{"-all"})
 	})
 	if err != nil || !strings.HasPrefix(out, "test thread: ") {
 		t.Fatalf("list: out = %q err = %v", out, err)
@@ -236,7 +236,7 @@ func TestPersonPostStaysLive(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
 	body := writeBody(t, "live ask")
 	out, err := captureStdout(t, func() error {
-		return runAsksPost([]string{"-title", "live", "-body-file", body})
+		return runDiscordPost([]string{"-title", "live", "-body-file", body})
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -257,8 +257,8 @@ func TestTaskSessionRefusesUnlock(t *testing.T) {
 	defer gw.Close()
 	taskAsksHome(t, gw.URL, "4242")
 	for name, run := range map[string]func() error{
-		"tag":   func() error { return runAsksTag([]string{"-thread", "900", "-set", "task,working", "-unlock"}) },
-		"close": func() error { return runAsksClose([]string{"-thread", "900", "-unlock"}) },
+		"tag":   func() error { return runDiscordTag([]string{"-thread", "900", "-set", "task,working", "-unlock"}) },
+		"close": func() error { return runDiscordClose([]string{"-thread", "900", "-unlock"}) },
 	} {
 		err := run()
 		if err == nil || !strings.Contains(err.Error(), "can't unlock") {
