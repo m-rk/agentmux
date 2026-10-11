@@ -79,9 +79,11 @@ func validateReactionEmoji(emoji string) error {
 // rest — the same settled look a click gets from the gateway.
 // Message edits need the bot (Send Messages in Threads on the forum).
 type EditAskOptions struct {
-	Body           string // replacement body; empty keeps the message as-is
-	DisableButtons bool   // grey every button out
-	Chosen         string // button label to highlight; implies DisableButtons for the rest
+	Body           string      // replacement body; empty keeps the message as-is
+	DisableButtons bool        // grey every button out
+	Chosen         string      // button label to highlight; implies DisableButtons for the rest
+	Buttons        []AskButton // replacement buttons
+	ReplaceButtons bool
 	// Embeds keeps link unfurls on the edit. Default keeps them suppressed,
 	// so an edit never re-enables cards a post suppressed.
 	Embeds bool
@@ -103,8 +105,13 @@ func (o EditAskOptions) validate() error {
 	if o.Chosen != "" && utf8.RuneCountInString(o.Chosen) > maxButtonLabel {
 		return fmt.Errorf("chosen button label %q must be 1-%d characters", o.Chosen, maxButtonLabel)
 	}
-	if o.Body == "" && !o.DisableButtons && o.Chosen == "" {
-		return fmt.Errorf("nothing to change: pass a body, -disable-buttons, or -chosen")
+	if o.ReplaceButtons {
+		if err := (AskOptions{Buttons: o.Buttons}).validate(); err != nil {
+			return err
+		}
+	}
+	if o.Body == "" && !o.DisableButtons && o.Chosen == "" && !o.ReplaceButtons {
+		return fmt.Errorf("nothing to change: pass a body, -buttons-json, -disable-buttons, or -chosen")
 	}
 	return nil
 }
@@ -116,17 +123,22 @@ func (c *Client) EditAsk(ctx context.Context, threadID, messageID string, opts E
 	if err := opts.validate(); err != nil {
 		return err
 	}
-	if _, _, err := c.askThread(ctx, threadID); err != nil {
+	channel, _, err := c.askThread(ctx, threadID)
+	if err != nil {
 		return err
 	}
 	if !snowflakeRE.MatchString(messageID) {
 		return fmt.Errorf("message id must be numeric")
 	}
 	payload := map[string]any{}
+	if opts.ReplaceButtons {
+		guild, _ := c.guildEmojis(ctx, channel.GuildID)
+		payload["components"] = buttonRows(opts.Buttons, guild)
+	}
 	if opts.Body != "" {
 		payload["content"] = strings.TrimSpace(opts.Body)
 	}
-	if opts.DisableButtons || opts.Chosen != "" {
+	if !opts.ReplaceButtons && (opts.DisableButtons || opts.Chosen != "") {
 		rows, err := c.settleMessageButtons(ctx, threadID, messageID, opts.Chosen)
 		if err != nil {
 			return err
@@ -137,6 +149,21 @@ func (c *Client) EditAsk(ctx context.Context, threadID, messageID string, opts E
 	if err := c.botJSONBody(ctx, http.MethodPatch,
 		"/channels/"+url.PathEscape(threadID)+"/messages/"+url.PathEscape(messageID), payload, nil); err != nil {
 		return fmt.Errorf("editing Discord message %s (the bot needs Send Messages in Threads on the forum): %w", messageID, err)
+	}
+	return nil
+}
+
+// PinAsk pins a message in an asks thread using the configured bot token.
+// The bot needs Manage Messages in the channel.
+func (c *Client) PinAsk(ctx context.Context, threadID, messageID string) error {
+	if _, _, err := c.askThread(ctx, threadID); err != nil {
+		return err
+	}
+	if !snowflakeRE.MatchString(messageID) {
+		return fmt.Errorf("message id must be numeric")
+	}
+	if err := c.botJSONBody(ctx, http.MethodPut, "/channels/"+url.PathEscape(threadID)+"/pins/"+url.PathEscape(messageID), nil, nil); err != nil {
+		return fmt.Errorf("pinning Discord message %s (the bot needs Manage Messages in the channel): %w", messageID, err)
 	}
 	return nil
 }

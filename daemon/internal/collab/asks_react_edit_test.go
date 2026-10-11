@@ -16,6 +16,7 @@ import (
 type reactEditServer struct {
 	mu      sync.Mutex
 	puts    []string // reaction PUT paths, in order
+	pins    []string
 	deletes []string // reaction DELETE paths, in order
 	patches []string // message PATCH paths, in order
 	bodies  []map[string]any
@@ -34,7 +35,7 @@ func (s *reactEditServer) server(t *testing.T) *httptest.Server {
 		{"t-proj", "mergentic"},
 	}}
 	if s.threads == nil {
-		s.threads = map[string]Channel{"900": {ID: "900", ParentID: "forum", AppliedTags: []string{"t-ask"}}}
+		s.threads = map[string]Channel{"900": {ID: "900", GuildID: "guild", ParentID: "forum", AppliedTags: []string{"t-ask"}}}
 	}
 	if s.message == nil {
 		s.message = map[string]any{"id": "500", "content": "pick one", "reactions": s.reactions, "components": []any{
@@ -52,6 +53,9 @@ func (s *reactEditServer) server(t *testing.T) *httptest.Server {
 		case r.Method == http.MethodPut && strings.Contains(path, "/reactions/"):
 			s.puts = append(s.puts, path)
 			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPut && strings.Contains(path, "/pins/"):
+			s.pins = append(s.pins, path)
+			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodDelete && strings.Contains(path, "/reactions/"):
 			s.deletes = append(s.deletes, path)
 			w.WriteHeader(http.StatusNoContent)
@@ -66,6 +70,8 @@ func (s *reactEditServer) server(t *testing.T) *httptest.Server {
 			writeJSON(t, w, s.message)
 		case path == "/api/channels/forum":
 			writeJSON(t, w, forum)
+		case path == "/api/guilds/guild/emojis":
+			writeJSON(t, w, []GuildEmoji{})
 		case strings.HasPrefix(path, "/api/channels/"):
 			id := strings.TrimPrefix(path, "/api/channels/")
 			if th, ok := s.threads[id]; ok {
@@ -77,6 +83,32 @@ func (s *reactEditServer) server(t *testing.T) *httptest.Server {
 			http.NotFound(w, r)
 		}
 	}))
+}
+
+func TestPinAskUsesBotPinEndpoint(t *testing.T) {
+	s := &reactEditServer{}
+	srv := s.server(t)
+	defer srv.Close()
+	if err := asksClientFor(srv.URL).PinAsk(context.Background(), "900", "500"); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.pins) != 1 || s.pins[0] != "/api/channels/900/pins/500" {
+		t.Fatalf("pins = %v", s.pins)
+	}
+}
+
+func TestEditAskReplacesButtons(t *testing.T) {
+	s := &reactEditServer{}
+	srv := s.server(t)
+	defer srv.Close()
+	if err := asksClientFor(srv.URL).EditAsk(context.Background(), "900", "500", EditAskOptions{ReplaceButtons: true, Buttons: []AskButton{{Label: "Refresh", Style: "primary"}}}); err != nil {
+		t.Fatal(err)
+	}
+	rows := s.bodies[0]["components"].([]any)
+	button := rows[0].(map[string]any)["components"].([]any)[0].(map[string]any)
+	if button["label"] != "Refresh" || button["custom_id"] != "ask:Refresh" || button["style"] != float64(1) {
+		t.Fatalf("button = %#v", button)
+	}
 }
 
 func TestReactAskPutsReaction(t *testing.T) {

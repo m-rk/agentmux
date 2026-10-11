@@ -137,7 +137,8 @@ agentmux discord read -thread ID [-after MESSAGE_ID] -json
 
 agentmux discord react -thread ID -message ID -emoji 🤖 [-replace]   # bot adds a reaction to a posted message
 
-agentmux discord edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL] [-embeds]
+agentmux discord edit -thread ID -message ID [-body-file F] [-buttons-json FILE] [-disable-buttons] [-chosen LABEL] [-embeds]
+agentmux discord pin THREAD MESSAGE
 # replace the body and/or settle the buttons: -disable-buttons greys them all
 # out, -chosen LABEL keeps that one highlighted (success style) like a click.
 # Edits keep link unfurls suppressed (an edit never re-enables cards)
@@ -266,6 +267,11 @@ agentmux discord prune [-thread ID] [-older-than DUR] [-dry-run] [-json]
   pings nobody. Typical autopilot settle: `discord react -emoji 🤖` then
   `discord edit -disable-buttons -chosen "<label>"`. Message edits need the bot
   (Send Messages in Threads on the forum).
+- `edit -buttons-json FILE` replaces the message's buttons in place with a
+  JSON array of `{label, emoji?, style?}` objects (the same format as `post`);
+  `[]` removes all buttons. The bot needs Send Messages in Threads.
+- `pin THREAD MESSAGE` pins a message in an ask thread. The bot needs Manage
+  Messages in the channel. Pinning is unavailable from task sessions.
 
 ## One-tap answers: reactions and buttons
 

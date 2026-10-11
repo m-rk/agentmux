@@ -35,6 +35,8 @@ func runDiscordCmd(args []string) {
 		err = runDiscordReact(args[1:])
 	case "edit":
 		err = runDiscordEdit(args[1:])
+	case "pin":
+		err = runDiscordPin(args[1:])
 	case "tag":
 		err = runDiscordTag(args[1:])
 	case "close":
@@ -61,7 +63,8 @@ func discordUsage() {
   agentmux discord reply -thread ID -body-file F [-mention] [-embeds] [-dry-run]
   agentmux discord read -thread ID [-after MESSAGE_ID] [-json]
   agentmux discord react -thread ID -message ID -emoji EMOJI [-replace]
-  agentmux discord edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL] [-embeds]
+  agentmux discord edit -thread ID -message ID [-body-file F] [-buttons-json FILE] [-disable-buttons] [-chosen LABEL] [-embeds]
+  agentmux discord pin THREAD MESSAGE
   agentmux discord tag -thread ID -set "task,working" [-unarchive] [-force] [-unlock]
   agentmux discord close -thread ID [-tag NAME] [-lock] [-unlock]
   agentmux discord list [-open|-archived|-all] [-tag NAME] [-since DUR] [-json]
@@ -464,6 +467,7 @@ func runDiscordEdit(args []string) error {
 	thread := fs.String("thread", "", "ask thread ID")
 	message := fs.String("message", "", "message ID to edit")
 	bodyFile := fs.String("body-file", "", "file with the replacement body ('-' for stdin); empty keeps the message")
+	buttonsFile := fs.String("buttons-json", "", "replace buttons with JSON array of {label, emoji?, style?}; [] removes buttons")
 	disable := fs.Bool("disable-buttons", false, "grey every button out")
 	chosen := fs.String("chosen", "", "button label to keep highlighted (success style); the rest go grey")
 	embeds := fs.Bool("embeds", false, "keep link unfurls (embeds) on the edit; default keeps them suppressed")
@@ -477,6 +481,16 @@ func runDiscordEdit(args []string) error {
 			return err
 		}
 		body = data
+	}
+	var buttons []collab.AskButton
+	if *buttonsFile != "" {
+		data, err := readBodyFile(*buttonsFile)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal([]byte(data), &buttons); err != nil {
+			return fmt.Errorf("reading buttons JSON: %w", err)
+		}
 	}
 	client, err := asksClient()
 	if err != nil {
@@ -496,6 +510,8 @@ func runDiscordEdit(args []string) error {
 			Body:           body,
 			DisableButtons: *disable,
 			Chosen:         *chosen,
+			Buttons:        buttons,
+			ReplaceButtons: *buttonsFile != "",
 			Embeds:         *embeds,
 		}); err != nil {
 			return err
@@ -509,11 +525,41 @@ func runDiscordEdit(args []string) error {
 		Body:           body,
 		DisableButtons: *disable,
 		Chosen:         *chosen,
+		Buttons:        buttons,
+		ReplaceButtons: *buttonsFile != "",
 		Embeds:         *embeds,
 	}); err != nil {
 		return err
 	}
 	fmt.Printf("Edited message %s in ask thread %s.\n", *message, *thread)
+	return nil
+}
+
+func runDiscordPin(args []string) error {
+	if len(args) != 2 {
+		return fmt.Errorf("usage: agentmux discord pin THREAD MESSAGE")
+	}
+	client, err := asksClient()
+	if err != nil {
+		return err
+	}
+	thread, message := args[0], args[1]
+	if liveguard.IsTaskSession() {
+		test, err := client.TestThreadID()
+		if err != nil {
+			return liveguard.Check()
+		}
+		if thread != test {
+			return fmt.Errorf("task sessions can only pin in the test thread %s", test)
+		}
+		return fmt.Errorf("pin is unavailable in the test thread")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := client.PinAsk(ctx, thread, message); err != nil {
+		return err
+	}
+	fmt.Printf("Pinned message %s in ask thread %s.\n", message, thread)
 	return nil
 }
 

@@ -182,7 +182,8 @@ Usage:
   agentmux discord reply -thread ID -body-file F [-mention]
   agentmux discord read -thread ID [-after MESSAGE_ID] [-json]
   agentmux discord react -thread ID -message ID -emoji EMOJI [-replace]
-  agentmux discord edit -thread ID -message ID [-body-file F] [-disable-buttons] [-chosen LABEL]
+  agentmux discord edit -thread ID -message ID [-body-file F] [-buttons-json FILE] [-disable-buttons] [-chosen LABEL]
+  agentmux discord pin THREAD MESSAGE
   agentmux discord close -thread ID [-tag NAME]
   agentmux discord list [-open|-archived|-all] [-tag NAME] [-since DUR] [-json]
   agentmux discord serve                                        record Discord button clicks

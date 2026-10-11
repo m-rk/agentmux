@@ -179,7 +179,14 @@ func (c *Client) EditTestMessage(ctx context.Context, messageID string, opts Edi
 		return fmt.Errorf("message id must be numeric")
 	}
 	payload := map[string]any{}
-	if opts.DisableButtons || opts.Chosen != "" {
+	if opts.ReplaceButtons {
+		channel, _, err := c.askThread(ctx, thread)
+		if err != nil {
+			return err
+		}
+		guild, _ := c.guildEmojis(ctx, channel.GuildID)
+		payload["components"] = buttonRows(opts.Buttons, guild)
+	} else if opts.DisableButtons || opts.Chosen != "" {
 		rows, err := c.settleMessageButtons(ctx, thread, messageID, opts.Chosen)
 		if err != nil {
 			return err
