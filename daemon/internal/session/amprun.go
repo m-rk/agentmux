@@ -26,6 +26,41 @@ type ampStreamInit struct {
 	SessionID string `json:"session_id"`
 }
 
+// RunDuration sums complete, timestamped agentmux run segments in Amp or
+// Codex logs. Legacy segments without timestamps are intentionally unknown.
+func RunDuration(paths ...string) time.Duration {
+	var total time.Duration
+	for _, path := range paths {
+		f, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		starts := map[string]time.Time{}
+		s := bufio.NewScanner(f)
+		for s.Scan() {
+			var e struct{ Type, Run, At string }
+			if json.Unmarshal(s.Bytes(), &e) != nil || e.At == "" {
+				continue
+			}
+			at, err := time.Parse(time.RFC3339, e.At)
+			if err != nil {
+				continue
+			}
+			switch e.Type {
+			case "agentmux.start":
+				starts[e.Run] = at
+			case "agentmux.exit":
+				if start, ok := starts[e.Run]; ok && !at.Before(start) {
+					total += at.Sub(start)
+					delete(starts, e.Run)
+				}
+			}
+		}
+		_ = f.Close()
+	}
+	return total
+}
+
 // ampRunStartTimeout bounds waiting for the init record: amp prints it
 // immediately on launch, so a missing one means the CLI failed (bad mode,
 // no auth) rather than a slow agent — the run is refused instead of
@@ -248,7 +283,7 @@ func startAmpProcessDetached(ctx context.Context, instance, envFile string, argv
 	// `$(pwd)` prefix, which would double the path and write the log
 	// somewhere waitAmpInit never looks. Positional order after -c's
 	// script is: $0=bin, $1=log, $2=workdir, $3...=agent args.
-	launch := "f=\"$1\"; d=\"$2\"; shift 2; cd \"$d\" || exit 1; \"$0\" \"$@\" >>\"$f\" 2>&1 & pid=$!; wait $pid; code=$?; [ $code -ne 0 ] && touch \"$f.done\"; exit 0"
+	launch := "f=\"$1\"; d=\"$2\"; shift 2; cd \"$d\" || exit 1; exec 3>>\"$f\"; s=$(date -u +%Y-%m-%dT%H:%M:%SZ); echo \"{\\\"type\\\":\\\"agentmux.start\\\",\\\"at\\\":\\\"$s\\\",\\\"pid\\\":$$}\" >&3; \"$0\" \"$@\" >&3 2>&3 & pid=$!; wait $pid; code=$?; e=$(date -u +%Y-%m-%dT%H:%M:%SZ); echo \"{\\\"type\\\":\\\"agentmux.exit\\\",\\\"at\\\":\\\"$e\\\",\\\"code\\\":$code}\" >&3; [ $code -ne 0 ] && touch \"$f.done\"; exit 0"
 	midArgs := append([]string{"-c", launch, bin, logPath, workdir}, rest...)
 	mid := runas.CurrentUserCommandContext(ctx, "sh", midArgs...)
 	// Inherit the resolved spawn environment (notably OP_SERVICE_ACCOUNT_TOKEN

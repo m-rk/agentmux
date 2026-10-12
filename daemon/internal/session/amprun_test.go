@@ -10,6 +10,20 @@ import (
 	"time"
 )
 
+func TestRunDurationSkipsLegacyAndIncompleteRecords(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "codex-run-test.jsonl")
+	data := "{\"type\":\"agentmux.start\",\"run\":\"old\"}\n" +
+		"{\"type\":\"agentmux.exit\",\"run\":\"old\"}\n" +
+		"{\"type\":\"agentmux.start\",\"run\":\"new\",\"at\":\"2026-01-01T00:00:00Z\"}\n" +
+		"{\"type\":\"agentmux.exit\",\"run\":\"new\",\"at\":\"2026-01-01T00:01:30Z\"}\n"
+	if err := os.WriteFile(p, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := RunDuration(p); got != 90*time.Second {
+		t.Fatalf("RunDuration = %s, want 1m30s", got)
+	}
+}
+
 func writeLog(t *testing.T, lines ...string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "run.jsonl")

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 	"github.com/m-rk/agentmux/daemon/internal/gatewayapi"
 	"github.com/m-rk/agentmux/daemon/internal/hostsconfig"
 	"github.com/m-rk/agentmux/daemon/internal/ops"
+	"github.com/m-rk/agentmux/daemon/internal/runas"
+	"github.com/m-rk/agentmux/daemon/internal/session"
 	"github.com/m-rk/agentmux/daemon/internal/transcript"
 )
 
@@ -30,6 +33,7 @@ type resolvedSession struct {
 const sessionsUsage = `usage:
   agentmux sessions resolve [-json] <instance>@<host>[#<thread>]
   agentmux sessions status [-json] [-hosts PATH] <instance>@<host>[#<thread>]
+  agentmux sessions runs [-json] <instance>
   agentmux sessions threads [-json] [-hosts PATH] <instance>@<host>
   agentmux sessions read [-json] [-hosts PATH] [-limit N] [-cursor C] <instance>@<host>[#<thread>]
   agentmux sessions send -by PRINCIPAL [-via relayed|dispatched|sent] [-from REF] [-correlation ID]
@@ -69,6 +73,8 @@ func runSessionsCmd(args []string) {
 		runSessionsSend(args[1:])
 	case "status":
 		runSessionsStatus(args[1:])
+	case "runs":
+		runSessionsRuns(args[1:])
 	case "create":
 		runSessionsCreate(args[1:])
 	case "template":
@@ -91,6 +97,34 @@ func runSessionsCmd(args []string) {
 	default:
 		fmt.Fprintln(os.Stderr, sessionsUsage)
 		os.Exit(2)
+	}
+}
+
+func runSessionsRuns(args []string) {
+	fs := flag.NewFlagSet("sessions runs", flag.ExitOnError)
+	jsonOut := fs.Bool("json", false, "print machine-readable JSON")
+	_ = fs.Parse(args)
+	if fs.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, "usage: agentmux sessions runs [-json] <instance>")
+		os.Exit(2)
+	}
+	instance := fs.Arg(0)
+	dir := filepath.Join(runas.CurrentUserHome(), ".local", "state", "agentmux", "sessions", instance)
+	paths, _ := filepath.Glob(filepath.Join(dir, "*-run-*.jsonl"))
+	d := session.RunDuration(paths...)
+	var seconds *float64
+	if d > 0 {
+		v := d.Seconds()
+		seconds = &v
+	}
+	if *jsonOut {
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"instance": instance, "duration_seconds": seconds})
+		return
+	}
+	if seconds == nil {
+		fmt.Println("unknown")
+	} else {
+		fmt.Printf("%.0fs\n", *seconds)
 	}
 }
 

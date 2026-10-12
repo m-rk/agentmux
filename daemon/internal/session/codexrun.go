@@ -339,9 +339,9 @@ func startCodexProcessDetached(ctx context.Context, instance string, argv []stri
 	// older run still being killed), $5...=codex args.
 	runID := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(promptPath), "codex-prompt-"), ".txt")
 	launch := "f=\"$1\"; p=\"$2\"; d=\"$3\"; r=\"$4\"; shift 4; cd \"$d\" || exit 1; unset OPENAI_API_KEY CODEX_API_KEY; exec 3>>\"$f\"; " +
-		"echo \"{\\\"type\\\":\\\"agentmux.start\\\",\\\"run\\\":\\\"$r\\\",\\\"pid\\\":$$}\" >&3; " +
+		"s=$(date -u +%Y-%m-%dT%H:%M:%SZ); echo \"{\\\"type\\\":\\\"agentmux.start\\\",\\\"run\\\":\\\"$r\\\",\\\"pid\\\":$$,\\\"at\\\":\\\"$s\\\"}\" >&3; " +
 		"\"$0\" \"$@\" <\"$p\" >&3 2>&3; c=$?; rm -f \"$p\"; " +
-		"echo \"{\\\"type\\\":\\\"agentmux.exit\\\",\\\"run\\\":\\\"$r\\\",\\\"code\\\":$c}\" >&3"
+		"e=$(date -u +%Y-%m-%dT%H:%M:%SZ); echo \"{\\\"type\\\":\\\"agentmux.exit\\\",\\\"run\\\":\\\"$r\\\",\\\"code\\\":$c,\\\"at\\\":\\\"$e\\\"}\" >&3"
 	midArgs := append([]string{"-c", launch, bin, logPath, promptPath, workdir, runID}, rest...)
 	mid := runas.CurrentUserCommandContext(ctx, "sh", midArgs...)
 	mid.Env = cmd.Env
