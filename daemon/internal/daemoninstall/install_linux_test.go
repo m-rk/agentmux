@@ -54,3 +54,10 @@ func TestGCSystemdSchedule(t *testing.T) {
 		t.Error("gc timer should catch up after host downtime")
 	}
 }
+
+func TestTaskcheckBrokerUnitIsNarrow(t *testing.T) {
+	service := fmt.Sprintf(taskcheckServiceTemplate, binPath)
+	if !strings.Contains(service, "ExecStart=/usr/local/bin/agentmux taskcheck-broker serve") || strings.Contains(service, "agentmuxd.sock") {
+		t.Fatalf("broker service does not have a dedicated entry point: %s", service)
+	}
+}

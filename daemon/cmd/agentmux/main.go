@@ -46,6 +46,8 @@ func main() {
 		runListCmd(args[1:])
 	case "sessions":
 		runSessionsCmd(args[1:])
+	case "taskcheck-broker":
+		runTaskcheckBroker(args[1:])
 	case "amp":
 		runAmpCmd(args[1:])
 	case "gc":

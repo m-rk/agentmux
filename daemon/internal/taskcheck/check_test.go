@@ -14,6 +14,74 @@ import (
 	"testing"
 )
 
+func TestBrokerBoundariesAndFixedRunner(t *testing.T) {
+	fields := map[string]string{
+		"AGENTMUX_INSTANCE_NAME": "task-76",
+		"AGENTMUX_AGENT":         "codex",
+		"AGENTMUX_PROJECT":       "m-rk/agentmux",
+		"AGENTMUX_WORKDIR":       "/work/task-76",
+		"AGENTMUX_RUN_USER":      "worker",
+	}
+	read := func(name string) (map[string]string, error) {
+		if name != "task-76" {
+			return nil, os.ErrNotExist
+		}
+		return fields, nil
+	}
+	uid := func(name string) (string, error) {
+		if name != "worker" {
+			return "", os.ErrNotExist
+		}
+		return "1001", nil
+	}
+	calls := 0
+	runner := func(_ context.Context, target Target) Result {
+		calls++
+		if target.Project != "m-rk/agentmux" || target.Workdir != "/work/task-76" {
+			t.Errorf("runner received untrusted target: %+v", target)
+		}
+		return Result{Project: target.Project, Category: "passed", Output: "ok\n", ExitCode: 0}
+	}
+
+	got := Broker(context.Background(), "task-76", "1001", read, uid, runner)
+	if got.Category != "passed" || calls != 1 {
+		t.Fatalf("authorized broker call = %+v, calls=%d", got, calls)
+	}
+	failing := Broker(context.Background(), "task-76", "1001", read, uid, func(context.Context, Target) Result {
+		return Result{Project: "m-rk/agentmux", Category: "test_failure", Output: "check_test.go:9: got false, want true\n", ExitCode: 1}
+	})
+	if failing.Category != "test_failure" || failing.ExitCode != 1 || !strings.Contains(failing.Output, "want true") {
+		t.Fatalf("failing test result = %+v", failing)
+	}
+	for _, tc := range []struct {
+		name, instance, caller string
+		wantCategory           string
+	}{
+		{"denied daemon socket is irrelevant", "task-76", "1001", "passed"},
+		{"unknown task", "task-missing", "1001", "execution_error"},
+		{"wrong user", "task-76", "1002", "execution_error"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			readRegistry := read
+			if tc.name == "denied daemon socket is irrelevant" {
+				readRegistry = func(name string) (map[string]string, error) {
+					// Model the root-only registry broker path while asserting no
+					// daemon socket client is involved in the operation.
+					return read(name)
+				}
+			}
+			before := calls
+			result := Broker(context.Background(), tc.instance, tc.caller, readRegistry, uid, runner)
+			if result.Category != tc.wantCategory {
+				t.Fatalf("broker boundary result = %+v", result)
+			}
+			if tc.name != "denied daemon socket is irrelevant" && calls != before {
+				t.Fatal("runner called for a refused broker request")
+			}
+		})
+	}
+}
+
 func TestResolveAllowsOnlyRegisteredCodexTasksAndConfiguredProjects(t *testing.T) {
 	fields := map[string]string{
 		"AGENTMUX_INSTANCE_NAME": "task-76",

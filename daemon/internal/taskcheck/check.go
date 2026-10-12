@@ -82,6 +82,44 @@ type Result struct {
 	OutputTruncated bool
 }
 
+// Broker validates the unprivileged caller against the registered task before
+// running the existing confined check. readRegistry and userID are injectable
+// so the privilege and registry boundaries can be tested without systemd.
+func Broker(ctx context.Context, instance, callerUID string,
+	readRegistry func(string) (map[string]string, error),
+	userID func(string) (string, error), runner func(context.Context, Target) Result,
+) Result {
+	started := time.Now()
+	fail := func(message string) Result {
+		return Result{Category: "execution_error", Output: message + "\n", ExitCode: -1, Duration: time.Since(started)}
+	}
+	if callerUID == "" || callerUID == "0" {
+		return fail("task check broker requires a non-root invoking user")
+	}
+	if !strings.HasPrefix(instance, "task-") || strings.ContainsAny(instance, "/\\\x00\r\n") {
+		return fail("project check is available only to task-* instances")
+	}
+	fields, err := readRegistry(instance)
+	if err != nil {
+		return fail(fmt.Sprintf("reading task registry: %v", err))
+	}
+	target, err := Resolve(instance, fields)
+	if err != nil {
+		return fail(err.Error())
+	}
+	uid, err := userID(target.RunUser)
+	if err != nil {
+		return fail(fmt.Sprintf("looking up task user: %v", err))
+	}
+	if uid != callerUID {
+		return fail("task check broker caller does not own the registered task")
+	}
+	if runner == nil {
+		runner = Run
+	}
+	return runner(ctx, target)
+}
+
 // Resolve validates the fields read from an instance registry. Only the
 // project check implemented below is available; caller-supplied commands,
 // arguments, environment paths and workdirs are deliberately absent.

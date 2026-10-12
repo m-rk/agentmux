@@ -6,21 +6,23 @@ import (
 )
 
 const (
-	binPath         = "/usr/local/bin/agentmux"
-	unitPath        = "/etc/systemd/system/agentmuxd.service"
-	doctorUnitPath  = "/etc/systemd/system/agentmuxd-doctor.service"
-	doctorTimerPath = "/etc/systemd/system/agentmuxd-doctor.timer"
-	gcUnitPath      = "/etc/systemd/system/agentmuxd-gc.service"
-	gcTimerPath     = "/etc/systemd/system/agentmuxd-gc.timer"
-	daemonSocket    = "/run/agentmux/agentmuxd.sock"
-	unitName        = "agentmuxd.service"
+	binPath                  = "/usr/local/bin/agentmux"
+	unitPath                 = "/etc/systemd/system/agentmuxd.service"
+	doctorUnitPath           = "/etc/systemd/system/agentmuxd-doctor.service"
+	doctorTimerPath          = "/etc/systemd/system/agentmuxd-doctor.timer"
+	gcUnitPath               = "/etc/systemd/system/agentmuxd-gc.service"
+	gcTimerPath              = "/etc/systemd/system/agentmuxd-gc.timer"
+	taskcheckServiceUnitPath = "/etc/systemd/system/agentmux-taskcheck-broker.service"
+	daemonSocket             = "/run/agentmux/agentmuxd.sock"
+	unitName                 = "agentmuxd.service"
 	// Use agentmuxd-* rather than agentmux-* so these host jobs cannot
 	// collide with the unit for an ordinary instance named "doctor".
-	doctorUnitName  = "agentmuxd-doctor.service"
-	doctorTimerName = "agentmuxd-doctor.timer"
-	gcUnitName      = "agentmuxd-gc.service"
-	gcTimerName     = "agentmuxd-gc.timer"
-	unitTemplate    = `[Unit]
+	doctorUnitName       = "agentmuxd-doctor.service"
+	doctorTimerName      = "agentmuxd-doctor.timer"
+	gcUnitName           = "agentmuxd-gc.service"
+	gcTimerName          = "agentmuxd-gc.timer"
+	taskcheckServiceUnit = "agentmux-taskcheck-broker.service"
+	unitTemplate         = `[Unit]
 Description=agentmux daemon
 After=network-online.target
 Wants=network-online.target
@@ -79,6 +81,19 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 `
+	taskcheckServiceTemplate = `[Unit]
+Description=agentmux task-check broker
+After=agentmuxd.service
+Requires=agentmuxd.service
+
+[Service]
+Type=simple
+ExecStart=%s taskcheck-broker serve
+Restart=on-failure
+RestartSec=1
+TimeoutStartSec=infinity
+KillMode=process
+`
 )
 
 // SocketPath returns the Unix socket the installed daemon listens on,
@@ -107,6 +122,12 @@ func Install(doctorTime string) error {
 		return err
 	}
 	if err := runCmd("systemctl", "enable", "--now", gcTimerName); err != nil {
+		return err
+	}
+	if err := runCmd("systemctl", "enable", "--now", taskcheckServiceUnit); err != nil {
+		return err
+	}
+	if err := runCmd("systemctl", "restart", taskcheckServiceUnit); err != nil {
 		return err
 	}
 
@@ -151,6 +172,9 @@ func InstallForDeploy(doctorTime string) error {
 	if err := os.WriteFile(gcTimerPath, []byte(gcTimer), 0o644); err != nil {
 		return fmt.Errorf("writing %s: %w", gcTimerPath, err)
 	}
+	if err := os.WriteFile(taskcheckServiceUnitPath, []byte(fmt.Sprintf(taskcheckServiceTemplate, binPath)), 0o644); err != nil {
+		return fmt.Errorf("writing %s: %w", taskcheckServiceUnitPath, err)
+	}
 
 	return nil
 }
@@ -163,8 +187,9 @@ func Uninstall() error {
 	}
 	_ = runCmd("systemctl", "disable", "--now", doctorTimerName)
 	_ = runCmd("systemctl", "disable", "--now", gcTimerName)
+	_ = runCmd("systemctl", "disable", "--now", taskcheckServiceUnit)
 	_ = runCmd("systemctl", "disable", "--now", unitName)
-	for _, path := range []string{gcTimerPath, gcUnitPath, doctorTimerPath, doctorUnitPath, unitPath} {
+	for _, path := range []string{taskcheckServiceUnitPath, gcTimerPath, gcUnitPath, doctorTimerPath, doctorUnitPath, unitPath} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("removing %s: %w", path, err)
 		}

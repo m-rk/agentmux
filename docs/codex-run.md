@@ -101,8 +101,9 @@ were created with; recreate them to pick up the grant.
 ### Full project tests from a Codex task
 
 Inside a Codex task session run `agentmux sessions check`. The CLI sends only
-the stamped task instance name to the local daemon. The daemon reads the
-project, worktree and run user from that instance's registry. It accepts only
+the stamped task instance name to a dedicated task-check broker mailbox; it
+does not connect to `agentmuxd`. The broker checks the request file owner
+against the task run user in the instance registry. It accepts only
 the fixed `go test ./...` check for `m-rk/agentmux`, and `go vet ./...` followed
 by `go test ./...` for `m-rk/mergentic`. A root-managed transient systemd
 service runs the fixed Go command as the ordinary task user with low CPU
@@ -112,16 +113,20 @@ paths read-only, and bind-mounts only the assigned worktree read-only. A
 root-owned bind source exposes private writable home, cache, and temp
 directories to that service. Module and automatic
 toolchain downloads are disabled, and the private directories are removed
-when the check finishes. If the root system service cannot enforce these
-properties, the check fails without an unsandboxed fallback.
+when the check finishes. The root broker service accepts only small request
+files from the dedicated `/tmp` mailbox and returns a response readable only
+by the requesting task user. If the root system service cannot enforce these
+properties, the check fails without an unsandboxed fallback. Unknown request
+fields are rejected, so the broker accepts no caller-supplied command, path,
+or environment.
 
 The CLI prints combined stdout/stderr and a final result line with project,
 exit code and duration in the same Codex thread. `sandbox_denial` identifies
 host permission or local-listener restrictions, `test_failure` identifies a
 failed check, `mixed_failure` reports both, and `execution_error` means the
-check could not start or finish. The RPC accepts no arbitrary command or path
-and does not change Codex's sandbox settings. The normal ship check remains
-authoritative.
+check could not start or finish. This route does not grant access to the
+general daemon socket or change Codex's sandbox settings. The normal ship
+check remains authoritative.
 
 ## Spend
 

@@ -84,6 +84,12 @@ func deployRestartServices(ctx context.Context, services []deployService) error 
 	if err := systemctlRun(ctx, "daemon-reload"); err != nil {
 		return err
 	}
+	if err := systemctlRun(ctx, "enable", "--now", "agentmux-taskcheck-broker.service"); err != nil {
+		return fmt.Errorf("enabling task-check broker service: %w", err)
+	}
+	if err := systemctlRun(ctx, "restart", "agentmux-taskcheck-broker.service"); err != nil {
+		return fmt.Errorf("restarting task-check broker: %w", err)
+	}
 	units := []string{"agentmuxd.service"}
 	for _, s := range services {
 		units = append(units, s.unit)
