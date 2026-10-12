@@ -217,7 +217,7 @@ func quoteAll(names []string) string {
 // isAskThread reports whether the thread is a task thread: it lives in the
 // asks forum and carries a kind tag (or the retired `ask` tag while
 // migration is in flight). The kind tag names come from the configured
-// kind_tags in discord.yaml, defaulting to task, epic, idea, spike.
+// kind_tags in discord.yaml, defaulting to task, epic, idea, spike, bug.
 // Collab threads share the same forum but never carry these tags.
 func (c *Client) isAskThread(forum Channel, thread Channel) bool {
 	if thread.ParentID == "" {
@@ -285,8 +285,10 @@ func askContent(user string, mention bool, body string) (string, error) {
 	return body, nil
 }
 
-// PostAsk creates a forum post tagged `task` (plus `needs me` and extraTags)
-// whose body opens with a mention of the configured user. Extra tags are
+// PostAsk creates a forum post tagged `task` (or a kind supplied in extraTags,
+// plus `needs me` and remaining extraTags)
+// whose body opens with a mention of the configured user. A kind in extraTags
+// selects that kind instead of `task`. Remaining extra tags are
 // free-form: a project tag, or a state override such as `blocked` (which
 // replaces the default `needs me`; at most one state tag survives —
 // swapStateTags drops the rest).
@@ -322,7 +324,25 @@ func (c *Client) PostAsk(ctx context.Context, title, body string, extraTags []st
 	if _, err := c.withRefreshedForum(ctx, func(f Channel) ([]string, error) {
 		var err error
 		guildID = f.GuildID
-		tags, err = swapStateTags(f, nil, "task", extraTags)
+		kind := "task"
+		kindSelected := false
+		postExtras := make([]string, 0, len(extraTags))
+		for _, extra := range extraTags {
+			isKind := false
+			for _, name := range c.Config.KindTagNames() {
+				if strings.EqualFold(strings.TrimSpace(extra), name) {
+					if kindSelected {
+						return nil, fmt.Errorf("a post takes exactly one kind tag")
+					}
+					kind, kindSelected, isKind = name, true, true
+					break
+				}
+			}
+			if !isKind {
+				postExtras = append(postExtras, extra)
+			}
+		}
+		tags, err = swapStateTags(f, nil, kind, postExtras)
 		if err != nil {
 			return nil, err
 		}
@@ -940,7 +960,7 @@ type TagOptions struct {
 
 // TagAsk replaces the thread's applied tags with exactly names, resolved by
 // name from the forum's available tags. An unknown name fails with the valid
-// ones. The set must keep one kind tag (task, epic, idea, spike by default;
+// ones. The set must keep one kind tag (task, epic, idea, spike, bug by default;
 // kind_tags in discord.yaml), so a retag can never strip a thread of the
 // tag that makes it an ask post; -force re-applies one after a thread
 // already lost it. Discord allows at most five tags per thread. Applying

@@ -32,7 +32,7 @@ type fakeAsks struct {
 
 func (f *fakeAsks) server(t *testing.T, threads map[string]Channel, messages []Message) *httptest.Server {
 	forum := Channel{ID: "forum", GuildID: "guild", Type: 15, AvailableTags: []ForumTag{
-		{"t-task", "task"}, {"t-epic", "epic"}, {"t-idea", "idea"}, {"t-spike", "spike"},
+		{"t-task", "task"}, {"t-epic", "epic"}, {"t-idea", "idea"}, {"t-spike", "spike"}, {"t-bug", "bug"},
 		{"t-needsme", "needs me"}, {"t-working", "working"}, {"t-blocked", "blocked"},
 		{"t-parked", "parked"}, {"t-notnow", "not now"}, {"t-done", "done"}, {"t-failed", "failed"},
 		{"t-ask", "ask"}, {"t-pending", "pending"}, {"t-answered", "answered"}, {"t-launched", "launched"},
@@ -220,6 +220,19 @@ func TestPostAskMentionsOnlyConfiguredUser(t *testing.T) {
 	}
 	if p["thread_name"] != "Launch X?" {
 		t.Fatalf("thread_name = %v", p["thread_name"])
+	}
+}
+
+func TestPostAskBugKind(t *testing.T) {
+	f := &fakeAsks{}
+	s := f.server(t, nil, nil)
+	defer s.Close()
+	if _, _, err := asksClientFor(s.URL).PostAsk(context.Background(), "Bug", "b", []string{"bug"}, AskOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	tags := f.hook[0]["applied_tags"].([]any)
+	if len(tags) != 2 || tags[0] != "t-bug" || tags[1] != "t-needsme" {
+		t.Fatalf("tags = %#v", tags)
 	}
 }
 

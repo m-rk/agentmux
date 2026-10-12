@@ -90,7 +90,7 @@ func TestKindTagsDefaultAndOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := loaded.Collaboration.KindTagNames(); len(got) != 4 || got[3] != "spike" {
+	if got := loaded.Collaboration.KindTagNames(); len(got) != 5 || got[4] != "bug" {
 		t.Fatalf("default kind tags = %#v", got)
 	}
 	loaded.Collaboration.KindTags = []string{"spike"}

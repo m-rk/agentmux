@@ -59,7 +59,7 @@ type CollaborationConfig struct {
 
 // DefaultKindTags mark a thread as an ask (task) thread when kind_tags is
 // unset in discord.yaml.
-var DefaultKindTags = []string{"task", "epic", "idea", "spike"}
+var DefaultKindTags = []string{"task", "epic", "idea", "spike", "bug"}
 
 // KindTagNames returns the configured kind tags, or DefaultKindTags when
 // kind_tags is unset.

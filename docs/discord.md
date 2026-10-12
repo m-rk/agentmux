@@ -226,7 +226,7 @@ agentmux discord prune [-thread ID] [-older-than DUR] [-dry-run] [-json]
   gate, but the new set must still carry a kind tag. Console and
   orchestrator only — `tag` is already a no-op in task sessions.
   The kind tag names come from `kind_tags` under `collaboration:` in
-  `discord.yaml`, defaulting to `task, epic, idea, spike`. The thread must be open:
+  `discord.yaml`, defaulting to `task, epic, idea, spike, bug`. The thread must be open:
   applying tags to an archived thread fails (Discord error 50083), so add
   `-unarchive` to unarchive it first (a retag posts nothing, so this needs
   Manage Threads) and re-archive after. A locked thread can't be unarchived

@@ -417,7 +417,7 @@ func runDiscordHeads(args []string) error {
 
 // runDiscordTag replaces a task thread's tags with exactly -set, resolved by
 // name from the forum's available tags. The set must keep one kind tag
-// (task, epic, idea, spike by default); -force re-applies one after a
+// (task, epic, idea, spike, bug by default); -force re-applies one after a
 // thread already lost it (console and orchestrator only — TagAsk is already
 // a no-op in task sessions). A retag never posts.
 func runDiscordTag(args []string) error {
