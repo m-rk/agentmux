@@ -153,6 +153,20 @@ func (c *Client) EditAsk(ctx context.Context, threadID, messageID string, opts E
 	return nil
 }
 
+// CompletePanelInteraction edits the message associated with a deferred
+// persistent-button click. The gateway's interaction ID is the only routing
+// input required; completion uses the configured bot credentials locally.
+func (c *Client) CompletePanelInteraction(ctx context.Context, store *ClickStore, interactionID string, opts EditAskOptions) error {
+	if store == nil {
+		return fmt.Errorf("panel interaction store is unavailable")
+	}
+	interaction, err := store.PanelInteraction(interactionID)
+	if err != nil {
+		return err
+	}
+	return c.EditAsk(ctx, interaction.ThreadID, interaction.MessageID, opts)
+}
+
 // PinAsk pins a message in an asks thread using the configured bot token.
 // The bot needs Manage Messages in the channel.
 func (c *Client) PinAsk(ctx context.Context, threadID, messageID string) error {

@@ -37,6 +37,8 @@ func runDiscordCmd(args []string) {
 		err = runDiscordReact(args[1:])
 	case "edit":
 		err = runDiscordEdit(args[1:])
+	case "complete":
+		err = runDiscordComplete(args[1:])
 	case "pin":
 		err = runDiscordPin(args[1:])
 	case "tag":
@@ -68,6 +70,7 @@ func discordUsage() {
   agentmux discord heads -threads ID1,ID2 -json
   agentmux discord react -thread ID -message ID -emoji EMOJI [-replace]
   agentmux discord edit -thread ID -message ID [-body-file F] [-buttons-json FILE] [-disable-buttons] [-chosen LABEL] [-embeds]
+  agentmux discord complete -interaction ID [-body-file F] [-buttons-json FILE] [-embeds]
   agentmux discord pin THREAD MESSAGE
   agentmux discord tag -thread ID -set "task,working" [-unarchive] [-force] [-unlock]
   agentmux discord close -thread ID [-tag NAME] [-lock] [-unlock]
@@ -610,6 +613,54 @@ func runDiscordEdit(args []string) error {
 	}
 	fmt.Printf("Edited message %s in ask thread %s.\n", *message, *thread)
 	return nil
+}
+
+func runDiscordComplete(args []string) error {
+	fs := flag.NewFlagSet("discord complete", flag.ContinueOnError)
+	interactionID := fs.String("interaction", "", "deferred panel interaction ID")
+	bodyFile := fs.String("body-file", "", "replacement body ('-' for stdin); empty keeps the message")
+	buttonsFile := fs.String("buttons-json", "", "replace buttons with JSON array; use persistent:true to keep them active")
+	embeds := fs.Bool("embeds", false, "keep link unfurls on the edit")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *interactionID == "" {
+		return fmt.Errorf("-interaction is required")
+	}
+	if err := liveguard.Check(); err != nil {
+		return err
+	}
+	var body string
+	if *bodyFile != "" {
+		var err error
+		body, err = readBodyFile(*bodyFile)
+		if err != nil {
+			return err
+		}
+	}
+	var buttons []collab.AskButton
+	if *buttonsFile != "" {
+		data, err := readBodyFile(*buttonsFile)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal([]byte(data), &buttons); err != nil {
+			return fmt.Errorf("reading buttons JSON: %w", err)
+		}
+	}
+	client, err := asksClient()
+	if err != nil {
+		return err
+	}
+	if client.ClicksPath == "" {
+		return fmt.Errorf("can't find the home directory to read panel interactions")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	err = client.CompletePanelInteraction(ctx, &collab.ClickStore{Path: client.ClicksPath}, *interactionID, collab.EditAskOptions{
+		Body: body, Buttons: buttons, ReplaceButtons: *buttonsFile != "", Embeds: *embeds,
+	})
+	return err
 }
 
 func runDiscordPin(args []string) error {

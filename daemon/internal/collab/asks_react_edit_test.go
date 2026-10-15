@@ -101,13 +101,30 @@ func TestEditAskReplacesButtons(t *testing.T) {
 	s := &reactEditServer{}
 	srv := s.server(t)
 	defer srv.Close()
-	if err := asksClientFor(srv.URL).EditAsk(context.Background(), "900", "500", EditAskOptions{ReplaceButtons: true, Buttons: []AskButton{{Label: "Refresh", Style: "primary"}}}); err != nil {
+	if err := asksClientFor(srv.URL).EditAsk(context.Background(), "900", "500", EditAskOptions{ReplaceButtons: true, Buttons: []AskButton{{Label: "Refresh", Style: "primary", Persistent: true}}}); err != nil {
 		t.Fatal(err)
 	}
 	rows := s.bodies[0]["components"].([]any)
 	button := rows[0].(map[string]any)["components"].([]any)[0].(map[string]any)
-	if button["label"] != "Refresh" || button["custom_id"] != "ask:Refresh" || button["style"] != float64(1) {
+	if button["label"] != "Refresh" || button["custom_id"] != "panel:Refresh" || button["style"] != float64(1) || button["disabled"] == true {
 		t.Fatalf("button = %#v", button)
+	}
+}
+
+func TestCompletePanelInteractionEditsRecordedSource(t *testing.T) {
+	s := &reactEditServer{}
+	srv := s.server(t)
+	defer srv.Close()
+	store := &ClickStore{Path: t.TempDir() + "/clicks.jsonl"}
+	if _, err := store.Append(Click{InteractionID: "interaction-1", ThreadID: "900", MessageID: "500", Label: "Refresh", UserID: "777"}); err != nil {
+		t.Fatal(err)
+	}
+	client := asksClientFor(srv.URL)
+	if err := client.CompletePanelInteraction(context.Background(), store, "interaction-1", EditAskOptions{Body: "Updated"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.patches) != 1 || s.patches[0] != "/api/channels/900/messages/500" || s.bodies[0]["content"] != "Updated" {
+		t.Fatalf("completion patch = %v %#v", s.patches, s.bodies)
 	}
 }
 

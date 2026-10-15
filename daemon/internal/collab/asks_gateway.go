@@ -277,7 +277,8 @@ func (l *Listener) HandleInteraction(ctx context.Context, raw json.RawMessage) e
 		return err
 	}
 	const messageComponent = 3
-	if in.Type != messageComponent || !strings.HasPrefix(in.Data.CustomID, buttonIDPrefix) {
+	panel := strings.HasPrefix(in.Data.CustomID, panelButtonIDPrefix)
+	if in.Type != messageComponent || (!panel && !strings.HasPrefix(in.Data.CustomID, buttonIDPrefix)) {
 		return nil
 	}
 	user := in.User
@@ -303,6 +304,25 @@ func (l *Listener) HandleInteraction(ctx context.Context, raw json.RawMessage) e
 		return l.respond(ctx, in, 4, map[string]any{"content": "Only the person this ask is for can answer it.", "flags": 64})
 	}
 	label := strings.TrimPrefix(in.Data.CustomID, buttonIDPrefix)
+	if panel {
+		label = strings.TrimPrefix(in.Data.CustomID, panelButtonIDPrefix)
+		if in.ID == "" || in.Message.ID == "" {
+			return fmt.Errorf("panel interaction is missing its interaction or message ID")
+		}
+		// Type 6 acknowledges the component while leaving the source message
+		// untouched. The client can edit it after applying the setting.
+		if err := l.respond(ctx, in, 6, nil); err != nil {
+			return err
+		}
+		recorded, err := l.Store.Append(Click{InteractionID: in.ID, ThreadID: in.ChannelID, MessageID: in.Message.ID, Label: label, UserID: user.ID, Timestamp: time.Now().UTC()})
+		if err != nil {
+			return fmt.Errorf("recording panel interaction: %w", err)
+		}
+		if recorded {
+			l.wake()
+		}
+		return nil
+	}
 	recorded, err := l.Store.Append(Click{
 		ThreadID: in.ChannelID, MessageID: in.Message.ID, Label: label, UserID: user.ID, Timestamp: time.Now().UTC(),
 	})
@@ -441,7 +461,11 @@ func settleComponents(rows []map[string]any, chosen string) []map[string]any {
 }
 
 func (l *Listener) respond(ctx context.Context, in interaction, kind int, data map[string]any) error {
-	body, err := json.Marshal(map[string]any{"type": kind, "data": data})
+	callback := map[string]any{"type": kind}
+	if data != nil {
+		callback["data"] = data
+	}
+	body, err := json.Marshal(callback)
 	if err != nil {
 		return err
 	}

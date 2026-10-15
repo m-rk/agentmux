@@ -146,6 +146,14 @@ func TestPostAskWithButtonsUsesBot(t *testing.T) {
 	}
 }
 
+func TestPersistentButtonsUsePanelCustomIDs(t *testing.T) {
+	rows := buttonRows([]AskButton{{Label: "Refresh", Persistent: true}, {Label: "Ship it"}}, nil)
+	buttons := rows[0]["components"].([]map[string]any)
+	if buttons[0]["custom_id"] != "panel:Refresh" || buttons[1]["custom_id"] != "ask:Ship it" {
+		t.Fatalf("custom ids = %#v", buttons)
+	}
+}
+
 func TestPostAskInThreadWithButtons(t *testing.T) {
 	a := &answersServer{}
 	s := a.server(t)
@@ -415,6 +423,34 @@ func TestHandleInteractionIgnoresOtherUsers(t *testing.T) {
 	data := a.callbacks[0]["data"].(map[string]any)
 	if a.callbacks[0]["type"] != float64(4) || data["flags"] != float64(64) {
 		t.Fatalf("callback = %#v", a.callbacks[0])
+	}
+}
+
+func TestPanelInteractionDefersAndDeduplicatesByInteraction(t *testing.T) {
+	a := &answersServer{}
+	s := a.server(t)
+	defer s.Close()
+	l := newListener(t, s)
+	raw := interactionJSON(t, "777", "forum", "panel:Refresh")
+	if err := l.HandleInteraction(context.Background(), raw); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.callbacks) != 1 || a.callbacks[0]["type"] != float64(6) {
+		t.Fatalf("deferred callback = %#v", a.callbacks)
+	}
+	if _, hasData := a.callbacks[0]["data"]; hasData {
+		t.Fatalf("deferred callback unexpectedly has data: %#v", a.callbacks[0])
+	}
+	clicks, err := l.Store.load()
+	if err != nil || len(clicks) != 1 || clicks[0].InteractionID != "i1" || clicks[0].ThreadID != "900" || clicks[0].MessageID != "500" || clicks[0].UserID != "777" || clicks[0].Label != "Refresh" {
+		t.Fatalf("panel events = %#v, err %v", clicks, err)
+	}
+	if err := l.HandleInteraction(context.Background(), raw); err != nil {
+		t.Fatal(err)
+	}
+	clicks, _ = l.Store.load()
+	if len(clicks) != 1 || len(a.callbacks) != 2 {
+		t.Fatalf("duplicate delivery: events=%#v callbacks=%d", clicks, len(a.callbacks))
 	}
 }
 

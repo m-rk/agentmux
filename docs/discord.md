@@ -344,6 +344,12 @@ objects, e.g.:
 ]
 ```
 
+For application driven panels, add `"persistent": true` to a button object.
+Clicks are deferred and recorded with an interaction ID; the client completes
+the update using `agentmux discord complete -interaction ID`. See
+[discord-asks.md](discord-asks.md) for the stable event schema and full
+operational contract.
+
 - **Emoji** is a unicode emoji (⭐, ⏸️) or a custom server emoji by name
   (`:amp:`, `:claude:`, `:opencode:`, `:muse:`). Custom names resolve
   against the guild's emoji list on first use and are cached per guild;

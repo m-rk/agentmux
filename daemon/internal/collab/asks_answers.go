@@ -23,12 +23,13 @@ import (
 // AskMessage.Answers.
 
 const (
-	maxReactions    = 20
-	maxButtons      = 25
-	maxButtonLabel  = 80
-	buttonIDPrefix  = "ask:"
-	buttonsPerRow   = 5
-	buttonStyleGrey = 2
+	maxReactions        = 20
+	maxButtons          = 25
+	maxButtonLabel      = 80
+	buttonIDPrefix      = "ask:"
+	panelButtonIDPrefix = "panel:"
+	buttonsPerRow       = 5
+	buttonStyleGrey     = 2
 )
 
 // AskButton is one button on a posted ask. Label is the text and the click
@@ -40,6 +41,9 @@ type AskButton struct {
 	Label string `json:"label"`
 	Emoji string `json:"emoji,omitempty"`
 	Style string `json:"style,omitempty"`
+	// Persistent keeps this button active after a click and routes clicks to
+	// the deferred panel interaction stream instead of one-shot ask answers.
+	Persistent bool `json:"persistent,omitempty"`
 }
 
 // suppressEmbedsFlag is Discord's SUPPRESS_EMBEDS message flag: a message
@@ -164,7 +168,11 @@ func buttonRows(buttons []AskButton, guild []GuildEmoji) []map[string]any {
 		var comps []map[string]any
 		for _, b := range buttons[i:end] {
 			style, _ := buttonStyleNumber(b.Style)
-			btn := map[string]any{"type": 2, "style": style, "label": b.Label, "custom_id": buttonIDPrefix + b.Label}
+			prefix := buttonIDPrefix
+			if b.Persistent {
+				prefix = panelButtonIDPrefix
+			}
+			btn := map[string]any{"type": 2, "style": style, "label": b.Label, "custom_id": prefix + b.Label}
 			if emoji, ok := buttonEmoji(b.Emoji, guild); ok {
 				btn["emoji"] = emoji
 			}
@@ -255,11 +263,12 @@ func (c *Client) userReactions(ctx context.Context, channelID string, m Message,
 
 // Click is one recorded button press.
 type Click struct {
-	ThreadID  string    `json:"thread_id"`
-	MessageID string    `json:"message_id"`
-	Label     string    `json:"label"`
-	UserID    string    `json:"user_id"`
-	Timestamp time.Time `json:"timestamp"`
+	InteractionID string    `json:"interaction_id,omitempty"`
+	ThreadID      string    `json:"thread_id"`
+	MessageID     string    `json:"message_id"`
+	Label         string    `json:"label"`
+	UserID        string    `json:"user_id"`
+	Timestamp     time.Time `json:"timestamp"`
 }
 
 // Input records metadata for a configured user's typed reply. Message content
@@ -301,7 +310,8 @@ func (s *ClickStore) AppendInput(input Input) (bool, error) {
 }
 
 // ClickStore is an append-only JSONL file shared by the listener (writer)
-// and `discord read` (reader). The first click on a message wins.
+// and clients. One-shot asks accept one click per message; panel interactions
+// deduplicate by interaction ID and permit later taps on the same message.
 type ClickStore struct {
 	Path string
 	mu   sync.Mutex
@@ -341,6 +351,12 @@ func (s *ClickStore) Append(c Click) (bool, error) {
 		return false, err
 	}
 	for _, e := range existing {
+		if c.InteractionID != "" && e.InteractionID == c.InteractionID {
+			return false, nil
+		}
+		if c.InteractionID != "" {
+			continue
+		}
 		if e.MessageID == c.MessageID {
 			return false, nil
 		}
@@ -363,6 +379,24 @@ func (s *ClickStore) Append(c Click) (bool, error) {
 	return true, nil
 }
 
+// PanelInteraction returns the recorded deferred interaction used to address
+// its original message during completion. Interaction tokens are never stored.
+func (s *ClickStore) PanelInteraction(id string) (Click, error) {
+	if id == "" {
+		return Click{}, fmt.Errorf("interaction ID is required")
+	}
+	all, err := s.load()
+	if err != nil {
+		return Click{}, err
+	}
+	for _, c := range all {
+		if c.InteractionID == id {
+			return c, nil
+		}
+	}
+	return Click{}, fmt.Errorf("unknown panel interaction %q", id)
+}
+
 func (c *Client) clicksFor(threadID, user string) (map[string][]Click, error) {
 	if c.ClicksPath == "" {
 		return nil, nil
@@ -373,7 +407,7 @@ func (c *Client) clicksFor(threadID, user string) (map[string][]Click, error) {
 	}
 	out := map[string][]Click{}
 	for _, click := range all {
-		if click.ThreadID == threadID && click.UserID == user {
+		if click.InteractionID == "" && click.ThreadID == threadID && click.UserID == user {
 			out[click.MessageID] = append(out[click.MessageID], click)
 		}
 	}
