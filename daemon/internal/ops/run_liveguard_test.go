@@ -308,7 +308,10 @@ func buildAgentmux(t *testing.T) string {
 	}
 	daemonDir := filepath.Dir(filepath.Dir(filepath.Dir(file)))
 	out := filepath.Join(t.TempDir(), "agentmux")
-	cmd := exec.Command("go", "build", "-o", out, "./cmd/agentmux")
+	// Integration builds run from the checked-out source, but tests also run
+	// in exported or otherwise VCS-incomplete worktrees. The binary's tested
+	// behavior does not depend on Go's optional build-info VCS stamp.
+	cmd := exec.Command("go", "build", "-buildvcs=false", "-o", out, "./cmd/agentmux")
 	cmd.Dir = daemonDir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("building agentmux: %v: %s", err, out)

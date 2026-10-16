@@ -81,11 +81,11 @@ func (a *answersServer) server(t *testing.T) *httptest.Server {
 		case path == "/hook" && r.Method == http.MethodPost:
 			writeJSON(t, w, Message{ID: "500", ChannelID: "900"})
 		case strings.HasPrefix(path, "/api/interactions/"):
-			if a.callbackDelay > 0 {
-				time.Sleep(a.callbackDelay)
-			}
 			if _, err := os.Stat(a.clickPath); err == nil {
 				a.callbackSawClick = true
+			}
+			if a.callbackDelay > 0 {
+				time.Sleep(a.callbackDelay)
 			}
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
