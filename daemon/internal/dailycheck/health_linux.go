@@ -29,7 +29,8 @@ func (platformProber) Probe(ctx context.Context, instance *pb.Instance) []Health
 	// No update unit exists by design for self-updating runners
 	// (AGENTMUX_AMP_UPDATE=off): skip the refresh checks entirely rather
 	// than flagging its deliberate absence every day.
-	if !ampUpdateDisabled(instance.Name) {
+	// Codex idle placeholders likewise have no update unit by design.
+	if !ampUpdateDisabled(instance.Name) && !codexIdlePlaceholder(ctx, instance) {
 		if props, err := systemdProperties(ctx, updateService); err != nil {
 			issues = append(issues, platformIssue(instance, "refresh-unreadable", "daily refresh state could not be inspected", err.Error()))
 		} else if props["LoadState"] != "loaded" {

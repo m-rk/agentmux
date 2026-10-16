@@ -14,7 +14,36 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
+
+// Lookup retry for the claude binary. Nightly updates replace the npm package
+// that ~/.npm-global/bin/claude symlinks into, so for a moment the symlink
+// dangles and lookPathIn rejects it. Concurrent updates make that a real race,
+// so claude lookups poll briefly before giving up. Vars so tests can shrink them.
+var (
+	retryNames    = map[string]bool{"claude": true}
+	retryTimeout  = 30 * time.Second
+	retryInterval = 1500 * time.Millisecond
+	retrySleep    = time.Sleep
+	retryNow      = time.Now
+)
+
+// lookPathRetry is lookPathIn, polling for up to retryTimeout when name is one
+// of retryNames. Other names fail immediately.
+func lookPathRetry(name, pathEnv string) string {
+	if found := lookPathIn(name, pathEnv); found != "" || !retryNames[name] {
+		return found
+	}
+	deadline := retryNow().Add(retryTimeout)
+	for retryNow().Before(deadline) {
+		retrySleep(retryInterval)
+		if found := lookPathIn(name, pathEnv); found != "" {
+			return found
+		}
+	}
+	return ""
+}
 
 // Command returns an *exec.Cmd for running name as runUser, with HOME/PATH
 // set appropriately (systemd/launchd don't inherit a login shell's PATH,
@@ -45,7 +74,7 @@ func command(ctx context.Context, runUser, name string, args ...string) *exec.Cm
 
 	resolved := name
 	if !filepath.IsAbs(name) {
-		resolved = lookPathIn(name, path)
+		resolved = lookPathRetry(name, path)
 		if resolved == "" {
 			return failedCommand(ctx, name, args, fmt.Errorf("%q not found in %s's PATH", name, runUser))
 		}
@@ -191,7 +220,7 @@ func LookPath(runUser, name string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("looking up user %q: %w", runUser, err)
 	}
-	if found := lookPathIn(name, pathFor(u)); found != "" {
+	if found := lookPathRetry(name, pathFor(u)); found != "" {
 		return found, nil
 	}
 	return "", fmt.Errorf("%q not found in %s's PATH", name, runUser)

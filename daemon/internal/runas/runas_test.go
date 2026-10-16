@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCurrentUserCommandContextHonorsCancellation(t *testing.T) {
@@ -173,5 +174,63 @@ func TestCurrentUserCommandResolvesAgainstFixedUpPath(t *testing.T) {
 	cmd := CurrentUserCommand("probetool")
 	if cmd.Path != execPath {
 		t.Errorf("cmd.Path = %q, want %q (should resolve via $HOME/.local/bin even though ambient $PATH doesn't have it)", cmd.Path, execPath)
+	}
+}
+
+func stubRetryClock(t *testing.T, onSleep func()) {
+	t.Helper()
+	oldSleep, oldNow := retrySleep, retryNow
+	now := time.Unix(0, 0)
+	retryNow = func() time.Time { return now }
+	retrySleep = func(d time.Duration) { now = now.Add(d); onSleep() }
+	t.Cleanup(func() { retrySleep, retryNow = oldSleep, oldNow })
+}
+
+func TestLookPathRetryWaitsForDanglingSymlinkTarget(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "lib", "claude.exe")
+	link := filepath.Join(dir, "bin", "claude")
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	sleeps := 0
+	stubRetryClock(t, func() {
+		sleeps++
+		if sleeps == 3 {
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(target, []byte("#!/bin/sh\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	if got := lookPathRetry("claude", filepath.Dir(link)); got != link {
+		t.Fatalf("got %q, want %q", got, link)
+	}
+	if sleeps != 3 {
+		t.Fatalf("sleeps = %d, want 3", sleeps)
+	}
+}
+
+func TestLookPathRetryGivesUpAndSkipsOtherNames(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Symlink(filepath.Join(dir, "missing"), filepath.Join(dir, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	sleeps := 0
+	stubRetryClock(t, func() { sleeps++ })
+	if got := lookPathRetry("claude", dir); got != "" {
+		t.Fatalf("got %q, want empty", got)
+	}
+	if sleeps == 0 || time.Duration(sleeps)*retryInterval < retryTimeout {
+		t.Fatalf("expected polling up to timeout, sleeps = %d", sleeps)
+	}
+	sleeps = 0
+	if got := lookPathRetry("tmux", dir); got != "" || sleeps != 0 {
+		t.Fatalf("non-claude name retried: got %q sleeps %d", got, sleeps)
 	}
 }

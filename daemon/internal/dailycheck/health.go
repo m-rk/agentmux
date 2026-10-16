@@ -60,7 +60,11 @@ func collectHealth(ctx context.Context, client Client, opts Options) ([]Snapshot
 			}
 		}
 
-		snapshot.Issues = append(snapshot.Issues, coreHealthIssues(instance, snapshot)...)
+		core := coreHealthIssues(instance, snapshot)
+		if codexIdlePlaceholder(ctx, instance) {
+			core = dropIssueCodes(core, "pane-empty")
+		}
+		snapshot.Issues = append(snapshot.Issues, core...)
 		if opts.PlatformProber != nil {
 			snapshot.Issues = append(snapshot.Issues, opts.PlatformProber.Probe(ctx, instance)...)
 		}
@@ -121,6 +125,60 @@ func coreHealthIssues(instance *pb.Instance, snapshot Snapshot) []HealthIssue {
 		}
 	}
 	return issues
+}
+
+// codexIdleMarker is the argv0 of the idle-placeholder loop codex instances
+// run on Linux (`sh -c "while :; do sleep 3600; done" codex-idle`); codex
+// itself launches on demand per task, so the pane is intentionally blank.
+const codexIdleMarker = "codex-idle"
+
+// codexIdlePlaceholder reports whether instance is a codex instance sitting
+// in its idle placeholder: the pane's process tree contains the codex-idle
+// loop and no real codex process. A codex instance actually running codex
+// (or one whose tree cannot be read) is not a placeholder, so its checks
+// still apply.
+var codexIdlePlaceholder = func(ctx context.Context, instance *pb.Instance) bool {
+	if instance.Agent != "codex" || instance.Pid <= 0 || instance.Status == pb.Status_STATUS_DEAD {
+		return false
+	}
+	commands, err := processTreeCommands(ctx, instance.Pid)
+	if err != nil {
+		return false
+	}
+	return commandsAreCodexIdle(commands)
+}
+
+func commandsAreCodexIdle(commands []string) bool {
+	idle := false
+	for _, command := range commands {
+		lower := strings.ToLower(command)
+		if strings.Contains(lower, codexIdleMarker) {
+			idle = true
+			continue
+		}
+		for _, field := range strings.Fields(lower) {
+			if base := field[strings.LastIndex(field, "/")+1:]; base == "codex" {
+				return false
+			}
+		}
+	}
+	return idle
+}
+
+func dropIssueCodes(issues []HealthIssue, codes ...string) []HealthIssue {
+	out := issues[:0:0]
+	for _, issue := range issues {
+		drop := false
+		for _, code := range codes {
+			if issue.Code == code {
+				drop = true
+			}
+		}
+		if !drop {
+			out = append(out, issue)
+		}
+	}
+	return out
 }
 
 func processIdentityIssue(ctx context.Context, instance *pb.Instance) []HealthIssue {

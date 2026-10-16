@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/m-rk/agentmux/daemon/internal/discovery"
 	"github.com/m-rk/agentmux/daemon/internal/pb"
@@ -127,18 +128,7 @@ func FormatNotification(host string, report Report, runErr error) string {
 	before := issuesByInstance(report.BeforeIssues)
 	after := issuesByInstance(report.AfterIssues)
 	outcomes := outcomesByInstance(report.Outcomes)
-	for _, instance := range sortedIssueInstances(before, after, outcomes) {
-		line := "• " + instance + ": " + issueSummaries(before[instance])
-		if outcome, ok := outcomes[instance]; ok && outcome.Action != ActionNone && outcome.Action != "" {
-			line += " — " + outcome.Result
-		}
-		if len(after[instance]) == 0 {
-			line += " — healthy after check"
-		} else {
-			line += " — still: " + issueSummaries(after[instance])
-		}
-		lines = append(lines, line)
-	}
+	lines = append(lines, formatGroups(groupReports(sortedIssueInstances(before, after, outcomes), before, after, outcomes))...)
 	for _, problem := range report.Problems {
 		lines = append(lines, "• ⚠️ "+cleanOneLine(problem))
 	}
@@ -148,9 +138,173 @@ func FormatNotification(host string, report Report, runErr error) string {
 	message := strings.ReplaceAll(strings.Join(lines, "\n"), "@", "@\u200b")
 	const discordLimit = 1900 // leave headroom below Discord's 2,000-char limit
 	if len(message) > discordLimit {
-		message = message[:discordLimit] + "…"
+		cut := discordLimit
+		if i := strings.LastIndex(message[:cut], "\n"); i > 0 {
+			cut = i
+		}
+		for cut > 0 && !utf8.RuneStart(message[cut]) {
+			cut--
+		}
+		message = message[:cut] + "\n…"
 	}
 	return message
+}
+
+const (
+	statusBroken = iota
+	statusFixed
+	statusNoted
+)
+
+type groupKey struct {
+	status  int
+	code    string
+	summary string
+}
+
+type reportGroup struct {
+	key     groupKey
+	members map[string]string // instance -> repair result ("" when none)
+}
+
+// groupReports buckets instances by distinct (status, issue). An issue is
+// fixed when present before the recovery attempt and gone after (matched by
+// code); an issue present after is still broken. Instances with only an
+// observed finding and no health issues land in a "noted" group.
+func groupReports(instances []string, before, after map[string][]HealthIssue, outcomes map[string]Outcome) []*reportGroup {
+	groups := map[groupKey]*reportGroup{}
+	var order []*reportGroup
+	add := func(key groupKey, instance, result string) {
+		g := groups[key]
+		if g == nil {
+			g = &reportGroup{key: key, members: map[string]string{}}
+			groups[key] = g
+			order = append(order, g)
+		}
+		g.members[instance] = result
+	}
+	for _, instance := range instances {
+		outcome := outcomes[instance]
+		result := ""
+		if outcome.Action != "" && outcome.Action != ActionNone && outcome.Result != "" {
+			result = cleanOneLine(outcome.Result)
+		}
+		if len(before[instance]) == 0 && len(after[instance]) == 0 {
+			note := cleanOneLine(outcome.Finding)
+			if note == "" {
+				note = "notable issue observed"
+			}
+			add(groupKey{statusNoted, "", note}, instance, result)
+			continue
+		}
+		still := map[string]bool{}
+		for _, issue := range after[instance] {
+			still[issue.Code] = true
+			add(groupKey{statusBroken, issue.Code, cleanOneLine(issue.Summary)}, instance, result)
+		}
+		for _, issue := range before[instance] {
+			if !still[issue.Code] {
+				add(groupKey{statusFixed, issue.Code, cleanOneLine(issue.Summary)}, instance, result)
+			}
+		}
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		a, b := order[i], order[j]
+		if a.key.status != b.key.status {
+			return a.key.status < b.key.status
+		}
+		if len(a.members) != len(b.members) {
+			return len(a.members) > len(b.members)
+		}
+		if a.key.summary != b.key.summary {
+			return a.key.summary < b.key.summary
+		}
+		return a.key.code < b.key.code
+	})
+	return order
+}
+
+const notificationWrapWidth = 100
+
+// formatGroups prints each distinct issue once with its remedy, followed by
+// the affected sessions (alphabetical, wrapped, never truncated).
+func formatGroups(groups []*reportGroup) []string {
+	var lines []string
+	for _, g := range groups {
+		var label string
+		switch g.key.status {
+		case statusBroken:
+			label = "✗ Broken"
+		case statusFixed:
+			label = "✓ Fixed"
+		default:
+			label = "• Noted"
+		}
+		head := fmt.Sprintf("%s (%d): %s", label, len(g.members), g.key.summary)
+		if g.key.status == statusBroken {
+			if hint := remedyHint("NAME", g.key.code); hint != "" {
+				head += " — " + hint
+			}
+		}
+		lines = append(lines, head)
+		names := make([]string, 0, len(g.members))
+		for name := range g.members {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		entries := make([]string, len(names))
+		for i, name := range names {
+			entries[i] = name
+			if r := g.members[name]; r != "" {
+				entries[i] += " (" + r + ")"
+			}
+		}
+		lines = append(lines, wrapList(entries, "   ", notificationWrapWidth)...)
+	}
+	return lines
+}
+
+// wrapList joins entries with ", " and wraps lines at width, indenting each.
+func wrapList(entries []string, indent string, width int) []string {
+	var lines []string
+	cur := ""
+	for i, e := range entries {
+		piece := e
+		if i < len(entries)-1 {
+			piece += ","
+		}
+		if cur != "" && len(indent)+len(cur)+1+len(piece) > width {
+			lines = append(lines, indent+cur)
+			cur = ""
+		}
+		if cur != "" {
+			cur += " "
+		}
+		cur += piece
+	}
+	if cur != "" {
+		lines = append(lines, indent+cur)
+	}
+	return lines
+}
+
+// remedyHint is a short operator-facing next step for an issue code, or ""
+// when no generic one exists. instance is substituted into the command
+// (callers pass the placeholder NAME for grouped output).
+func remedyHint(instance, code string) string {
+	restart := "restart with `agentmux control -instance " + instance + " -action restart`"
+	switch code {
+	case "session-dead", "service-inactive", "service-failed", "process-missing", "process-mismatch",
+		"backend-not-ready", "remote-disconnected", "pane-empty", "session-unknown":
+		return restart
+	case "stuck-menu":
+		return "dismiss with `agentmux send-keys -instance " + instance + " Escape`"
+	case "refresh-failed":
+		return "see `journalctl -u agentmux-" + instance + "-update.service`, then `sudo systemctl start agentmux-" + instance + "-update.service`"
+	case "auth-required":
+		return "run `amp login` as the run user, then " + restart
+	}
+	return ""
 }
 
 func (r Report) Notable() bool {

@@ -3,6 +3,7 @@ package dailycheck
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -335,5 +336,64 @@ func TestAmpUpdateDisabled(t *testing.T) {
 		if got := ampUpdateDisabled(name); got != want {
 			t.Errorf("ampUpdateDisabled(%q) = %v, want %v", name, got, want)
 		}
+	}
+}
+
+func TestFormatNotificationGroupsByIssue(t *testing.T) {
+	dead := func(n string) HealthIssue {
+		return HealthIssue{Instance: n, Code: "session-dead", Summary: "session is not running"}
+	}
+	refresh := func(n string) HealthIssue {
+		return HealthIssue{Instance: n, Code: "refresh-failed", Summary: "daily refresh failed"}
+	}
+	report := Report{
+		Summary: "Found issues.",
+		BeforeIssues: []HealthIssue{
+			dead("scratch"), dead("foo"), dead("b"), refresh("task-x"), refresh("console"), refresh("family-llm"),
+		},
+		AfterIssues: []HealthIssue{refresh("task-x"), refresh("console"), refresh("family-llm"), dead("b")},
+		Outcomes:    []Outcome{{Instance: "foo", Action: ActionRestart, Result: "restarted the idle session"}},
+	}
+	got := FormatNotification("host", report, nil)
+	t.Log("\n" + got)
+	broken1 := strings.Index(got, "✗ Broken (3): daily refresh failed")
+	broken2 := strings.Index(got, "✗ Broken (1): session is not running — restart with `agentmux control -instance NAME -action restart`")
+	fixed := strings.Index(got, "✓ Fixed (2): session is not running")
+	if broken1 < 0 || broken2 < broken1 || fixed < broken2 {
+		t.Fatalf("groups missing or misordered:\n%s", got)
+	}
+	for _, want := range []string{"   console, family-llm, task-x", "   foo (restarted the idle session), scratch"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if n := strings.Count(got, "daily refresh failed"); n != 1 {
+		t.Errorf("shared issue printed %d times:\n%s", n, got)
+	}
+	if strings.Contains(got, "-instance console") || strings.Contains(got, "-instance b ") {
+		t.Errorf("remedy not templated:\n%s", got)
+	}
+}
+
+func TestFormatNotificationWrapsAndStaysWithinLimit(t *testing.T) {
+	var report Report
+	for i := 0; i < 200; i++ {
+		n := fmt.Sprintf("session-%03d", i)
+		report.AfterIssues = append(report.AfterIssues, HealthIssue{Instance: n, Code: "session-dead", Summary: "session is not running"})
+		report.BeforeIssues = append(report.BeforeIssues, HealthIssue{Instance: n, Code: "session-dead", Summary: "session is not running"})
+	}
+	got := FormatNotification("host", report, nil)
+	if len(got) > 2000 {
+		t.Fatalf("message %d bytes exceeds Discord limit", len(got))
+	}
+	for _, line := range strings.Split(got, "\n") {
+		if len(line) > 260 {
+			t.Errorf("unwrapped line of %d bytes", len(line))
+		}
+	}
+	small := Report{AfterIssues: report.AfterIssues[:30], BeforeIssues: report.BeforeIssues[:30]}
+	out := FormatNotification("host", small, nil)
+	if !strings.Contains(out, "session-029") || strings.Count(out, "\n") < 4 {
+		t.Errorf("expected wrapped full list:\n%s", out)
 	}
 }
