@@ -23,6 +23,7 @@ const defaultGatewayURL = "wss://gateway.discord.gg/?v=10&encoding=json"
 // interactionAckBudget is under Discord's 3-second window for responding to
 // an interaction.
 const interactionAckBudget = 2500 * time.Millisecond
+const interactionReactionBudget = 3 * time.Second
 
 const guildMessagesIntent = 1 << 9
 
@@ -214,9 +215,7 @@ func (l *Listener) session(ctx context.Context) (ready bool, err error) {
 			case "INTERACTION_CREATE":
 				raw := f.D
 				go func() {
-					ictx, cancel := context.WithTimeout(ctx, interactionAckBudget)
-					defer cancel()
-					if err := l.HandleInteraction(ictx, raw); err != nil {
+					if err := l.HandleInteraction(ctx, raw); err != nil {
 						l.logf("asks gateway: interaction: %v", err)
 					}
 				}()
@@ -323,26 +322,50 @@ func (l *Listener) HandleInteraction(ctx context.Context, raw json.RawMessage) e
 		}
 		return nil
 	}
+	ackCtx, cancelAck := context.WithTimeout(context.WithoutCancel(ctx), interactionAckBudget)
+	ackStarted := time.Now()
+	ackErr := l.respond(ackCtx, in, 7, map[string]any{"components": settleComponents(in.Message.Components, in.Data.CustomID)})
+	cancelAck()
+	l.logf("asks gateway: interaction %s callback took %s", in.ID, time.Since(ackStarted))
+	if ackErr != nil {
+		l.logf("asks gateway: interaction %s callback failed: %v", in.ID, ackErr)
+	}
 	recorded, err := l.Store.Append(Click{
 		ThreadID: in.ChannelID, MessageID: in.Message.ID, Label: label, UserID: user.ID, Timestamp: time.Now().UTC(),
 	})
 	if err != nil {
-		_ = l.respond(ctx, in, 4, map[string]any{"content": "Couldn't record that answer; try again.", "flags": 64})
 		return fmt.Errorf("recording click: %w", err)
 	}
 	if recorded {
 		l.wake()
 	}
 	if !recorded {
-		return l.respond(ctx, in, 4, map[string]any{"content": "This ask already has an answer.", "flags": 64})
+		return nil
 	}
-	if err := l.respond(ctx, in, 7, map[string]any{"components": settleComponents(in.Message.Components, in.Data.CustomID)}); err != nil {
-		return err
-	}
-	if err := l.Client.putReaction(ctx, in.ChannelID, in.Message.ID, "👀"); err != nil {
+	reactionCtx, cancelReaction := context.WithTimeout(context.WithoutCancel(ctx), interactionReactionBudget)
+	defer cancelReaction()
+	if err := l.putReceivedReaction(reactionCtx, in.ChannelID, in.Message.ID); err != nil {
 		l.logf("asks gateway: adding received reaction: %v", err)
 	}
 	return nil
+}
+
+func (l *Listener) putReceivedReaction(ctx context.Context, channelID, messageID string) error {
+	var err error
+	for attempt := 0; attempt < 2; attempt++ {
+		err = l.Client.putReaction(ctx, channelID, messageID, "👀")
+		if err == nil || ctx.Err() != nil {
+			return err
+		}
+		if attempt == 0 {
+			select {
+			case <-time.After(200 * time.Millisecond):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}
+	return err
 }
 
 type gatewayMessage struct {

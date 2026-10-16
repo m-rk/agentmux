@@ -19,15 +19,19 @@ import (
 
 // answersServer records bot calls and serves canned reactions.
 type answersServer struct {
-	mu        sync.Mutex
-	puts      []string // reaction PUT paths, in order
-	botPosts  []map[string]any
-	botPaths  []string
-	putStatus int
-	messages  []Message
-	reactors  map[string][]Author // keyed by decoded emoji
-	callbacks []map[string]any
-	cbPaths   []string
+	mu                sync.Mutex
+	puts              []string // reaction PUT paths, in order
+	botPosts          []map[string]any
+	botPaths          []string
+	putStatus         int
+	messages          []Message
+	reactors          map[string][]Author // keyed by decoded emoji
+	callbacks         []map[string]any
+	cbPaths           []string
+	callbackDelay     time.Duration
+	callbackSawClick  bool
+	clickPath         string
+	reactionFailFirst bool
 }
 
 func (a *answersServer) server(t *testing.T) *httptest.Server {
@@ -45,6 +49,10 @@ func (a *answersServer) server(t *testing.T) *httptest.Server {
 		switch {
 		case r.Method == http.MethodPut && strings.Contains(path, "/reactions/"):
 			a.puts = append(a.puts, path)
+			if a.reactionFailFirst && len(a.puts) == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			if a.putStatus != 0 {
 				w.WriteHeader(a.putStatus)
 				_, _ = w.Write([]byte(`{"message":"Missing Permissions"}`))
@@ -73,6 +81,12 @@ func (a *answersServer) server(t *testing.T) *httptest.Server {
 		case path == "/hook" && r.Method == http.MethodPost:
 			writeJSON(t, w, Message{ID: "500", ChannelID: "900"})
 		case strings.HasPrefix(path, "/api/interactions/"):
+			if a.callbackDelay > 0 {
+				time.Sleep(a.callbackDelay)
+			}
+			if _, err := os.Stat(a.clickPath); err == nil {
+				a.callbackSawClick = true
+			}
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			a.callbacks, a.cbPaths = append(a.callbacks, body), append(a.cbPaths, path)
@@ -81,6 +95,40 @@ func (a *answersServer) server(t *testing.T) *httptest.Server {
 			http.NotFound(w, r)
 		}
 	}))
+}
+
+func TestHandleInteractionRecordsAndReactsAfterSlowCallback(t *testing.T) {
+	a := &answersServer{callbackDelay: interactionAckBudget + 100*time.Millisecond}
+	s := a.server(t)
+	defer s.Close()
+	l := newListener(t, s)
+	a.clickPath = l.Store.Path
+	if err := l.HandleInteraction(context.Background(), interactionJSON(t, "777", "forum", "ask:Ship it")); err != nil {
+		t.Fatal(err)
+	}
+	clicks, err := l.Store.load()
+	if err != nil || len(clicks) != 1 {
+		t.Fatalf("clicks = %#v, err %v", clicks, err)
+	}
+	if a.callbackSawClick {
+		t.Fatal("click was recorded before the acknowledgement callback")
+	}
+	if len(a.puts) != 1 {
+		t.Fatalf("reactions = %v", a.puts)
+	}
+}
+
+func TestHandleInteractionRetriesReceivedReaction(t *testing.T) {
+	a := &answersServer{reactionFailFirst: true}
+	s := a.server(t)
+	defer s.Close()
+	l := newListener(t, s)
+	if err := l.HandleInteraction(context.Background(), interactionJSON(t, "777", "forum", "ask:Ship it")); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.puts) != 2 {
+		t.Fatalf("reactions = %v", a.puts)
+	}
 }
 
 func TestPostAskSeedsReactionsInOrder(t *testing.T) {
