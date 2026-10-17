@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 )
 
@@ -27,11 +28,23 @@ func updateClaudeCode(name string) error {
 	session := sessionNameOf(fields, "agentmux")
 	socket := tmuxSocket(name)
 
-	before, _ := withPath("claude", "--version").CombinedOutput()
-	if err := withPath("claude", "update").Run(); err != nil {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolving HOME for npm update lock: %w", err)
+	}
+	// Serialized with sibling instances' updates; see the Linux variant.
+	var before, after []byte
+	err = withNpmGlobalLock(home, nil, func() error {
+		before, _ = withPath("claude", "--version").CombinedOutput()
+		if err := withPath("claude", "update").Run(); err != nil {
+			return err
+		}
+		after, _ = withPath("claude", "--version").CombinedOutput()
+		return nil
+	})
+	if err != nil {
 		return fmt.Errorf("claude update failed, leaving existing session running untouched: %w", err)
 	}
-	after, _ := withPath("claude", "--version").CombinedOutput()
 	changed := string(before) != string(after)
 	if changed {
 		fmt.Printf("%s: claude updated %s -> %s\n", name, before, after)

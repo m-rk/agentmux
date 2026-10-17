@@ -26,11 +26,27 @@ func updateClaudeCode(name string) error {
 	session := sessionNameOf(fields, "agentmux")
 	socket := tmuxSocket(name)
 
-	before, _ := runAs(runUser, "claude", "--version").CombinedOutput()
-	if err := runAs(runUser, "claude", "update").Run(); err != nil {
+	u, err := userLookup(runUser)
+	if err != nil {
+		return fmt.Errorf("looking up run user %q for npm update lock: %w", runUser, err)
+	}
+	// Every claude instance's update timer fires in the same nightly window,
+	// and on an npm install `claude update` reinstalls the shared global
+	// package: a sibling that runs mid-reinstall finds no claude binary and
+	// fails with "not found in PATH". Serialize on the same lock opencode and
+	// amp updates already use.
+	var before, after []byte
+	err = withNpmGlobalLock(u.HomeDir, u, func() error {
+		before, _ = runAs(runUser, "claude", "--version").CombinedOutput()
+		if err := runAs(runUser, "claude", "update").Run(); err != nil {
+			return err
+		}
+		after, _ = runAs(runUser, "claude", "--version").CombinedOutput()
+		return nil
+	})
+	if err != nil {
 		return fmt.Errorf("claude update failed, leaving existing session running untouched: %w", err)
 	}
-	after, _ := runAs(runUser, "claude", "--version").CombinedOutput()
 	changed := string(before) != string(after)
 	if changed {
 		fmt.Printf("%s: claude updated %s -> %s\n", name, before, after)
