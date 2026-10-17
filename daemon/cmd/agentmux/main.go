@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/m-rk/agentmux/daemon/internal/modelsource"
 	"io"
 	"os"
 	"runtime/debug"
@@ -18,6 +19,8 @@ func main() {
 	}
 
 	switch args[0] {
+	case "__models-probe":
+		os.Exit(modelsource.ProbeHelper(args[1:]))
 	case "version", "-version", "--version":
 		runVersion(args[1:])
 	case "tui":
@@ -50,6 +53,8 @@ func main() {
 		runTaskcheckBroker(args[1:])
 	case "amp":
 		runAmpCmd(args[1:])
+	case "models":
+		runModelsCmd(args[1:])
 	case "gc":
 		runGCCmd(args[1:])
 	case "control":
@@ -162,6 +167,8 @@ Usage:
                                start a task session in a new Git worktree on that host (local or through its gateway)
   agentmux amp sweep [-json] [-dry-run] [-run-user USER]
                                archive junk amp threads that belong to no task instance
+  agentmux models list [-json] [-config PATH]
+                               check configured model source availability
   agentmux control ...         start/stop/restart an instance without an attached terminal
   agentmux view -instance NAME        headless read-only snapshot of an instance's tmux pane
   agentmux send-keys -instance NAME KEY...   headless equivalent of typing into an instance's pane
