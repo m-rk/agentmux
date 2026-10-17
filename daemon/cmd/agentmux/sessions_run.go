@@ -24,7 +24,7 @@ type runOutput struct {
 	ops.RunResult
 }
 
-// runSessionsRun is `agentmux sessions run`: start an amp or codex thread on an
+// runSessionsRun is `agentmux sessions run`: start a worker turn on an
 // instance (or continue one with -thread) by running a prompt through the
 // amp CLI in the instance's workdir, locally or through that host's
 // gateway. -template is dry-run only: validate against an existing amp

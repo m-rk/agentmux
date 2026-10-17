@@ -120,6 +120,22 @@ func TestRunStartsThread(t *testing.T) {
 	}
 }
 
+func TestRunOpencodeDryRun(t *testing.T) {
+	c := newRunEnv(t)
+	workdir := filepath.Join(filepath.Dir(c.home), "work")
+	registry := filepath.Join(discovery.EnvDir, "probe.env")
+	if err := os.WriteFile(registry, []byte("AGENTMUX_AGENT=opencode\nAGENTMUX_WORKDIR="+workdir+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := (Env{}).Run(context.Background(), RunRequest{Address: localAddr(""), Text: "hello", DryRun: true})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !res.OK || !res.DryRun || res.Agent != "opencode" || len(res.Plan) != 1 {
+		t.Fatalf("result = %+v", res)
+	}
+}
+
 func TestRunPassesConfiguredMode(t *testing.T) {
 	newRunEnv(t, "AGENTMUX_AMP_MODE=high")
 	id := "T-22222222-2222-4222-8222-222222222222"

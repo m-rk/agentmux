@@ -171,7 +171,7 @@ func runInstanceFields(name, label string) (map[string]string, transcript.Source
 	if err != nil {
 		return nil, transcript.Source{}, err
 	}
-	if src.Agent == "codex" {
+	if src.Agent == "codex" || src.Agent == "opencode" {
 		fields, err := session.ReadRegistry(name)
 		if err != nil {
 			return nil, transcript.Source{}, Refuse(safesend.ReasonNotFound, "no instance %q on this host", name)
@@ -189,6 +189,53 @@ func runInstanceFields(name, label string) (map[string]string, transcript.Source
 		return nil, transcript.Source{}, Refuse(safesend.ReasonNotFound, "no instance %q on this host", name)
 	}
 	return fields, src, nil
+}
+
+// runOpencode submits through the guarded interactive pane and identifies
+// the resulting session from OpenCode's transcript store.
+func (e Env) runOpencode(ctx context.Context, req RunRequest, addr address.Address, text string, src transcript.Source) (RunResult, error) {
+	if addr.Thread != "" && !strings.HasPrefix(addr.Thread, "ses_") {
+		return RunResult{}, Refuse(safesend.ReasonInvalid, "%q is not an opencode session id", addr.Thread)
+	}
+	before := map[string]bool{}
+	if threads, err := transcriptThreads(ctx, src); err == nil {
+		for _, th := range threads {
+			before[th.ID] = true
+		}
+	}
+	var send SendResult
+	if err := e.sendTmux(ctx, addr.Instance, "opencode", text, 0, 0, false, &send); err != nil {
+		return RunResult{}, err
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		threads, err := transcriptThreads(ctx, src)
+		if err == nil {
+			for _, th := range threads {
+				if addr.Thread != "" && th.ID == addr.Thread || addr.Thread == "" && !before[th.ID] {
+					full := address.Address{Instance: addr.Instance, Host: addr.Host, Thread: th.ID}
+					return RunResult{OK: true, Address: full.String(), Agent: "opencode", Thread: th.ID, ThreadID: th.ID, State: "running"}, nil
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return RunResult{}, ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+	return RunResult{}, Refuse(safesend.ReasonFailed, "opencode prompt was submitted but its session is not visible yet; poll `sessions status` and `sessions read`")
+}
+
+func transcriptThreads(ctx context.Context, src transcript.Source) ([]transcript.Thread, error) {
+	r, err := transcript.For(src.Agent)
+	if err != nil {
+		return nil, err
+	}
+	return r.Threads(ctx, src)
 }
 
 // runDryTarget checks the smoke-test target side of a templated dry run:
@@ -216,8 +263,8 @@ func (e Env) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		return RunResult{}, Refuse(safesend.ReasonInvalid, "%v", err)
 	}
 	if reqThread := strings.TrimSpace(addr.Thread); reqThread != "" {
-		if !transcript.ValidAmpThreadID(reqThread) && !session.ValidCodexThreadID(reqThread) {
-			return RunResult{}, Refuse(safesend.ReasonInvalid, "%q is not an amp or codex thread id", reqThread)
+		if !transcript.ValidAmpThreadID(reqThread) && !session.ValidCodexThreadID(reqThread) && !strings.HasPrefix(reqThread, "ses_") {
+			return RunResult{}, Refuse(safesend.ReasonInvalid, "%q is not a supported thread id", reqThread)
 		}
 	}
 	target, allowMissing, err := runTarget(addr, req)
@@ -256,6 +303,16 @@ func (e Env) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	}
 	if src.Agent == "codex" {
 		return e.runCodex(ctx, req, addr, text, fields, workdir)
+	}
+	if src.Agent == "opencode" {
+		if req.DryRun {
+			step := "send prompt to opencode session on " + addr.Session().String()
+			if addr.Thread != "" {
+				step = "continue opencode session " + addr.String()
+			}
+			return RunResult{OK: true, Address: req.Address, Agent: "opencode", DryRun: true, Plan: []string{step}}, nil
+		}
+		return e.runOpencode(ctx, req, addr, text, src)
 	}
 	if t := strings.TrimSpace(addr.Thread); t != "" && !transcript.ValidAmpThreadID(t) {
 		return RunResult{}, Refuse(safesend.ReasonInvalid, "%q is not an amp thread id", t)
