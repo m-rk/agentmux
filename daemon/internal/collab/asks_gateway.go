@@ -258,7 +258,8 @@ type interaction struct {
 	} `json:"member"`
 	User *Author `json:"user"`
 	Data struct {
-		CustomID string `json:"custom_id"`
+		CustomID string   `json:"custom_id"`
+		Values   []string `json:"values"`
 	} `json:"data"`
 	Message struct {
 		ID         string           `json:"id"`
@@ -305,6 +306,12 @@ func (l *Listener) HandleInteraction(ctx context.Context, raw json.RawMessage) e
 	label := strings.TrimPrefix(in.Data.CustomID, buttonIDPrefix)
 	if panel {
 		label = strings.TrimPrefix(in.Data.CustomID, panelButtonIDPrefix)
+	}
+	// A select menu pick is recorded like a tap whose label is the value.
+	if len(in.Data.Values) > 0 {
+		label = in.Data.Values[0]
+	}
+	if panel {
 		if in.ID == "" || in.Message.ID == "" {
 			return fmt.Errorf("panel interaction is missing its interaction or message ID")
 		}
@@ -324,7 +331,7 @@ func (l *Listener) HandleInteraction(ctx context.Context, raw json.RawMessage) e
 	}
 	ackCtx, cancelAck := context.WithTimeout(context.WithoutCancel(ctx), interactionAckBudget)
 	ackStarted := time.Now()
-	ackErr := l.respond(ackCtx, in, 7, map[string]any{"components": settleComponents(in.Message.Components, in.Data.CustomID)})
+	ackErr := l.respond(ackCtx, in, 7, map[string]any{"components": settleComponents(in.Message.Components, in.Data.CustomID, label, len(in.Data.Values) > 0)})
 	cancelAck()
 	l.logf("asks gateway: interaction %s callback took %s", in.ID, time.Since(ackStarted))
 	if ackErr != nil {
@@ -460,7 +467,7 @@ func settleBase(label string) string {
 
 // settleComponents disables every button and marks the chosen one with a
 // trailing ✓.
-func settleComponents(rows []map[string]any, chosen string) []map[string]any {
+func settleComponents(rows []map[string]any, chosen, value string, picked bool) []map[string]any {
 	const styleSuccess = 3
 	for _, row := range rows {
 		buttons, _ := row["components"].([]any)
@@ -470,6 +477,12 @@ func settleComponents(rows []map[string]any, chosen string) []map[string]any {
 				continue
 			}
 			btn["disabled"] = true
+			if btn["type"] == float64(selectMenuType) || btn["type"] == selectMenuType {
+				if picked && btn["custom_id"] == chosen {
+					settleSelect(btn, value)
+				}
+				continue
+			}
 			if btn["custom_id"] == chosen {
 				btn["style"] = styleSuccess
 				if label, ok := btn["label"].(string); ok {
@@ -503,4 +516,29 @@ func (l *Listener) respond(ctx context.Context, in interaction, kind int, data m
 	}
 	req.Header.Set("Content-Type", "application/json")
 	return l.Client.doJSON(req, nil)
+}
+
+// selectMenuType is Discord's string select component type.
+const selectMenuType = 3
+
+// settleSelect disables a select menu and marks the option with value as its
+// only default so the menu shows the choice. It reports whether value is one
+// of the menu's options.
+func settleSelect(menu map[string]any, value string) bool {
+	menu["disabled"] = true
+	opts, _ := menu["options"].([]any)
+	found := false
+	for _, o := range opts {
+		opt, ok := o.(map[string]any)
+		if !ok {
+			continue
+		}
+		if v, _ := opt["value"].(string); value != "" && v == value {
+			opt["default"] = true
+			found = true
+		} else {
+			delete(opt, "default")
+		}
+	}
+	return found
 }

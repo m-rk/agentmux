@@ -234,6 +234,12 @@ func settleFetchedComponents(rows []map[string]any, chosen string) ([]map[string
 				continue
 			}
 			seen++
+			if btn["type"] == float64(selectMenuType) || btn["type"] == selectMenuType {
+				if settleSelect(btn, chosen) {
+					matched = true
+				}
+				continue
+			}
 			btn["disabled"] = true
 			// Match on the custom id (which carries the original label), but
 			// settle the visible label: -chosen may name a button the click

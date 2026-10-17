@@ -34,7 +34,7 @@ func TestSettleTwiceLeavesOneCheck(t *testing.T) {
 		map[string]any{"type": 2, "style": 2, "label": "Ship it", "custom_id": "ask:Ship it"},
 		map[string]any{"type": 2, "style": 2, "label": "Not now", "custom_id": "ask:Not now"},
 	}}}
-	settleComponents(rows, "ask:Ship it")
+	settleComponents(rows, "ask:Ship it", "", false)
 	// The edit path reads the clicked message back: label settled, custom id
 	// untouched. Re-settling by the original label must match and stay at
 	// one trailing check; the settled label form must match too.
@@ -112,7 +112,7 @@ func TestSettleChecksOnlySelected(t *testing.T) {
 		map[string]any{"type": 2, "style": 2, "label": "amp ⭐", "custom_id": "ask:amp ⭐"},
 		map[string]any{"type": 2, "style": 2, "label": "Not now", "custom_id": "ask:Not now"},
 	}}}
-	settleComponents(rows, "ask:amp ⭐")
+	settleComponents(rows, "ask:amp ⭐", "", false)
 	got, err := settleFetchedComponents(rows, "Not now")
 	if err != nil {
 		t.Fatal(err)

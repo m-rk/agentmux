@@ -344,6 +344,28 @@ objects, e.g.:
 ]
 ```
 
+### Dropdown menus
+
+An entry with `custom_id` and `options` in the same array is a string select
+menu instead of a button (works for `post`, `edit` and `complete`):
+
+```json
+[
+  {"custom_id": "model", "placeholder": "Pick a model", "options": [
+    {"label": "Model A", "value": "model-a", "description": "Fast", "emoji": "⚡", "default": true},
+    {"label": "Model B", "value": "model-b"}
+  ]},
+  {"label": "Not now"}
+]
+```
+
+Each menu takes its own action row (a message holds five rows; buttons fill
+one row per five) and may share the message with buttons. Limits are checked
+before posting: 1-25 options, labels, values, descriptions and the placeholder
+at most 100 characters, one default at most. A pick is recorded like a tap
+whose label is the chosen option's value. `edit -chosen VALUE` shows that
+option and disables the menu.
+
 For application driven panels, add `"persistent": true` to a button object.
 Clicks are deferred and recorded with an interaction ID; the client completes
 the update using `agentmux discord complete -interaction ID`. See

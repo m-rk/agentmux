@@ -30,6 +30,10 @@ const (
 	panelButtonIDPrefix = "panel:"
 	buttonsPerRow       = 5
 	buttonStyleGrey     = 2
+	maxSelectOptions    = 25
+	maxSelectText       = 100
+	maxSelectID         = 100 - len(panelButtonIDPrefix)
+	maxActionRows       = 5
 )
 
 // AskButton is one button on a posted ask. Label is the text and the click
@@ -44,7 +48,25 @@ type AskButton struct {
 	// Persistent keeps this button active after a click and routes clicks to
 	// the deferred panel interaction stream instead of one-shot ask answers.
 	Persistent bool `json:"persistent,omitempty"`
+	// Options turns this entry into a string select menu on its own action
+	// row instead of a button. CustomID names the menu, Placeholder is its
+	// hint text; Label, Emoji and Style are unused. A pick is recorded like a
+	// button tap whose label is the chosen option's value.
+	CustomID    string         `json:"custom_id,omitempty"`
+	Placeholder string         `json:"placeholder,omitempty"`
+	Options     []SelectOption `json:"options,omitempty"`
 }
+
+// SelectOption is one entry of a select menu. Value is the click identity.
+type SelectOption struct {
+	Label       string `json:"label"`
+	Value       string `json:"value"`
+	Description string `json:"description,omitempty"`
+	Emoji       string `json:"emoji,omitempty"`
+	Default     bool   `json:"default,omitempty"`
+}
+
+func (b AskButton) isSelect() bool { return len(b.Options) > 0 || b.CustomID != "" }
 
 // suppressEmbedsFlag is Discord's SUPPRESS_EMBEDS message flag: a message
 // carrying it shows no link unfurls. Asks bodies link amp threads and
@@ -121,7 +143,16 @@ func (o AskOptions) validate() error {
 		return fmt.Errorf("at most %d buttons", maxButtons)
 	}
 	seen = map[string]bool{}
+	nButtons, nSelects := 0, 0
 	for _, b := range o.Buttons {
+		if b.isSelect() {
+			nSelects++
+			if err := b.validateSelect(seen); err != nil {
+				return err
+			}
+			continue
+		}
+		nButtons++
 		if strings.TrimSpace(b.Label) == "" || utf8.RuneCountInString(b.Label) > maxButtonLabel {
 			return fmt.Errorf("button label %q must be 1-%d characters", b.Label, maxButtonLabel)
 		}
@@ -132,6 +163,54 @@ func (o AskOptions) validate() error {
 		if _, err := buttonStyleNumber(b.Style); err != nil {
 			return err
 		}
+	}
+	if rows := (nButtons+buttonsPerRow-1)/buttonsPerRow + nSelects; rows > maxActionRows {
+		return fmt.Errorf("components need %d action rows but a message holds %d (each select menu takes a row; buttons take one per %d)", rows, maxActionRows, buttonsPerRow)
+	}
+	return nil
+}
+
+// validateSelect checks a select menu against Discord's limits so a bad menu
+// fails here with a plain message instead of as a Discord 400.
+func (b AskButton) validateSelect(seen map[string]bool) error {
+	if b.Label != "" || b.Emoji != "" || b.Style != "" {
+		return fmt.Errorf("select menu %q cannot also set label, emoji or style", b.CustomID)
+	}
+	if strings.TrimSpace(b.CustomID) == "" || utf8.RuneCountInString(b.CustomID) > maxSelectID {
+		return fmt.Errorf("select menu custom_id %q must be 1-%d characters", b.CustomID, maxSelectID)
+	}
+	if seen["select:"+b.CustomID] {
+		return fmt.Errorf("duplicate select menu %q", b.CustomID)
+	}
+	seen["select:"+b.CustomID] = true
+	if utf8.RuneCountInString(b.Placeholder) > maxSelectText {
+		return fmt.Errorf("select menu %q placeholder must be at most %d characters", b.CustomID, maxSelectText)
+	}
+	if len(b.Options) == 0 || len(b.Options) > maxSelectOptions {
+		return fmt.Errorf("select menu %q needs 1-%d options, got %d", b.CustomID, maxSelectOptions, len(b.Options))
+	}
+	values := map[string]bool{}
+	defaults := 0
+	for _, opt := range b.Options {
+		if strings.TrimSpace(opt.Label) == "" || utf8.RuneCountInString(opt.Label) > maxSelectText {
+			return fmt.Errorf("select menu %q option label %q must be 1-%d characters", b.CustomID, opt.Label, maxSelectText)
+		}
+		if strings.TrimSpace(opt.Value) == "" || utf8.RuneCountInString(opt.Value) > maxSelectText {
+			return fmt.Errorf("select menu %q option value %q must be 1-%d characters", b.CustomID, opt.Value, maxSelectText)
+		}
+		if utf8.RuneCountInString(opt.Description) > maxSelectText {
+			return fmt.Errorf("select menu %q option %q description must be at most %d characters", b.CustomID, opt.Label, maxSelectText)
+		}
+		if values[opt.Value] {
+			return fmt.Errorf("select menu %q has duplicate option value %q", b.CustomID, opt.Value)
+		}
+		values[opt.Value] = true
+		if opt.Default {
+			defaults++
+		}
+	}
+	if defaults > 1 {
+		return fmt.Errorf("select menu %q has %d default options; at most one", b.CustomID, defaults)
 	}
 	return nil
 }
@@ -163,24 +242,59 @@ func buttonEmoji(name string, guild []GuildEmoji) (map[string]any, bool) {
 // emoji and style so a click settles to the right look.
 func buttonRows(buttons []AskButton, guild []GuildEmoji) []map[string]any {
 	var rows []map[string]any
-	for i := 0; i < len(buttons); i += buttonsPerRow {
-		end := min(i+buttonsPerRow, len(buttons))
-		var comps []map[string]any
-		for _, b := range buttons[i:end] {
-			style, _ := buttonStyleNumber(b.Style)
-			prefix := buttonIDPrefix
-			if b.Persistent {
-				prefix = panelButtonIDPrefix
-			}
-			btn := map[string]any{"type": 2, "style": style, "label": b.Label, "custom_id": prefix + b.Label}
-			if emoji, ok := buttonEmoji(b.Emoji, guild); ok {
-				btn["emoji"] = emoji
-			}
-			comps = append(comps, btn)
+	var comps []map[string]any
+	flush := func() {
+		if len(comps) > 0 {
+			rows = append(rows, map[string]any{"type": 1, "components": comps})
+			comps = nil
 		}
-		rows = append(rows, map[string]any{"type": 1, "components": comps})
 	}
+	for _, b := range buttons {
+		prefix := buttonIDPrefix
+		if b.Persistent {
+			prefix = panelButtonIDPrefix
+		}
+		if b.isSelect() {
+			flush()
+			rows = append(rows, map[string]any{"type": 1, "components": []map[string]any{selectMenu(b, prefix, guild)}})
+			continue
+		}
+		style, _ := buttonStyleNumber(b.Style)
+		btn := map[string]any{"type": 2, "style": style, "label": b.Label, "custom_id": prefix + b.Label}
+		if emoji, ok := buttonEmoji(b.Emoji, guild); ok {
+			btn["emoji"] = emoji
+		}
+		comps = append(comps, btn)
+		if len(comps) == buttonsPerRow {
+			flush()
+		}
+	}
+	flush()
 	return rows
+}
+
+// selectMenu renders a string select component (type 3). Its custom id is
+// prefixed like a button's, and a pick comes back as the option's value.
+func selectMenu(b AskButton, prefix string, guild []GuildEmoji) map[string]any {
+	var opts []map[string]any
+	for _, o := range b.Options {
+		opt := map[string]any{"label": o.Label, "value": o.Value}
+		if o.Description != "" {
+			opt["description"] = o.Description
+		}
+		if emoji, ok := buttonEmoji(o.Emoji, guild); ok {
+			opt["emoji"] = emoji
+		}
+		if o.Default {
+			opt["default"] = true
+		}
+		opts = append(opts, opt)
+	}
+	menu := map[string]any{"type": 3, "custom_id": prefix + b.CustomID, "options": opts}
+	if b.Placeholder != "" {
+		menu["placeholder"] = b.Placeholder
+	}
+	return menu
 }
 
 func emojiPath(channelID, messageID, emoji string) string {

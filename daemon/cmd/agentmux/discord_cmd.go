@@ -133,7 +133,7 @@ func runDiscordPost(args []string) error {
 	bodyFile := fs.String("body-file", "", "file with the post body ('-' for stdin)")
 	asJSON := fs.Bool("json", false, "print JSON")
 	react := fs.String("react", "", "comma-separated emoji the bot adds as reactions, in order (e.g. 1️⃣,2️⃣,⏸️)")
-	buttonsJSON := fs.String("buttons-json", "", "file with a JSON array of {label, emoji?, style?} buttons ('-' for stdin); appended after -button labels")
+	buttonsJSON := fs.String("buttons-json", "", "file with a JSON array of {label, emoji?, style?} buttons or {custom_id, placeholder?, options} select menus ('-' for stdin); appended after -button labels")
 	embeds := fs.Bool("embeds", false, "keep link unfurls (embeds) on this send; default suppresses them")
 	dryRun := fs.Bool("dry-run", false, "print the Discord payload instead of sending it")
 	noMention := fs.Bool("no-mention", false, "post without mentioning the configured user")
@@ -549,7 +549,7 @@ func runDiscordEdit(args []string) error {
 	bodyFile := fs.String("body-file", "", "file with the replacement body ('-' for stdin); empty keeps the message")
 	buttonsFile := fs.String("buttons-json", "", "replace buttons with JSON array of {label, emoji?, style?}; [] removes buttons")
 	disable := fs.Bool("disable-buttons", false, "grey every button out")
-	chosen := fs.String("chosen", "", "button label to keep highlighted (success style); the rest go grey")
+	chosen := fs.String("chosen", "", "button label (or select menu option value) to keep highlighted; the rest go grey")
 	embeds := fs.Bool("embeds", false, "keep link unfurls (embeds) on the edit; default keeps them suppressed")
 	if err := fs.Parse(args); err != nil {
 		return err
