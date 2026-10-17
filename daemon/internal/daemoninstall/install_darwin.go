@@ -170,6 +170,10 @@ func Install(doctorTime string) error {
 	if err != nil {
 		return err
 	}
+	gatewayPlist, err := launchAgentPath("com.m-rk.agentmux.gateway")
+	if err != nil {
+		return err
+	}
 
 	domain := "gui/" + strconv.Itoa(os.Getuid())
 	_ = runCmd("launchctl", "bootout", domain, plist) // ignore error: may not be loaded yet
@@ -187,11 +191,26 @@ func Install(doctorTime string) error {
 	if err := runCmd("launchctl", "bootstrap", domain, gcPlist); err != nil {
 		return err
 	}
+	// Re-register an installed gateway after replacing the binary. On macOS
+	// launchd can retain the old executable's code-signing constraint.
+	if err := reloadGatewayAgent(domain, gatewayPlist); err != nil {
+		return err
+	}
 
 	sock := filepath.Join(dir, "run", "agentmuxd.sock")
 	bin := filepath.Join(dir, "bin", "agentmux")
 	fmt.Printf("Installed and started %s plus %s at %s local time plus %s (binary: %s, socket: %s)\n", label, doctorLabel, doctorTime, gcLabel, bin, sock)
 	return nil
+}
+
+func reloadGatewayAgent(domain, plist string) error {
+	if _, err := os.Stat(plist); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	_ = runCmd("launchctl", "bootout", domain, plist)
+	return runCmd("launchctl", "bootstrap", domain, plist)
 }
 
 // InstallForDeploy pins the current binary under ~/.agentmux/bin and

@@ -10,7 +10,7 @@ curl -fsSL https://raw.githubusercontent.com/m-rk/agentmux/main/scripts/bootstra
 ```
 
 The script fetches `main` into a temporary Git worktree, builds the daemon,
-installs it, restarts the agentmux gateway, prints the installed commit, and
+installs it, re-registers the installed gateway LaunchAgent, prints the installed commit, and
 removes the temporary checkout. It states the daemon and gateway restart
 before asking once for confirmation. Preview the steps without installing or
 restarting anything by adding `--dry-run` to the command after the pipe:
@@ -30,7 +30,8 @@ orchestrator's shipped commit moved, builds in a temporary worktree
 and installs atomically (temp file, then rename). See AMUX-29.
 
 - agentmux: install to the pinned daemon bin (`~/.agentmux/bin`),
-  rewrite the daemon and gateway plists, kickstart both, then smoke
+  rewrite and reload the daemon, doctor and gc jobs, re-register the existing
+  gateway LaunchAgent, kickstart the daemon, then smoke
   check. mergentic: install into `~/.local/bin` and the agents local
   bin, then `--version` check. No restart: it is a CLI, not a service.
 - The ship gate: install only a commit the orchestrator recorded as
