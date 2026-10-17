@@ -229,6 +229,9 @@ message CreateInstanceRequest {
   // default. Validated by the provisioner; other agents refuse them.
   string claude_model = 17;
   string claude_effort = 18;
+  // opencode task workers only. Allows this instance's own worktree as an
+  // external project directory, without allowing sibling worktrees.
+  bool allow_worktree = 19;
 }
 
 message CreateInstanceResponse {

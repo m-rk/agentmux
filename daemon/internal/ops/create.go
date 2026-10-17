@@ -330,6 +330,7 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 			AmpUpdate:         fields["AGENTMUX_AMP_UPDATE"],
 			AmpMode:           fields["AGENTMUX_AMP_MODE"],
 			AllowFiles:        allow,
+			AllowWorktree:     agent == "opencode",
 			ClaudeModel:       claudeModel,
 			ClaudeEffort:      claudeEffort,
 		})

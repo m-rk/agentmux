@@ -23,5 +23,5 @@ const KiloConfigEnv = "KILO_CONFIG_CONTENT"
 // patterns, last-match-wins), so the rules and limits are those documented on
 // OpencodeAllowConfig, including rejection of paths containing "*" or "?".
 func KiloAllowConfig(workdir string, paths []string) ([]byte, error) {
-	return opencodeStyleAllowConfig(workdir, paths)
+	return opencodeStyleAllowConfig(workdir, paths, false)
 }

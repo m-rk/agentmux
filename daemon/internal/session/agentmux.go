@@ -840,7 +840,12 @@ func allowFilesEnv(name, agent, workdir string, fields map[string]string) string
 	var render func(string, []string) ([]byte, error)
 	switch agent {
 	case "opencode":
-		key, render = allowfiles.OpencodeConfigEnv, allowfiles.OpencodeAllowConfig
+		key = allowfiles.OpencodeConfigEnv
+		if fields["AGENTMUX_ALLOW_WORKTREE"] == "1" {
+			render = allowfiles.OpencodeTaskConfig
+		} else {
+			render = allowfiles.OpencodeAllowConfig
+		}
 	case "kilo":
 		key, render = allowfiles.KiloConfigEnv, allowfiles.KiloAllowConfig
 	default:
@@ -854,7 +859,7 @@ func allowFilesEnv(name, agent, workdir string, fields map[string]string) string
 	for _, w := range warns {
 		fmt.Fprintf(os.Stderr, "%s: allow-file: skipping: %s\n", name, w)
 	}
-	if len(files) == 0 {
+	if len(files) == 0 && fields["AGENTMUX_ALLOW_WORKTREE"] != "1" {
 		return ""
 	}
 	data, err := render(workdir, files)

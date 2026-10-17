@@ -39,6 +39,10 @@ func TestAllowFilesEnv(t *testing.T) {
 	if got := allowFilesEnv("t", "opencode", workdir, map[string]string{}); got != "" {
 		t.Errorf("no allow-files: got %q", got)
 	}
+	worktreeEnv := allowFilesEnv("t", "opencode", workdir, map[string]string{"AGENTMUX_ALLOW_WORKTREE": "1"})
+	if !strings.Contains(worktreeEnv, filepath.ToSlash(workdir)+"/**") {
+		t.Errorf("task worktree config = %q", worktreeEnv)
+	}
 	_ = os.Remove(note)
 	if got := allowFilesEnv("t", "opencode", workdir, fields); got != "" {
 		t.Errorf("missing note: got %q", got)

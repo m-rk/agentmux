@@ -183,6 +183,7 @@ func (s *Server) CreateInstance(ctx context.Context, req *pb.CreateInstanceReque
 		AmpUpdate:       req.AmpUpdate,
 		AmpMode:         req.AmpMode,
 		AllowFiles:      req.AllowFiles,
+		AllowWorktree:   req.AllowWorktree,
 		ClaudeModel:     req.ClaudeModel,
 		ClaudeEffort:    req.ClaudeEffort,
 	})

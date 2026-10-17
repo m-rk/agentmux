@@ -217,6 +217,7 @@ func createAgentmux(opts Options) (string, error) {
 		{"AGENTMUX_HOST_NAME", hostName},
 		{"AGENTMUX_WORKDIR", workdir},
 		{allowfiles.RegistryKey, allowFiles},
+		{"AGENTMUX_ALLOW_WORKTREE", boolRegistryValue(opts.AllowWorktree && opts.Agent == "opencode")},
 		{"AGENTMUX_RUN_USER", runUser},
 		{"AGENTMUX_SERVICE_NAME", serviceName},
 	})

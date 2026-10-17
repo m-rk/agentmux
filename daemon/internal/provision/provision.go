@@ -39,6 +39,7 @@ type Options struct {
 	ClaudeModel     string   // claude-code only; pinned --model (AGENTMUX_CLAUDE_MODEL) — see proto doc
 	ClaudeEffort    string   // claude-code only; pinned --effort (AGENTMUX_CLAUDE_EFFORT) — see proto doc
 	AllowFiles      []string // files outside the workdir the agent may read and edit — see proto doc
+	AllowWorktree   bool     // opencode task worker's own worktree only
 }
 
 var identifierRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
@@ -53,6 +54,13 @@ func validateIdentifier(label, value string) error {
 // ValidateInstanceName applies the instance name rule `agentmux new` uses.
 func ValidateInstanceName(name string) error {
 	return validateIdentifier("instance name", name)
+}
+
+func boolRegistryValue(v bool) string {
+	if v {
+		return "1"
+	}
+	return "0"
 }
 
 // defaultInstanceName computes the instance name used when -instance is

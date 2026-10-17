@@ -46,7 +46,14 @@ const OpencodeConfigEnv = "OPENCODE_CONFIG_CONTENT"
 // are rejected rather than granted too broadly. "[", "]", "(", ")" and
 // spaces match literally and are fine.
 func OpencodeAllowConfig(workdir string, paths []string) ([]byte, error) {
-	return opencodeStyleAllowConfig(workdir, paths)
+	return opencodeStyleAllowConfig(workdir, paths, false)
+}
+
+// OpencodeTaskConfig adds permission for a task instance's own worktree. The
+// recursive pattern is rooted at that one directory, so sibling worktrees do
+// not match it.
+func OpencodeTaskConfig(workdir string, paths []string) ([]byte, error) {
+	return opencodeStyleAllowConfig(workdir, paths, true)
 }
 
 var errAllowPathPattern = errors.New("path contains characters that opencode-style permission patterns cannot match literally")
@@ -94,11 +101,14 @@ func (o orderedRules) MarshalJSON() ([]byte, error) {
 
 // opencodeStyleAllowConfig builds the permission block shared by opencode and
 // kilo (kilo is an opencode fork with the same permission schema).
-func opencodeStyleAllowConfig(workdir string, paths []string) ([]byte, error) {
+func opencodeStyleAllowConfig(workdir string, paths []string, allowWorktree bool) ([]byte, error) {
 	if !filepath.IsAbs(workdir) {
 		return nil, fmt.Errorf("workdir %q is not absolute", workdir)
 	}
 	var external, denies, allows orderedRules
+	if allowWorktree {
+		external.add(filepath.ToSlash(filepath.Clean(workdir))+"/**", "allow")
+	}
 	for _, p := range paths {
 		if !filepath.IsAbs(p) {
 			return nil, fmt.Errorf("allowed file %q is not absolute", p)
@@ -117,7 +127,7 @@ func opencodeStyleAllowConfig(workdir string, paths []string) ([]byte, error) {
 		denies.add(filepath.ToSlash(filepath.Dir(rel))+"/*", "deny")
 		allows.add(filepath.ToSlash(rel), "allow")
 	}
-	if len(allows.keys) == 0 {
+	if len(allows.keys) == 0 && len(external.keys) == 0 {
 		return []byte("{}"), nil
 	}
 	// Denies first, then allows, into one ordered object per tool.

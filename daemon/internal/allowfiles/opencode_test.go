@@ -38,6 +38,31 @@ func TestOpencodeAllowConfig(t *testing.T) {
 	}
 }
 
+func TestOpencodeTaskConfigScopesExternalDirectoryToWorktree(t *testing.T) {
+	worktree := "/work/project-worktrees/task-one"
+	got, err := OpencodeTaskConfig(worktree, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Permission struct {
+			ExternalDirectory map[string]string `json:"external_directory"`
+		} `json:"permission"`
+	}
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{worktree + "/**": "allow"}
+	if !reflect.DeepEqual(doc.Permission.ExternalDirectory, want) {
+		t.Fatalf("external_directory = %v, want %v", doc.Permission.ExternalDirectory, want)
+	}
+	for _, sibling := range []string{"/work/project-worktrees/task-two", "/work/project-worktrees/another"} {
+		if _, allowed := doc.Permission.ExternalDirectory[sibling+"/**"]; allowed {
+			t.Errorf("sibling worktree %q was granted", sibling)
+		}
+	}
+}
+
 func TestOpencodeAllowConfigOrdering(t *testing.T) {
 	// A file name sorting before "*" must still come after the deny rule,
 	// and nested directories must have all denies ahead of all allows.

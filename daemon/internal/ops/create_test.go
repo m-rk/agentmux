@@ -139,7 +139,7 @@ func TestCreateMakesWorktreeAndInstance(t *testing.T) {
 	}
 	r := c.d.created[0]
 	if r.InstanceName != "task-1" || r.Agent != "opencode" || r.Provider != "ollama" || r.Model != "m1" ||
-		r.ProviderBaseUrl != "http://localhost:1/v1" || r.ProviderApiKeyEnv != "KEY_VAR" || r.Workdir != wt {
+		r.ProviderBaseUrl != "http://localhost:1/v1" || r.ProviderApiKeyEnv != "KEY_VAR" || r.Workdir != wt || !r.AllowWorktree {
 		t.Fatalf("CreateInstanceRequest = %+v", r)
 	}
 	// The branch the worktree was made on is recorded for retire's

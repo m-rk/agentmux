@@ -912,8 +912,11 @@ type CreateInstanceRequest struct {
 	// registry before the first launch and passed as `claude --model` /
 	// `--effort` on every launch, restarts included. Empty = claude's own
 	// default. Validated by the provisioner; other agents refuse them.
-	ClaudeModel   string `protobuf:"bytes,17,opt,name=claude_model,json=claudeModel,proto3" json:"claude_model,omitempty"`
-	ClaudeEffort  string `protobuf:"bytes,18,opt,name=claude_effort,json=claudeEffort,proto3" json:"claude_effort,omitempty"`
+	ClaudeModel  string `protobuf:"bytes,17,opt,name=claude_model,json=claudeModel,proto3" json:"claude_model,omitempty"`
+	ClaudeEffort string `protobuf:"bytes,18,opt,name=claude_effort,json=claudeEffort,proto3" json:"claude_effort,omitempty"`
+	// opencode task workers only. Allows this instance's own worktree as an
+	// external project directory, without allowing sibling worktrees.
+	AllowWorktree bool `protobuf:"varint,19,opt,name=allow_worktree,json=allowWorktree,proto3" json:"allow_worktree,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1072,6 +1075,13 @@ func (x *CreateInstanceRequest) GetClaudeEffort() string {
 		return x.ClaudeEffort
 	}
 	return ""
+}
+
+func (x *CreateInstanceRequest) GetAllowWorktree() bool {
+	if x != nil {
+		return x.AllowWorktree
+	}
+	return false
 }
 
 type CreateInstanceResponse struct {
@@ -2088,7 +2098,7 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\x06action\x18\x02 \x01(\x0e2\x1b.agentmuxd.v1.ControlActionR\x06action\";\n" +
 	"\x0fControlResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\xf5\x04\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\x9c\x05\n" +
 	"\x15CreateInstanceRequest\x12#\n" +
 	"\rinstance_name\x18\x01 \x01(\tR\finstanceName\x12\x14\n" +
 	"\x05agent\x18\x02 \x01(\tR\x05agent\x12\x1a\n" +
@@ -2110,7 +2120,8 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\vallow_files\x18\x0f \x03(\tR\n" +
 	"allowFiles\x12!\n" +
 	"\fclaude_model\x18\x11 \x01(\tR\vclaudeModel\x12#\n" +
-	"\rclaude_effort\x18\x12 \x01(\tR\fclaudeEffort\"B\n" +
+	"\rclaude_effort\x18\x12 \x01(\tR\fclaudeEffort\x12%\n" +
+	"\x0eallow_worktree\x18\x13 \x01(\bR\rallowWorktree\"B\n" +
 	"\x16CreateInstanceResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"\x19\n" +
