@@ -101,6 +101,24 @@ type CodexRunOptions struct {
 	// AllowUnsafe is the instance's explicit opt-in (CodexUnsafeSandboxEnv)
 	// for danger-full-access.
 	AllowUnsafe bool
+	// Task enables Codex's managed, domain-filtered network proxy for
+	// package registries. It is intentionally derived from the instance
+	// identity by the caller, not user-controlled run input.
+	Task bool
+}
+
+// taskRegistryConfig is applied only to task runs. Codex's sandbox still
+// confines filesystem access; this profile grants network access through
+// the managed proxy to package registry endpoints only.
+var taskRegistryConfig = []string{
+	"default_permissions=workspace",
+	"permissions.workspace.network.enabled=true",
+	"permissions.workspace.network.allow_local_binding=false",
+	`permissions.workspace.network.domains."registry.npmjs.org"=allow`,
+	`permissions.workspace.network.domains."proxy.golang.org"=allow`,
+	`permissions.workspace.network.domains."sum.golang.org"=allow`,
+	`permissions.workspace.network.domains."pypi.org"=allow`,
+	`permissions.workspace.network.domains."files.pythonhosted.org"=allow`,
 }
 
 // CodexUnsafeArg reports why one codex argument bypasses the sandbox, or ""
@@ -219,6 +237,11 @@ func CodexRunArgs(opts CodexRunOptions, threadID string) ([]string, error) {
 		args = append(args, "-C", opts.Workdir)
 	}
 	args = append(args, "-s", sandbox)
+	if opts.Task {
+		for _, config := range taskRegistryConfig {
+			args = append(args, "-c", config)
+		}
+	}
 	for _, d := range opts.AddDirs {
 		if !filepath.IsAbs(d) || strings.HasPrefix(d, "-") {
 			return nil, fmt.Errorf("codex add-dir %q must be an absolute path", d)

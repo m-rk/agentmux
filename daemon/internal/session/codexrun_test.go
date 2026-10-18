@@ -131,6 +131,29 @@ func TestCodexRunArgs(t *testing.T) {
 	}
 }
 
+func TestCodexTaskRunGetsRegistryOnlyNetworkPolicy(t *testing.T) {
+	args, err := CodexRunArgs(CodexRunOptions{Workdir: "/work/task", Task: true}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	for _, host := range []string{"registry.npmjs.org", "proxy.golang.org", "sum.golang.org", "pypi.org", "files.pythonhosted.org"} {
+		if !strings.Contains(joined, host) {
+			t.Errorf("task args do not allow %s: %s", host, joined)
+		}
+	}
+	if strings.Contains(joined, "network_access=true") || strings.Contains(joined, `domains."*"=allow`) {
+		t.Errorf("task args grant unfiltered network access: %s", joined)
+	}
+	normal, err := CodexRunArgs(CodexRunOptions{Workdir: "/work/service"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(normal, " "), "network.domains") {
+		t.Errorf("non-task args include registry network policy: %v", normal)
+	}
+}
+
 func TestCodexRunArgsRefusals(t *testing.T) {
 	bad := []CodexRunOptions{
 		{Sandbox: "danger-full-access"},

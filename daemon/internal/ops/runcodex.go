@@ -45,6 +45,7 @@ func (e Env) runCodex(ctx context.Context, req RunRequest, addr address.Address,
 		Sandbox:     sandbox,
 		AddDirs:     session.CodexAddDirs(fields[session.CodexAddDirsKey]),
 		AllowUnsafe: fields[session.CodexUnsafeSandboxEnv] == "1",
+		Task:        strings.HasPrefix(addr.Instance, "task-"),
 	}, thread)
 	if err != nil {
 		return RunResult{}, Refuse(safesend.ReasonInvalid, "%v", err)

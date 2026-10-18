@@ -84,6 +84,15 @@ add_dirs:
 
 Those directories are added to the runner's writable directories.
 
+Codex task runs keep `workspace-write` filesystem confinement and enable
+Codex's managed network policy with an allowlist for package registries:
+npm, Go modules, and Python packages. Local/private network binding remains
+disabled. This policy is attached by the runner to `task-*` instances only;
+regular Codex instances retain their configured network policy. The allowlist
+does not include source-control hosts, so dependencies that fetch directly
+from Git repositories still need to be vendored or otherwise available from
+the configured registries.
+
 ### Committing from the sandbox
 
 Codex (0.160.x) workspace-write keeps any directory named `.git` read-only
