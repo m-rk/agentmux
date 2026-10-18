@@ -47,15 +47,16 @@ func ampUpdateDisabled(name string) bool {
 // analyzer. Workdirs and registry values are omitted; pane text is capped by
 // the caller before it reaches this type.
 type Snapshot struct {
-	Name         string        `json:"name"`
-	Agent        string        `json:"agent"`
-	Provider     string        `json:"provider,omitempty"`
-	Model        string        `json:"model,omitempty"`
-	Status       string        `json:"status"`
-	LastActivity int64         `json:"last_activity_unix,omitempty"`
-	Pane         string        `json:"pane,omitempty"`
-	CaptureError string        `json:"capture_error,omitempty"`
-	Issues       []HealthIssue `json:"issues,omitempty"`
+	Name            string        `json:"name"`
+	Agent           string        `json:"agent"`
+	Provider        string        `json:"provider,omitempty"`
+	Model           string        `json:"model,omitempty"`
+	Status          string        `json:"status"`
+	LastActivity    int64         `json:"last_activity_unix,omitempty"`
+	Pane            string        `json:"pane,omitempty"`
+	CaptureError    string        `json:"capture_error,omitempty"`
+	Issues          []HealthIssue `json:"issues,omitempty"`
+	IdlePlaceholder bool          `json:"-"`
 }
 
 type Finding struct {
@@ -103,13 +104,14 @@ type Outcome struct {
 }
 
 type Report struct {
-	Summary         string
-	AnalysisSummary string
-	Checked         int
-	BeforeIssues    []HealthIssue
-	AfterIssues     []HealthIssue
-	Outcomes        []Outcome
-	Problems        []string
+	Summary          string
+	AnalysisSummary  string
+	Checked          int
+	BeforeIssues     []HealthIssue
+	AfterIssues      []HealthIssue
+	Outcomes         []Outcome
+	Problems         []string
+	IdlePlaceholders []string
 }
 
 // FormatNotification renders the compact notable-only report sent to
@@ -333,6 +335,11 @@ func Run(ctx context.Context, client Client, analyzer Analyzer, opts Options) (R
 		return Report{}, err
 	}
 	report := Report{Checked: len(beforeSnapshots), BeforeIssues: beforeIssues}
+	for _, snapshot := range beforeSnapshots {
+		if snapshot.IdlePlaceholder {
+			report.IdlePlaceholders = append(report.IdlePlaceholders, snapshot.Name)
+		}
+	}
 	if len(beforeSnapshots) == 0 {
 		report.Summary = "No configured sessions to check."
 		return report, nil

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -145,6 +146,9 @@ func instanceIssueFingerprint(issues []HealthIssue) string {
 // or recovery since the previous run.
 func DecideNotification(report Report, previous NotificationState) NotificationDecision {
 	current := NotificationStateFor(report)
+	if len(report.BeforeIssues) == 0 && len(report.Problems) == 0 && staleIdlePlaceholderState(previous, report) {
+		return NotificationDecision{}
+	}
 	if len(report.BeforeIssues) > 0 || len(report.Problems) > 0 {
 		if current.Fingerprint != "" && current.Fingerprint == previous.Fingerprint {
 			return NotificationDecision{}
@@ -157,16 +161,49 @@ func DecideNotification(report Report, previous NotificationState) NotificationD
 	return NotificationDecision{}
 }
 
+func staleIdlePlaceholderState(previous NotificationState, report Report) bool {
+	if len(previous.Issues) == 0 || len(previous.Problems) != 0 || len(report.IdlePlaceholders) == 0 {
+		return false
+	}
+	idle := make(map[string]bool, len(report.IdlePlaceholders))
+	for _, name := range report.IdlePlaceholders {
+		idle[name] = true
+	}
+	for _, issue := range previous.Issues {
+		if (issue.Code != "pane-empty" && issue.Code != "refresh-missing") || !idle[issue.Instance] {
+			return false
+		}
+	}
+	return true
+}
+
 func FormatRecoveryNotification(host string, previous NotificationState) string {
 	title := "✅ agentmux doctor"
 	if host != "" {
 		title += " on " + cleanOneLine(host)
 	}
 	lines := []string{title, "Previously reported session problems are no longer present."}
-	byInstance := issuesByInstance(previous.Issues)
-	for _, instance := range sortedIssueInstances(byInstance, map[string][]HealthIssue{}, map[string]Outcome{}) {
-		issues := byInstance[instance]
-		lines = append(lines, "• "+instance+": recovered from "+issueSummaries(issues))
+	groups := map[string][]string{}
+	for _, issue := range previous.Issues {
+		summary := cleanOneLine(issue.Summary)
+		if summary == "" {
+			summary = cleanOneLine(issue.Code)
+		}
+		groups[summary] = append(groups[summary], issue.Instance)
+	}
+	var summaries []string
+	for summary := range groups {
+		summaries = append(summaries, summary)
+	}
+	sort.Strings(summaries)
+	for _, summary := range summaries {
+		names := groups[summary]
+		sort.Strings(names)
+		shown := names
+		if len(shown) > 2 {
+			shown = append(append([]string(nil), names[:2]...), fmt.Sprintf("+%d", len(names)-2))
+		}
+		lines = append(lines, fmt.Sprintf("• Fixed: %s, %d sessions (%s)", summary, len(names), strings.Join(shown, ", ")))
 	}
 	for _, problem := range previous.Problems {
 		lines = append(lines, "• recovered from: "+cleanOneLine(problem))

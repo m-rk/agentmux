@@ -1,6 +1,7 @@
 package dailycheck
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -83,7 +84,38 @@ func TestFormatRecoveryNotificationIsStable(t *testing.T) {
 		{Instance: "alpha", Summary: "disconnected"},
 	}}
 	message := FormatRecoveryNotification("host", state)
-	if strings.Index(message, "alpha") > strings.Index(message, "zeta") {
-		t.Fatalf("recovery instances are not sorted: %q", message)
+	if !strings.Contains(message, "disconnected, 1 sessions (alpha)") || !strings.Contains(message, "dead, 1 sessions (zeta)") {
+		t.Fatalf("recovery groups are missing or malformed: %q", message)
+	}
+}
+
+func TestFormatRecoveryNotificationGroupsIssues(t *testing.T) {
+	state := NotificationState{}
+	for i := 0; i < 20; i++ {
+		name := fmt.Sprintf("session-%02d", i)
+		state.Issues = append(state.Issues,
+			HealthIssue{Instance: name, Code: "pane-empty", Summary: "pane is empty"},
+			HealthIssue{Instance: name, Code: "refresh-missing", Summary: "daily refresh unit is not loaded"},
+		)
+	}
+	message := FormatRecoveryNotification("", state)
+	if strings.Count(message, "• Fixed:") != 2 || len(message) >= 600 {
+		t.Fatalf("recovery was not compactly grouped (%d chars): %q", len(message), message)
+	}
+	if !strings.Contains(message, "20 sessions") || !strings.Contains(message, "+18") {
+		t.Fatalf("grouped recovery omitted counts or sample names: %q", message)
+	}
+}
+
+func TestNotificationDecisionQuietlyClearsIdlePlaceholderFindings(t *testing.T) {
+	previous := NotificationState{Issues: []HealthIssue{
+		{Instance: "codex-one", Code: "pane-empty", Summary: "pane is empty"},
+		{Instance: "codex-one", Code: "refresh-missing", Summary: "daily refresh unit is not loaded"},
+		{Instance: "codex-two", Code: "pane-empty", Summary: "pane is empty"},
+		{Instance: "codex-two", Code: "refresh-missing", Summary: "daily refresh unit is not loaded"},
+	}}
+	report := Report{Checked: 2, IdlePlaceholders: []string{"codex-one", "codex-two"}}
+	if decision := DecideNotification(report, previous); decision.Notify {
+		t.Fatalf("idle placeholder rule change should be quiet: %+v", decision)
 	}
 }

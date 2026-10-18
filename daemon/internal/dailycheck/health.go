@@ -61,7 +61,8 @@ func collectHealth(ctx context.Context, client Client, opts Options) ([]Snapshot
 		}
 
 		core := coreHealthIssues(instance, snapshot)
-		if codexIdlePlaceholder(ctx, instance) {
+		snapshot.IdlePlaceholder = codexIdlePlaceholder(ctx, instance)
+		if snapshot.IdlePlaceholder {
 			core = dropIssueCodes(core, "pane-empty")
 		}
 		snapshot.Issues = append(snapshot.Issues, core...)
