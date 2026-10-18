@@ -112,6 +112,7 @@ type CodexRunOptions struct {
 // the managed proxy to package registry endpoints only.
 var taskRegistryConfig = []string{
 	"default_permissions=workspace",
+	"features.network_proxy=true",
 	"permissions.workspace.network.enabled=true",
 	"permissions.workspace.network.allow_local_binding=false",
 	`permissions.workspace.network.domains."registry.npmjs.org"=allow`,

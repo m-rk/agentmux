@@ -137,6 +137,11 @@ func TestCodexTaskRunGetsRegistryOnlyNetworkPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(args, " ")
+	for _, want := range []string{"features.network_proxy=true", "permissions.workspace.network.enabled=true", "permissions.workspace.network.allow_local_binding=false"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("task args do not enable the constrained network proxy setting %q: %s", want, joined)
+		}
+	}
 	for _, host := range []string{"registry.npmjs.org", "proxy.golang.org", "sum.golang.org", "pypi.org", "files.pythonhosted.org"} {
 		if !strings.Contains(joined, host) {
 			t.Errorf("task args do not allow %s: %s", host, joined)
