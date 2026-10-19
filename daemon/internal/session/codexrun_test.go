@@ -147,7 +147,7 @@ func TestCodexTaskRunGetsRegistryOnlyNetworkPolicy(t *testing.T) {
 			t.Errorf("task args do not allow %s: %s", host, joined)
 		}
 	}
-	if strings.Contains(joined, "network_access=true") || strings.Contains(joined, `domains."*"=allow`) {
+	if strings.Contains(joined, "network_access=true") || strings.Contains(joined, `domains."*"=allow`) || strings.Contains(joined, `"*"="allow"`) {
 		t.Errorf("task args grant unfiltered network access: %s", joined)
 	}
 	normal, err := CodexRunArgs(CodexRunOptions{Workdir: "/work/service"}, "")

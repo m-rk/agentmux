@@ -115,11 +115,9 @@ var taskRegistryConfig = []string{
 	"features.network_proxy=true",
 	"permissions.workspace.network.enabled=true",
 	"permissions.workspace.network.allow_local_binding=false",
-	`permissions.workspace.network.domains."registry.npmjs.org"=allow`,
-	`permissions.workspace.network.domains."proxy.golang.org"=allow`,
-	`permissions.workspace.network.domains."sum.golang.org"=allow`,
-	`permissions.workspace.network.domains."pypi.org"=allow`,
-	`permissions.workspace.network.domains."files.pythonhosted.org"=allow`,
+	// One inline table: codex splits a dotted -c key on every dot, even
+	// inside quotes, so per-domain keys fail to load ("unknown variant").
+	`permissions.workspace.network.domains={"registry.npmjs.org"="allow","proxy.golang.org"="allow","sum.golang.org"="allow","pypi.org"="allow","files.pythonhosted.org"="allow"}`,
 }
 
 // CodexUnsafeArg reports why one codex argument bypasses the sandbox, or ""
