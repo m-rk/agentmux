@@ -94,6 +94,10 @@ func (c *Client) sendTestMessage(ctx context.Context, task, body string, opts As
 	if err != nil {
 		return "", err
 	}
+	imageBatches, err := readAskImages(opts.Images)
+	if err != nil {
+		return "", err
+	}
 	guildID := ""
 	if needsGuildEmojis(opts.Buttons) {
 		forum, err := c.forum(ctx)
@@ -111,11 +115,42 @@ func (c *Client) sendTestMessage(ctx context.Context, task, body string, opts As
 		payload["components"] = c.buttonRowsWithGuild(ctx, guildID, opts.Buttons)
 	}
 	var message Message
-	if err := c.botJSONBody(ctx, http.MethodPost, "/channels/"+url.PathEscape(thread)+"/messages", payload, &message); err != nil {
+	if len(imageBatches) > 0 {
+		base := strings.TrimRight(c.APIBaseURL, "/")
+		if base == "" {
+			base = discordAPIBaseURL
+		}
+		message, err = c.sendAskMultipart(ctx, http.MethodPost, base+"/channels/"+url.PathEscape(thread)+"/messages", true, payload, imageBatches[0])
+	} else {
+		err = c.botJSONBody(ctx, http.MethodPost, "/channels/"+url.PathEscape(thread)+"/messages", payload, &message)
+	}
+	if err != nil {
 		return "", fmt.Errorf("posting test message into Discord thread %s (the bot needs Send Messages in Threads on the forum): %w", thread, err)
 	}
 	if message.ID == "" {
 		return "", fmt.Errorf("Discord accepted the test message but returned no message id")
+	}
+	if opts.AttachmentURLs != nil {
+		for _, a := range message.Attachments {
+			*opts.AttachmentURLs = append(*opts.AttachmentURLs, a.URL)
+		}
+	}
+	if len(imageBatches) > 1 {
+		for _, batch := range imageBatches[1:] {
+			base := strings.TrimRight(c.APIBaseURL, "/")
+			if base == "" {
+				base = discordAPIBaseURL
+			}
+			followup, err := c.sendAskMultipart(ctx, http.MethodPost, base+"/channels/"+url.PathEscape(thread)+"/messages", true, map[string]any{"content": "", "allowed_mentions": map[string]any{"parse": []string{}}}, batch)
+			if err != nil {
+				return message.ID, err
+			}
+			if opts.AttachmentURLs != nil {
+				for _, a := range followup.Attachments {
+					*opts.AttachmentURLs = append(*opts.AttachmentURLs, a.URL)
+				}
+			}
+		}
 	}
 	return message.ID, c.seedReactions(ctx, thread, message.ID, opts.Reactions)
 }

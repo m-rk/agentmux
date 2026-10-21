@@ -134,6 +134,49 @@ func TestReadAskImageSupportsPNGJPEGAndGIF(t *testing.T) {
 	}
 }
 
+func TestReadAskImagesBatchesTenInOrderAndFixtureDocumentsV10Response(t *testing.T) {
+	data := encodeTestImage(t, "png")
+	path := filepath.Join(t.TempDir(), "private.png")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	paths := make([]string, 11)
+	for i := range paths {
+		paths[i] = path
+	}
+	batches, err := readAskImages(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batches) != 2 || len(batches[0]) != 10 || len(batches[1]) != 1 {
+		t.Fatalf("batch sizes = %v", []int{len(batches[0]), len(batches[1])})
+	}
+	for _, batch := range batches {
+		for _, got := range batch {
+			if got.filename != "image.png" || !bytes.Equal(got.data, data) {
+				t.Fatal("image order/content changed")
+			}
+		}
+	}
+
+	fixture, err := os.ReadFile("testdata/discord_v10_message_create_multiple_attachments.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		FixtureKind  string  `json:"fixture_kind"`
+		DocumentedOn string  `json:"documented_on"`
+		APIVersion   string  `json:"api_version"`
+		Message      Message `json:"message"`
+	}
+	if err := json.Unmarshal(fixture, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.FixtureKind != "documented Discord API v10 message-create response" || envelope.DocumentedOn == "" || envelope.APIVersion != "v10" || len(envelope.Message.Attachments) != 2 {
+		t.Fatalf("unexpected documented fixture metadata/attachments: %#v", envelope)
+	}
+}
+
 func encodeTestImage(t *testing.T, format string) []byte {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, 1, 1))

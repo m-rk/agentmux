@@ -76,9 +76,11 @@ const suppressEmbedsFlag = 4
 
 // AskOptions are the optional one-tap answer choices on a posted ask.
 type AskOptions struct {
-	Reactions []string    // emoji the bot adds, in order
-	Buttons   []AskButton // buttons, in order
-	NoMention bool        // suppresses the configured-user mention on posts
+	Images         []string    `json:"-"` // validated image paths, uploaded in order
+	AttachmentURLs *[]string   `json:"-"` // receives URLs returned by Discord after upload
+	Reactions      []string    // emoji the bot adds, in order
+	Buttons        []AskButton // buttons, in order
+	NoMention      bool        // suppresses the configured-user mention on posts
 	// Embeds keeps link unfurls on this send. Default suppresses them.
 	Embeds bool
 }

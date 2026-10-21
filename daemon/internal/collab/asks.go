@@ -59,6 +59,88 @@ func readAskImage(path string) ([]byte, string, error) {
 	return data, "image." + ext, nil
 }
 
+type askImage struct {
+	data     []byte
+	filename string
+}
+
+func readAskImages(paths []string) ([][]askImage, error) {
+	var all []askImage
+	for _, path := range paths {
+		data, filename, err := readAskImage(path)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, askImage{data, filename})
+	}
+	var batches [][]askImage
+	for len(all) > 0 {
+		n := len(all)
+		if n > 10 {
+			n = 10
+		}
+		batches = append(batches, all[:n])
+		all = all[n:]
+	}
+	return batches, nil
+}
+
+// sendAskMultipart posts a Discord message with up to ten already validated
+// files and returns the message Discord created.
+func (c *Client) sendAskMultipart(ctx context.Context, method, endpoint string, bot bool, payload map[string]any, files []askImage) (Message, error) {
+	attachments := make([]map[string]any, 0, len(files))
+	for i, file := range files {
+		attachments = append(attachments, map[string]any{"id": i, "filename": file.filename})
+	}
+	payload["attachments"] = attachments
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	part, err := w.CreateFormField("payload_json")
+	if err != nil {
+		return Message{}, err
+	}
+	if err = json.NewEncoder(part).Encode(payload); err != nil {
+		return Message{}, err
+	}
+	for i, file := range files {
+		h := make(textproto.MIMEHeader)
+		h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="files[%d]"; filename="%s"`, i, file.filename))
+		ext := strings.TrimPrefix(filepath.Ext(file.filename), ".")
+		h.Set("Content-Type", map[string]string{"png": "image/png", "jpg": "image/jpeg", "gif": "image/gif"}[ext])
+		part, err = w.CreatePart(h)
+		if err != nil {
+			return Message{}, err
+		}
+		if _, err = part.Write(file.data); err != nil {
+			return Message{}, err
+		}
+	}
+	if err = w.Close(); err != nil {
+		return Message{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, &buf)
+	if err != nil {
+		return Message{}, err
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	if bot {
+		req.Header.Set("Authorization", "Bot "+c.Config.BotToken)
+	}
+	var message Message
+	if err = c.doJSON(req, &message); err != nil {
+		return Message{}, err
+	}
+	if len(message.Attachments) != len(files) {
+		return message, fmt.Errorf("Discord returned %d attachment records for %d uploaded images", len(message.Attachments), len(files))
+	}
+	for _, attachment := range message.Attachments {
+		if attachment.URL == "" {
+			return message, fmt.Errorf("Discord did not return an attachment URL")
+		}
+	}
+	return message, nil
+}
+
 // Asks are messages in threads in the collaboration forum that @-mention
 // one configured user. Thread tags describe the thread, not the ask: every
 // task thread carries exactly one kind tag and exactly one state tag (see
@@ -301,6 +383,10 @@ func (c *Client) PostAsk(ctx context.Context, title, body string, extraTags []st
 	if err := opts.validate(); err != nil {
 		return "", "", err
 	}
+	imageBatches, err := readAskImages(opts.Images)
+	if err != nil {
+		return "", "", err
+	}
 	user := ""
 	if !opts.NoMention {
 		user, err = c.mentionUser()
@@ -384,14 +470,63 @@ func (c *Client) PostAsk(ctx context.Context, title, body string, extraTags []st
 		if thread.ID == "" {
 			return "", "", fmt.Errorf("Discord created the ask but returned no thread id")
 		}
+		if len(imageBatches) > 0 {
+			base := strings.TrimRight(c.APIBaseURL, "/")
+			if base == "" {
+				base = discordAPIBaseURL
+			}
+			for _, batch := range imageBatches {
+				msg, err := c.sendAskMultipart(ctx, http.MethodPost, base+"/channels/"+url.PathEscape(thread.ID)+"/messages", true, map[string]any{"content": "", "allowed_mentions": c.mentionPayload(user, false)}, batch)
+				if err != nil {
+					return thread.ID, thread.ID, fmt.Errorf("adding Discord ask attachments: %w", err)
+				}
+				if opts.AttachmentURLs != nil {
+					for _, a := range msg.Attachments {
+						*opts.AttachmentURLs = append(*opts.AttachmentURLs, a.URL)
+					}
+				}
+			}
+		}
 		return thread.ID, thread.ID, c.seedReactions(ctx, thread.ID, thread.ID, opts.Reactions)
 	}
 	var message Message
-	if err := c.webhookJSON(ctx, http.MethodPost, url.Values{"wait": {"true"}}, payload, &message); err != nil {
+	if len(imageBatches) > 0 {
+		endpoint, e := c.webhookEndpoint(url.Values{"wait": {"true"}})
+		if e != nil {
+			return "", "", e
+		}
+		message, err = c.sendAskMultipart(ctx, http.MethodPost, endpoint, false, payload, imageBatches[0])
+	} else {
+		err = c.webhookJSON(ctx, http.MethodPost, url.Values{"wait": {"true"}}, payload, &message)
+	}
+	if err != nil {
 		return "", "", fmt.Errorf("creating Discord ask: %w", err)
 	}
 	if message.ChannelID == "" {
 		return "", "", fmt.Errorf("Discord created the ask but returned no thread id")
+	}
+	if opts.AttachmentURLs != nil {
+		for _, a := range message.Attachments {
+			*opts.AttachmentURLs = append(*opts.AttachmentURLs, a.URL)
+		}
+	}
+	if len(imageBatches) > 1 {
+		for _, batch := range imageBatches[1:] {
+			content := map[string]any{"content": "", "username": asksUsername, "allowed_mentions": c.mentionPayload(user, false)}
+			endpoint, e := c.webhookEndpoint(url.Values{"wait": {"true"}, "thread_id": {message.ChannelID}})
+			if e != nil {
+				return message.ChannelID, message.ID, e
+			}
+			followup, e := c.sendAskMultipart(ctx, http.MethodPost, endpoint, false, content, batch)
+			if e != nil {
+				return message.ChannelID, message.ID, fmt.Errorf("adding Discord ask attachments: %w", e)
+			}
+			if opts.AttachmentURLs != nil {
+				for _, a := range followup.Attachments {
+					*opts.AttachmentURLs = append(*opts.AttachmentURLs, a.URL)
+				}
+			}
+		}
 	}
 	return message.ChannelID, message.ID, c.seedReactions(ctx, message.ChannelID, message.ID, opts.Reactions)
 }
@@ -405,8 +540,11 @@ func (c *Client) PostAskInThread(ctx context.Context, threadID, title, body stri
 	if err := opts.validate(); err != nil {
 		return "", err
 	}
+	imageBatches, err := readAskImages(opts.Images)
+	if err != nil {
+		return "", err
+	}
 	user := ""
-	var err error
 	if !opts.NoMention {
 		user, err = c.mentionUser()
 		if err != nil {
@@ -455,6 +593,23 @@ func (c *Client) PostAskInThread(ctx context.Context, threadID, title, body stri
 		if err := c.botJSONBody(ctx, http.MethodPost, "/channels/"+url.PathEscape(threadID)+"/messages", botPayload, &message); err != nil {
 			return "", fmt.Errorf("posting ask with buttons into Discord thread (the bot needs Send Messages in Threads): %w", err)
 		}
+		if len(imageBatches) > 0 {
+			base := strings.TrimRight(c.APIBaseURL, "/")
+			if base == "" {
+				base = discordAPIBaseURL
+			}
+			for _, batch := range imageBatches {
+				followup, err := c.sendAskMultipart(ctx, http.MethodPost, base+"/channels/"+url.PathEscape(threadID)+"/messages", true, map[string]any{"content": "", "allowed_mentions": c.mentionPayload(user, false)}, batch)
+				if err != nil {
+					return message.ID, fmt.Errorf("adding Discord ask attachments: %w", err)
+				}
+				if opts.AttachmentURLs != nil {
+					for _, a := range followup.Attachments {
+						*opts.AttachmentURLs = append(*opts.AttachmentURLs, a.URL)
+					}
+				}
+			}
+		}
 	} else {
 		payload := map[string]any{
 			"content":          content,
@@ -463,8 +618,39 @@ func (c *Client) PostAskInThread(ctx context.Context, threadID, title, body stri
 		}
 		opts.applyEmbedFlag(payload)
 		query := url.Values{"wait": {"true"}, "thread_id": {threadID}}
-		if err := c.webhookJSON(ctx, http.MethodPost, query, payload, &message); err != nil {
+		if len(imageBatches) > 0 {
+			endpoint, e := c.webhookEndpoint(query)
+			if e != nil {
+				return "", e
+			}
+			message, err = c.sendAskMultipart(ctx, http.MethodPost, endpoint, false, payload, imageBatches[0])
+		} else {
+			err = c.webhookJSON(ctx, http.MethodPost, query, payload, &message)
+		}
+		if err != nil {
 			return "", fmt.Errorf("posting ask into Discord thread: %w", err)
+		}
+	}
+	if opts.AttachmentURLs != nil {
+		for _, a := range message.Attachments {
+			*opts.AttachmentURLs = append(*opts.AttachmentURLs, a.URL)
+		}
+	}
+	if len(opts.Buttons) == 0 && len(imageBatches) > 1 {
+		for _, batch := range imageBatches[1:] {
+			endpoint, e := c.webhookEndpoint(url.Values{"wait": {"true"}, "thread_id": {threadID}})
+			if e != nil {
+				return message.ID, e
+			}
+			followup, e := c.sendAskMultipart(ctx, http.MethodPost, endpoint, false, map[string]any{"content": "", "username": asksUsername, "allowed_mentions": c.mentionPayload(user, false)}, batch)
+			if e != nil {
+				return message.ID, fmt.Errorf("adding Discord ask attachments: %w", e)
+			}
+			if opts.AttachmentURLs != nil {
+				for _, a := range followup.Attachments {
+					*opts.AttachmentURLs = append(*opts.AttachmentURLs, a.URL)
+				}
+			}
 		}
 	}
 	return message.ID, c.seedReactions(ctx, threadID, message.ID, opts.Reactions)
@@ -713,6 +899,73 @@ func (c *Client) ReplyAskImage(ctx context.Context, threadID, caption, path stri
 		return message.ID, "", fmt.Errorf("Discord did not return an attachment URL")
 	}
 	return message.ID, message.Attachments[0].URL, nil
+}
+
+// ReplyAskImages uploads ordered batches of ten or fewer images. The caption
+// and mention appear only on the first message.
+func (c *Client) ReplyAskImages(ctx context.Context, threadID, caption string, paths []string, mention, testThread bool, task string) (string, []string, error) {
+	batches, err := readAskImages(paths)
+	if err != nil {
+		return "", nil, err
+	}
+	if _, _, err := c.askThread(ctx, threadID); err != nil {
+		return "", nil, err
+	}
+	user := ""
+	if mention && !testThread {
+		user, err = c.mentionUser()
+		if err != nil {
+			return "", nil, err
+		}
+	}
+	var urls []string
+	lastID := ""
+	for i, batch := range batches {
+		body := ""
+		if i == 0 {
+			body = caption
+		}
+		content := ""
+		if i == 0 {
+			content, err = askContent(user, mention && !testThread, body)
+			if testThread {
+				content, err = testContent(task, body)
+			}
+			if err != nil {
+				return lastID, urls, err
+			}
+		}
+		payload := map[string]any{"content": content}
+		var endpoint string
+		bot := testThread
+		if testThread {
+			payload["allowed_mentions"] = map[string]any{"parse": []string{}, "users": []string{}, "roles": []string{}}
+			base := strings.TrimRight(c.APIBaseURL, "/")
+			if base == "" {
+				base = discordAPIBaseURL
+			}
+			endpoint = base + "/channels/" + url.PathEscape(threadID) + "/messages"
+		} else {
+			payload["username"] = asksUsername
+			payload["allowed_mentions"] = c.mentionPayload(user, mention && i == 0)
+			endpoint, err = c.webhookEndpoint(url.Values{"wait": {"true"}, "thread_id": {threadID}})
+			if err != nil {
+				return lastID, urls, err
+			}
+		}
+		msg, err := c.sendAskMultipart(ctx, http.MethodPost, endpoint, bot, payload, batch)
+		if err != nil {
+			return lastID, urls, fmt.Errorf("replying with images to Discord ask: %w", err)
+		}
+		lastID = msg.ID
+		for _, attachment := range msg.Attachments {
+			urls = append(urls, attachment.URL)
+		}
+	}
+	if len(urls) != len(paths) {
+		return lastID, urls, fmt.Errorf("Discord did not return all attachment URLs")
+	}
+	return lastID, urls, nil
 }
 
 // ReadAsk returns messages in an ask thread after the given message ID

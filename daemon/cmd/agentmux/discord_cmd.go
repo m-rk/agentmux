@@ -63,8 +63,8 @@ func runDiscordCmd(args []string) {
 
 func discordUsage() {
 	fmt.Fprintln(os.Stderr, `usage:
-  agentmux discord post (-title T | -thread ID [-title T]) -body-file F [-tag NAME ...] [-react EMOJI,EMOJI,...] [-button LABEL ...] [-buttons-json FILE] [-no-mention] [-embeds] [-json] [-dry-run]
-  agentmux discord reply -thread ID -body-file F [-image FILE] [-mention] [-embeds] [-dry-run]
+  agentmux discord post (-title T | -thread ID [-title T]) -body-file F [-image PATH ...] [-tag NAME ...] [-react EMOJI,EMOJI,...] [-button LABEL ...] [-buttons-json FILE] [-no-mention] [-embeds] [-json] [-dry-run]
+  agentmux discord reply -thread ID -body-file F [-image PATH ...] [-mention] [-embeds] [-dry-run]
   agentmux discord read -thread ID [-after MESSAGE_ID] [-json]
   agentmux discord read -threads ID1,ID2 [-after-map JSON] -json
   agentmux discord heads -threads ID1,ID2 -json
@@ -138,12 +138,15 @@ func runDiscordPost(args []string) error {
 	dryRun := fs.Bool("dry-run", false, "print the Discord payload instead of sending it")
 	noMention := fs.Bool("no-mention", false, "post without mentioning the configured user")
 	var tags, buttons tagFlags
+	var images tagFlags
 	fs.Var(&tags, "tag", "extra forum tag; repeatable")
+	fs.Var(&images, "image", "PNG, JPEG, or GIF attachment (max 8 MiB each); repeatable")
 	fs.Var(&buttons, "button", "button label (needs 'discord serve' running to record clicks); repeatable")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	opts := collab.AskOptions{Embeds: *embeds, NoMention: *noMention}
+	var attachmentURLs []string
+	opts := collab.AskOptions{Embeds: *embeds, NoMention: *noMention, Images: images, AttachmentURLs: &attachmentURLs}
 	for _, label := range buttons {
 		opts.Buttons = append(opts.Buttons, collab.AskButton{Label: label})
 	}
@@ -182,7 +185,10 @@ func runDiscordPost(args []string) error {
 	} else {
 		threadID, messageID, err = client.PostAsk(ctx, *title, body, tags, opts)
 	}
-	result := map[string]string{"thread_id": threadID, "message_id": messageID}
+	result := map[string]any{"thread_id": threadID, "message_id": messageID}
+	if len(attachmentURLs) > 0 {
+		result["attachment_urls"] = attachmentURLs
+	}
 	var seedErr *collab.ReactionSeedError
 	if errors.As(err, &seedErr) && messageID != "" {
 		// The ask exists; failing now would invite a duplicate post.
@@ -265,7 +271,8 @@ func runDiscordReply(args []string) error {
 	fs := flag.NewFlagSet("discord reply", flag.ContinueOnError)
 	thread := fs.String("thread", "", "ask thread ID")
 	bodyFile := fs.String("body-file", "", "file with the reply body ('-' for stdin)")
-	imageFile := fs.String("image", "", "local PNG, JPEG, or GIF image to attach (max 8 MiB)")
+	var images tagFlags
+	fs.Var(&images, "image", "PNG, JPEG, or GIF attachment (max 8 MiB each); repeatable")
 	mention := fs.Bool("mention", false, "mention the configured user")
 	embeds := fs.Bool("embeds", false, "keep link unfurls (embeds) on this send; default suppresses them")
 	dryRun := fs.Bool("dry-run", false, "print the Discord payload instead of sending it")
@@ -273,7 +280,7 @@ func runDiscordReply(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *dryRun && *imageFile != "" {
+	if *dryRun && len(images) > 0 {
 		return fmt.Errorf("-dry-run does not preview image attachments")
 	}
 	body, err := readBodyFile(*bodyFile)
@@ -300,7 +307,7 @@ func runDiscordReply(args []string) error {
 		fmt.Print(preview.Format())
 		return nil
 	}
-	if *imageFile != "" {
+	if len(images) > 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		target := *thread
@@ -311,15 +318,15 @@ func runDiscordReply(args []string) error {
 				return err
 			}
 		}
-		id, link, err := client.ReplyAskImage(ctx, target, body, *imageFile, *mention, test, testTaskID())
+		id, links, err := client.ReplyAskImages(ctx, target, body, images, *mention, test, testTaskID())
 		if err != nil {
 			return err
 		}
 		if *asJSON {
-			fmt.Printf("{\"message_id\":%q,\"attachment_url\":%q}\n", id, link)
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"message_id": id, "attachment_urls": links})
 			return nil
 		}
-		fmt.Printf("Replied to ask thread %s (message %s): %s\n", target, id, link)
+		fmt.Printf("Replied to ask thread %s (message %s): %s\n", target, id, strings.Join(links, " "))
 		return nil
 	}
 	if liveguard.IsTaskSession() {
@@ -837,7 +844,11 @@ func runDiscordPostAsTest(client *collab.Client, title, thread string, tags []st
 		return err
 	}
 	if asJSON {
-		return json.NewEncoder(os.Stdout).Encode(map[string]string{"thread_id": test, "message_id": messageID})
+		result := map[string]any{"thread_id": test, "message_id": messageID}
+		if opts.AttachmentURLs != nil && len(*opts.AttachmentURLs) > 0 {
+			result["attachment_urls"] = *opts.AttachmentURLs
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
 	}
 	dropped := []string{}
 	if title != "" {

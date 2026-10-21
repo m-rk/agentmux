@@ -1,0 +1,33 @@
+{
+  "fixture_kind": "documented Discord API v10 message-create response",
+  "documented_on": "2026-10-21",
+  "api_version": "v10",
+  "source": "https://discord.com/developers/docs/resources/message#message-object",
+  "message": {
+    "id": "110000000000000001",
+    "channel_id": "110000000000000002",
+    "content": "",
+    "attachments": [
+      {
+        "id": "110000000000000003",
+        "filename": "image.png",
+        "size": 68,
+        "url": "https://cdn.discordapp.com/attachments/110000000000000002/110000000000000003/image.png",
+        "proxy_url": "https://media.discordapp.net/attachments/110000000000000002/110000000000000003/image.png",
+        "width": 1,
+        "height": 1,
+        "content_type": "image/png"
+      },
+      {
+        "id": "110000000000000004",
+        "filename": "image.jpg",
+        "size": 631,
+        "url": "https://cdn.discordapp.com/attachments/110000000000000002/110000000000000004/image.jpg",
+        "proxy_url": "https://media.discordapp.net/attachments/110000000000000002/110000000000000004/image.jpg",
+        "width": 1,
+        "height": 1,
+        "content_type": "image/jpeg"
+      }
+    ]
+  }
+}

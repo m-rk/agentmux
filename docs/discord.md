@@ -58,6 +58,16 @@ or credential.
    and `discord edit` needs **Send Messages in Threads** (message edits go
    through the bot), both as channel overrides on the forum.
 
+## Image attachments
+
+`agentmux discord post` and `agentmux discord reply` accept repeatable
+`-image PATH` flags. Each file must be a readable PNG, JPEG, or GIF no larger
+than 8 MiB. Discord receives at most ten files per message. When there are
+more than ten, the first message carries the body and remaining files are sent
+in ordered continuation messages. With `-json`, `attachment_urls` lists every
+URL returned by Discord in upload order. Dry-run does not read or preview image
+files.
+
 ## Test thread
 
 Task sessions must never touch live asks, but dry-run can't show emoji
