@@ -131,13 +131,13 @@ func TestCodexRunArgs(t *testing.T) {
 	}
 }
 
-func TestCodexTaskRunGetsRegistryOnlyNetworkPolicy(t *testing.T) {
+func TestCodexTaskRunGetsRegistryAndLocalPreviewNetworkPolicy(t *testing.T) {
 	args, err := CodexRunArgs(CodexRunOptions{Workdir: "/work/task", Task: true}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(args, " ")
-	for _, want := range []string{"features.network_proxy=true", "permissions.workspace.network.enabled=true", "permissions.workspace.network.allow_local_binding=false"} {
+	for _, want := range []string{"features.network_proxy=true", "permissions.workspace.network.enabled=true", "permissions.workspace.network.allow_local_binding=true"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("task args do not enable the constrained network proxy setting %q: %s", want, joined)
 		}
@@ -154,8 +154,9 @@ func TestCodexTaskRunGetsRegistryOnlyNetworkPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(strings.Join(normal, " "), "network.domains") {
-		t.Errorf("non-task args include registry network policy: %v", normal)
+	normalArgs := strings.Join(normal, " ")
+	if strings.Contains(normalArgs, "features.network_proxy=true") || strings.Contains(normalArgs, "permissions.workspace.network") {
+		t.Errorf("non-task args include task network policy: %v", normal)
 	}
 }
 

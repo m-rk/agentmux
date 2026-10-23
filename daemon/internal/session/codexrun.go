@@ -101,20 +101,20 @@ type CodexRunOptions struct {
 	// AllowUnsafe is the instance's explicit opt-in (CodexUnsafeSandboxEnv)
 	// for danger-full-access.
 	AllowUnsafe bool
-	// Task enables Codex's managed, domain-filtered network proxy for
-	// package registries. It is intentionally derived from the instance
+	// Task enables Codex's managed, domain-filtered network policy for package
+	// registries and task-local previews. It is derived from the instance
 	// identity by the caller, not user-controlled run input.
 	Task bool
 }
 
-// taskRegistryConfig is applied only to task runs. Codex's sandbox still
-// confines filesystem access; this profile grants network access through
-// the managed proxy to package registry endpoints only.
-var taskRegistryConfig = []string{
+// taskNetworkConfig is applied only to task runs. The sandbox still
+// confines filesystem access; the managed proxy permits package registries
+// and task-local loopback listeners for preview servers.
+var taskNetworkConfig = []string{
 	"default_permissions=workspace",
 	"features.network_proxy=true",
 	"permissions.workspace.network.enabled=true",
-	"permissions.workspace.network.allow_local_binding=false",
+	"permissions.workspace.network.allow_local_binding=true",
 	// One inline table: codex splits a dotted -c key on every dot, even
 	// inside quotes, so per-domain keys fail to load ("unknown variant").
 	`permissions.workspace.network.domains={"registry.npmjs.org"="allow","proxy.golang.org"="allow","sum.golang.org"="allow","pypi.org"="allow","files.pythonhosted.org"="allow"}`,
@@ -237,7 +237,7 @@ func CodexRunArgs(opts CodexRunOptions, threadID string) ([]string, error) {
 	}
 	args = append(args, "-s", sandbox)
 	if opts.Task {
-		for _, config := range taskRegistryConfig {
+		for _, config := range taskNetworkConfig {
 			args = append(args, "-c", config)
 		}
 	}
