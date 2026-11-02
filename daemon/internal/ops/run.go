@@ -60,7 +60,9 @@ type RunRequest struct {
 	// Model, Effort and Sandbox are per-run codex overrides (sessions run
 	// -model/-effort/-sandbox); empty falls back to the instance's
 	// AGENTMUX_MODEL, codex's own effort default, and workspace-write.
-	// Ignored for amp. danger-full-access needs the instance's explicit
+	// For claude-code, Model and Effort are the launch pin the session
+	// must run on (see runClaude); Sandbox is refused there. Ignored for
+	// amp. danger-full-access needs the instance's explicit
 	// AGENTMUX_CODEX_ALLOW_UNSAFE_SANDBOX=1.
 	Model   string
 	Effort  string
@@ -171,7 +173,7 @@ func runInstanceFields(name, label string) (map[string]string, transcript.Source
 	if err != nil {
 		return nil, transcript.Source{}, err
 	}
-	if src.Agent == "codex" || src.Agent == "opencode" {
+	if src.Agent == "codex" || src.Agent == "opencode" || src.Agent == "claude-code" {
 		fields, err := session.ReadRegistry(name)
 		if err != nil {
 			return nil, transcript.Source{}, Refuse(safesend.ReasonNotFound, "no instance %q on this host", name)
@@ -179,7 +181,7 @@ func runInstanceFields(name, label string) (map[string]string, transcript.Source
 		return fields, src, nil
 	}
 	if src.Agent != "amp" {
-		return nil, transcript.Source{}, Refuse(safesend.ReasonUnsupported, "sessions run is only for amp and codex instances; %s is %q", label, src.Agent)
+		return nil, transcript.Source{}, Refuse(safesend.ReasonUnsupported, "sessions run is only for amp, codex and claude-code instances; %s is %q", label, src.Agent)
 	}
 	if src.AmpRunnerID == "" {
 		return nil, transcript.Source{}, Refuse(safesend.ReasonUnsupported, "%s has no amp runner id", label)
@@ -303,6 +305,9 @@ func (e Env) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	}
 	if src.Agent == "codex" {
 		return e.runCodex(ctx, req, addr, text, fields, workdir)
+	}
+	if src.Agent == "claude-code" {
+		return e.runClaude(ctx, req, addr, text, fields)
 	}
 	if src.Agent == "opencode" {
 		if req.DryRun {

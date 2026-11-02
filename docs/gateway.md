@@ -200,7 +200,7 @@ agentmux sessions create -template web@build-box -instance task-42 -branch featu
   -model opus -effort high
 ```
 
-`-model` takes an alias (`opus`, `sonnet`, `haiku`, optionally `[1m]`) or a
+`-model` takes an alias (`fable`, `opus`, `sonnet`, `haiku`, optionally `[1m]`) or a
 full id (`claude-<family>-<version>`); `-effort` is `low`, `medium`, `high`,
 `xhigh` or `max`. They are recorded in the instance's registry
 (`AGENTMUX_CLAUDE_MODEL`, `AGENTMUX_CLAUDE_EFFORT`) before the first launch
@@ -211,8 +211,26 @@ a template with none launches with no flags, exactly as before.
 An unsupported model or effort is refused (`invalid`) before anything is
 created, never replaced by a default; so is a pin on a non-claude template
 (`unsupported`) or a pin that differs from an existing instance's (a pin
-applies only at creation). `sessions run` is codex and amp only, so claude
-has no per-run override.
+applies only at creation).
+
+`sessions run` takes the same flags for a claude-code instance:
+
+```sh
+agentmux sessions run -file prompt.md -model opus -effort high task-42@build-box
+```
+
+The prompt is pasted into the running session. A claude session's model and
+effort are fixed by the flags it was launched with, so when `-model` or
+`-effort` differs from the instance's current pin, the pin is recorded in its
+registry (as above), the session is restarted so it launches with
+`claude --model` / `--effort`, and the prompt is delivered once it is ready;
+the old pin is restored if delivery fails. A value that already matches, or
+no flags, leaves the session untouched. Restarting ends the live conversation
+(it is resumed only if the instance has a `AGENTMUX_RESUME` session), so pass
+a different model or effort only to an idle session or one made for the run.
+An unsupported model or effort is refused (`invalid`) before anything
+changes, as is `-sandbox` or a `#thread` suffix; the same flags on codex are
+unchanged (see [codex-run.md](codex-run.md)).
 
 Confirm what started with `sessions status`: for claude-code it reports
 `claude.pinned_model`, `claude.pinned_effort` and `claude.actual_model` (the

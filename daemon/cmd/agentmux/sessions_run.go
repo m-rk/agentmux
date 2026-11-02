@@ -40,8 +40,8 @@ func runSessionsRun(args []string) {
 	var labels labelFlags
 	fs.Var(&labels, "label", "amp thread label; repeatable, rides -l on every run so `amp threads list --label X` finds it")
 	mode := fs.String("mode", "", "explicit amp -m/--mode for this run only, overriding the host file and the instance override")
-	model := fs.String("model", "", "codex only: model for this run (default: the instance's model)")
-	effort := fs.String("effort", "", "codex only: reasoning effort for this run (-c model_reasoning_effort=...)")
+	model := fs.String("model", "", "codex or claude-code: model for this run (codex default: the instance's model; claude-code: pinned on the instance and the session relaunched when it differs, unknown values refused)")
+	effort := fs.String("effort", "", "codex: reasoning effort for this run (-c model_reasoning_effort=...); claude-code: low, medium, high, xhigh or max (claude --effort)")
 	sandbox := fs.String("sandbox", "", "codex only: read-only or workspace-write (default); danger-full-access needs AGENTMUX_CODEX_ALLOW_UNSAFE_SANDBOX=1 on the instance")
 	dryRun := fs.Bool("dry-run", false, "validate the run without starting any amp thread (deploy smoke test)")
 	template := fs.String("template", "", "dry-run only: validate against this existing amp instance instead of the target, which may not exist yet (deploy smoke test)")

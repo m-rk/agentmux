@@ -20,7 +20,7 @@ var (
 	// [1m] suffix) or a full id (claude-<family>-<version>...). Anything
 	// else is refused up front rather than left for claude to reject
 	// inside a detached tmux pane, or to fall back silently.
-	claudeAliasRE = regexp.MustCompile(`^(opus|sonnet|haiku|best|opusplan)(\[1m\])?$`)
+	claudeAliasRE = regexp.MustCompile(`^(fable|opus|sonnet|haiku|best|opusplan)(\[1m\])?$`)
 	claudeIDRE    = regexp.MustCompile(`^claude-[a-z0-9][a-z0-9.-]{0,63}(\[1m\])?$`)
 )
 

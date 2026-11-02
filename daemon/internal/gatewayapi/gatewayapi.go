@@ -154,8 +154,8 @@ type RunRequest struct {
 	// Template is dry-run only: the instance the run readiness is
 	// validated against when the target need not exist yet.
 	Template string `json:"template,omitempty"`
-	// Model, Effort and Sandbox are per-run codex overrides; see
-	// ops.RunRequest.
+	// Model, Effort and Sandbox are per-run codex overrides, and the
+	// model/effort pin of a claude-code run; see ops.RunRequest.
 	Model   string `json:"model,omitempty"`
 	Effort  string `json:"effort,omitempty"`
 	Sandbox string `json:"sandbox,omitempty"`

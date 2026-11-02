@@ -305,12 +305,12 @@ func TestRunRefusals(t *testing.T) {
 			wantReason(t, rerr, tc.want)
 		})
 	}
-	// A claude-code instance is unsupported, not invalid.
+	// An agent without a run path is unsupported, not invalid.
 	workdir := filepath.Join(t.TempDir(), "w")
 	if err := os.Mkdir(workdir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(discovery.EnvDir, "cc.env"), []byte("AGENTMUX_AGENT=claude-code\nAGENTMUX_WORKDIR="+workdir+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(discovery.EnvDir, "cc.env"), []byte("AGENTMUX_AGENT=zero\nAGENTMUX_WORKDIR="+workdir+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	restore, _ := session.AmpSwapForTest("T-55555555-5555-4555-8555-555555555555", nil)
