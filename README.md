@@ -96,6 +96,11 @@ Every backend here aims for:
   `claude-code`, `zero`, `opencode`, `kilo`, and `amp` instances end to end
   (registry file, systemd unit/LaunchAgent, tmux session) on Linux or macOS.
   `agentmux new -y ...` does the same non-interactively, for scripting.
+  To run an instance in a folder that already exists (no worktree, no
+  branch), pass its absolute path: `agentmux new -y -agent claude-code
+  -instance NAME -workdir /path/to/folder [-model M] [-effort E]`. A missing
+  folder, or one that is already another instance's workdir, is refused;
+  add `-create-workdir` to create a missing folder instead.
 - **Multi-host** — list other machines in `~/.config/agentmux/hosts.yaml`
   (e.g. reachable over Tailscale) and the TUI dials all of them at once,
   merged into one table.

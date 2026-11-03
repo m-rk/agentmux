@@ -917,8 +917,12 @@ type CreateInstanceRequest struct {
 	// opencode task workers only. Allows this instance's own worktree as an
 	// external project directory, without allowing sibling worktrees.
 	AllowWorktree bool `protobuf:"varint,19,opt,name=allow_worktree,json=allowWorktree,proto3" json:"allow_worktree,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// Require `workdir` to be an existing directory (absolute path) that no
+	// other instance already uses, and use it as is: nothing is created, no
+	// worktree or branch is made. Without it, a missing workdir is created.
+	ExistingWorkdir bool `protobuf:"varint,20,opt,name=existing_workdir,json=existingWorkdir,proto3" json:"existing_workdir,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *CreateInstanceRequest) Reset() {
@@ -1080,6 +1084,13 @@ func (x *CreateInstanceRequest) GetClaudeEffort() string {
 func (x *CreateInstanceRequest) GetAllowWorktree() bool {
 	if x != nil {
 		return x.AllowWorktree
+	}
+	return false
+}
+
+func (x *CreateInstanceRequest) GetExistingWorkdir() bool {
+	if x != nil {
+		return x.ExistingWorkdir
 	}
 	return false
 }
@@ -2098,7 +2109,7 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\x06action\x18\x02 \x01(\x0e2\x1b.agentmuxd.v1.ControlActionR\x06action\";\n" +
 	"\x0fControlResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\x9c\x05\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xc7\x05\n" +
 	"\x15CreateInstanceRequest\x12#\n" +
 	"\rinstance_name\x18\x01 \x01(\tR\finstanceName\x12\x14\n" +
 	"\x05agent\x18\x02 \x01(\tR\x05agent\x12\x1a\n" +
@@ -2121,7 +2132,8 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"allowFiles\x12!\n" +
 	"\fclaude_model\x18\x11 \x01(\tR\vclaudeModel\x12#\n" +
 	"\rclaude_effort\x18\x12 \x01(\tR\fclaudeEffort\x12%\n" +
-	"\x0eallow_worktree\x18\x13 \x01(\bR\rallowWorktree\"B\n" +
+	"\x0eallow_worktree\x18\x13 \x01(\bR\rallowWorktree\x12)\n" +
+	"\x10existing_workdir\x18\x14 \x01(\bR\x0fexistingWorkdir\"B\n" +
 	"\x16CreateInstanceResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"\x19\n" +

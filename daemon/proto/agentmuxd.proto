@@ -232,6 +232,10 @@ message CreateInstanceRequest {
   // opencode task workers only. Allows this instance's own worktree as an
   // external project directory, without allowing sibling worktrees.
   bool allow_worktree = 19;
+  // Require `workdir` to be an existing directory (absolute path) that no
+  // other instance already uses, and use it as is: nothing is created, no
+  // worktree or branch is made. Without it, a missing workdir is created.
+  bool existing_workdir = 20;
 }
 
 message CreateInstanceResponse {

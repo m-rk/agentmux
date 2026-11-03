@@ -40,6 +40,7 @@ type Options struct {
 	ClaudeEffort    string   // claude-code only; pinned --effort (AGENTMUX_CLAUDE_EFFORT) — see proto doc
 	AllowFiles      []string // files outside the workdir the agent may read and edit — see proto doc
 	AllowWorktree   bool     // opencode task worker's own worktree only
+	ExistingWorkdir bool     // Workdir must be an existing directory no other instance uses — see proto doc
 }
 
 var identifierRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
@@ -97,6 +98,11 @@ func Create(opts Options) (string, error) {
 	if err := guardAgentMismatch(name, opts.Agent); err != nil {
 		return "", err
 	}
+	if opts.ExistingWorkdir {
+		if err := checkExistingWorkdir(name, opts.Workdir); err != nil {
+			return "", err
+		}
+	}
 	if opts.Agent != "amp" && (opts.AmpDirs != "" || opts.AmpDiscoverDirs || opts.AmpUpdate != "" || opts.AmpMode != "") {
 		return "", fmt.Errorf("amp-only options (-amp-dirs, -amp-discover-dirs, -amp-update, -amp-mode) are not supported for the %q agent", opts.Agent)
 	}
@@ -115,6 +121,46 @@ func Create(opts Options) (string, error) {
 		}
 	}
 	return msg, nil
+}
+
+// checkExistingWorkdir refuses a workdir that is relative, missing, not a
+// directory, or already the workdir of a different instance (compared after
+// resolving symlinks, so two spellings of one folder still collide).
+func checkExistingWorkdir(name, workdir string) error {
+	if workdir == "" {
+		return fmt.Errorf("an existing workdir was requested but no workdir was given")
+	}
+	if !filepath.IsAbs(workdir) {
+		return fmt.Errorf("workdir must be an absolute path: %q", workdir)
+	}
+	resolved, err := filepath.EvalSymlinks(workdir)
+	if err != nil {
+		return fmt.Errorf("workdir %s does not exist or cannot be read: %w", workdir, err)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return fmt.Errorf("workdir %s: %w", workdir, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("workdir %s is not a directory", workdir)
+	}
+	instances, err := discovery.List()
+	if err != nil {
+		return fmt.Errorf("checking existing instances: %w", err)
+	}
+	for _, inst := range instances {
+		if inst.Name == name || inst.Workdir == "" {
+			continue
+		}
+		other, err := filepath.EvalSymlinks(inst.Workdir)
+		if err != nil {
+			other = filepath.Clean(inst.Workdir)
+		}
+		if other == resolved {
+			return fmt.Errorf("workdir %s is already the workdir of instance %q; pick a different folder", workdir, inst.Name)
+		}
+	}
+	return nil
 }
 
 func createForAgent(opts Options) (string, error) {

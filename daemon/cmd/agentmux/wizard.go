@@ -38,10 +38,12 @@ func runWizard(args []string) {
 	agent := fs.String("agent", "", "claude-code | zero | opencode | kilo | amp; -y only")
 	hostName := fs.String("host-name", "", "claude-code/kilo display hostname; blank = derive from the target device; -y only")
 	provider := fs.String("provider", "", "zero/opencode/kilo only; \"ollama\" or a custom provider id; -y only")
-	model := fs.String("model", "", "zero/opencode/kilo only; -y only")
+	model := fs.String("model", "", "zero/opencode/kilo model, or claude-code's pinned model (an alias such as opus, or a full id); -y only")
+	effort := fs.String("effort", "", "claude-code only: pinned effort (low, medium, high, xhigh, max); -y only")
 	providerBaseURL := fs.String("provider-base-url", "", "zero/opencode/kilo only; required when -provider isn't \"ollama\"; -y only")
 	providerAPIKeyEnv := fs.String("provider-api-key-env", "", "kilo/opencode only, not zero; optional; env var name (not the key itself) holding a custom provider's API key; -y only")
-	workdir := fs.String("workdir", "", "blank = provisioner default; -y only")
+	workdir := fs.String("workdir", "", "absolute path of an existing folder to use as is (no worktree or branch is made; refused if missing or another instance's workdir); blank = provisioner default; -y only")
+	createWorkdir := fs.Bool("create-workdir", false, "with -workdir: create the folder if it is missing instead of refusing; -y only")
 	runUser := fs.String("run-user", "", "Linux only, required there; -y only")
 	resume := fs.String("resume", "", "claude-code only, a session ID; -y only")
 	compact := fs.String("compact", "", "claude-code only: \"\" (default/on) or \"off\"; -y only")
@@ -88,12 +90,19 @@ func runWizard(args []string) {
 	defer client.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+	reqModel, claudeModel := *model, ""
+	if *agent == "claude-code" {
+		reqModel, claudeModel = "", *model
+	}
 	resp, err := client.CreateInstance(ctx, &pb.CreateInstanceRequest{
 		InstanceName:      *instance,
 		Agent:             *agent,
 		HostName:          *hostName,
 		Provider:          *provider,
-		Model:             *model,
+		Model:             reqModel,
+		ClaudeModel:       claudeModel,
+		ClaudeEffort:      *effort,
+		ExistingWorkdir:   *workdir != "" && !*createWorkdir,
 		Workdir:           *workdir,
 		ResumeSessionId:   *resume,
 		RunUser:           *runUser,
