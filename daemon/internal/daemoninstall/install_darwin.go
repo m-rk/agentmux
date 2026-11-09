@@ -196,6 +196,19 @@ func Install(doctorTime string) error {
 	if err := reloadGatewayAgent(domain, gatewayPlist); err != nil {
 		return err
 	}
+	// The same goes for every other agentmux job still pinned to the old
+	// binary: instance jobs, their .update jobs and the self-update job.
+	// Without this they fail to spawn silently after a swap (AMUX-125).
+	agentsDir := filepath.Dir(plist)
+	reloaded, err := reloadLoadedAgentJobs(domain, agentsDir, map[string]bool{
+		label: true, doctorLabel: true, gcLabel: true, "com.m-rk.agentmux.gateway": true,
+	})
+	if len(reloaded) > 0 {
+		fmt.Printf("Re-registered %d other launchd jobs against the new binary\n", len(reloaded))
+	}
+	if err != nil {
+		return err
+	}
 
 	sock := filepath.Join(dir, "run", "agentmuxd.sock")
 	bin := filepath.Join(dir, "bin", "agentmux")
