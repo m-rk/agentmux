@@ -39,6 +39,7 @@ type fakeBackend struct {
 	shipErr     error
 	versions    map[string]string
 	versionsErr error
+	warnings    []string
 	logLines    []string
 	logErr      error
 }
@@ -152,6 +153,12 @@ func (f *fakeBackend) Versions(context.Context) (map[string]string, error) {
 		out[repo] = sha
 	}
 	return out, f.versionsErr
+}
+
+func (f *fakeBackend) VersionWarnings(context.Context) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.warnings...)
 }
 
 func (f *fakeBackend) SelfUpdateLog(_ context.Context, lines int) ([]string, error) {

@@ -16,6 +16,7 @@ import (
 
 	"github.com/m-rk/agentmux/daemon/internal/address"
 	"github.com/m-rk/agentmux/daemon/internal/daemoninstall"
+	"github.com/m-rk/agentmux/daemon/internal/gateway"
 	"github.com/m-rk/agentmux/daemon/internal/gatewayclient"
 	"github.com/m-rk/agentmux/daemon/internal/hostsconfig"
 	"github.com/m-rk/agentmux/daemon/internal/ops"
@@ -62,6 +63,11 @@ func selfUpdateInstallRepo(home string, cfg selfUpdateHostConfig, repo, built st
 	}
 	clearSelfUpdateFailure(home, repo)
 	fmt.Printf("self-update: deployed %s@%s\n", repo, wantSHA)
+	if repo == "agentmux" {
+		if err := reregisterSelfUpdateJob(home); err != nil {
+			log.Printf("self-update: could not schedule re-registering the self-update job: %v", err)
+		}
+	}
 	return nil
 }
 
@@ -675,7 +681,7 @@ func runSessionsVersions(args []string) {
 		if err != nil {
 			log.Fatalf("sessions versions: %v", err)
 		}
-		printVersions(*jsonOut, host, vers, logLines)
+		printVersions(*jsonOut, host, vers, logLines, gateway.VersionWarnings(home, time.Now(), gateway.ListLaunchdJobs()))
 		return
 	}
 	baseURL := versionsGateway(*hostsPath, host)
@@ -692,7 +698,7 @@ func runSessionsVersions(args []string) {
 		e := ops.AsError(err)
 		log.Fatalf("sessions versions: %s: %s", e.Reason, e.Detail)
 	}
-	printVersions(*jsonOut, vers.Host, vers.Versions, logRes.Lines)
+	printVersions(*jsonOut, vers.Host, vers.Versions, logRes.Lines, vers.Warnings)
 }
 
 // runSessionsSelfUpdateLog is `agentmux sessions selfupdate-log`: tail a
@@ -750,10 +756,13 @@ func versionsGateway(hostsPath, host string) string {
 	return ""
 }
 
-func printVersions(jsonOut bool, host string, vers map[string]string, logLines []string) {
+func printVersions(jsonOut bool, host string, vers map[string]string, logLines, warnings []string) {
 	if jsonOut {
-		writeJSON(map[string]any{"ok": true, "host": host, "versions": vers, "log": logLines})
+		writeJSON(map[string]any{"ok": true, "host": host, "versions": vers, "log": logLines, "warnings": warnings})
 		return
+	}
+	for _, w := range warnings {
+		fmt.Printf("WARNING %s: %s\n", host, w)
 	}
 	fmt.Printf("installed on %s:\n", host)
 	for _, repo := range selfupdate.Repos {

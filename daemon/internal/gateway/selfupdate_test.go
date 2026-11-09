@@ -2,10 +2,14 @@ package gateway
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/m-rk/agentmux/daemon/internal/gatewayapi"
+	"github.com/m-rk/agentmux/daemon/internal/selfupdate"
 )
 
 // The self-update ops are host-wide like gc: the grant names the op,
@@ -95,5 +99,45 @@ func TestSelfUpdateOpsAreKnownOps(t *testing.T) {
 	}
 	if rec := h.post("list", `{}`); rec.Code != 403 {
 		t.Errorf("list with dropped grant: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestVersionsCarriesHostWarnings(t *testing.T) {
+	h := newHarness(t, all(gatewayapi.OpVersions))
+	h.backend.versions = map[string]string{"agentmux": "2fe1a235a6f68f54bafcdcf2479e85c97b47a32e"}
+	h.backend.warnings = []string{"agentmux installed 2fe1a23 lags shipped 9999999 for 45 minutes: the host's updater is not installing it"}
+	rec := h.post(gatewayapi.OpVersions, `{}`)
+	var res gatewayapi.VersionsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "lags shipped") {
+		t.Errorf("warnings = %v", res.Warnings)
+	}
+}
+
+func TestVersionWarningsFromStateFiles(t *testing.T) {
+	home := t.TempDir()
+	shipped, versions, _ := SelfUpdateFiles(home)
+	if err := os.MkdirAll(filepath.Dir(shipped), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shaA, shaB := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	for path, sha := range map[string]string{shipped: shaB, versions: shaA} {
+		if err := selfupdate.SaveCommits(path, map[string]string{"agentmux": sha}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	if got := VersionWarnings(home, now, nil); len(got) != 0 {
+		t.Errorf("just shipped warned: %v", got)
+	}
+	old := now.Add(-time.Hour)
+	if err := os.Chtimes(shipped, old, old); err != nil {
+		t.Fatal(err)
+	}
+	got := VersionWarnings(home, now, selfupdate.ParseLaunchctlList("-\t78\tcom.agentmux.x\n"))
+	if len(got) != 2 || !strings.Contains(got[0], "lags shipped") || !strings.Contains(got[1], "com.agentmux.x (exit 78)") {
+		t.Errorf("warnings = %v, want lag then stuck job", got)
 	}
 }

@@ -105,5 +105,17 @@ prints installed vs shipped per repo on the host itself.
    and warns when shipped stays ahead of installed for over 30
    minutes.
 
+`sessions versions <host>` also prints `WARNING` lines the host reports about
+itself (the gateway adds a `warnings` list to its versions reply):
+
+- an installed commit that differs from the shipped one for more than 30
+  minutes (the age is when `shipped.json` was last written);
+- agentmux launchd jobs that are not running and last exited non-zero, such
+  as exit 78 after a binary swap left a job pinned to the old binary.
+
+After installing agentmux, a run started by the self-update job re-registers
+that job from a detached shell a few seconds later, so the job is not left
+pinned to the replaced binary.
+
 Follow-up once this works (not here): remove the "deploy pending"
 lines and the console observer's Mac-deploy watch.

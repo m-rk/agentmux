@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"time"
 
 	"github.com/m-rk/agentmux/daemon/internal/address"
 	"github.com/m-rk/agentmux/daemon/internal/ops"
@@ -83,6 +84,12 @@ func (LocalBackend) ShipPublish(ctx context.Context, commits map[string]string) 
 // versions file.
 func (LocalBackend) Versions(ctx context.Context) (map[string]string, error) {
 	return InstalledVersions(ctx, selfUpdateHome())
+}
+
+// VersionWarnings is this host's self-reported update problems (see
+// selfupdate.LagWarnings and StuckJobWarnings).
+func (LocalBackend) VersionWarnings(_ context.Context) []string {
+	return VersionWarnings(selfUpdateHome(), time.Now(), ListLaunchdJobs())
 }
 
 // SelfUpdateLog tails this host's updater event log. lines <= 0 means

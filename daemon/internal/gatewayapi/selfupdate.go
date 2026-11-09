@@ -39,6 +39,10 @@ type VersionsRequest struct{}
 type VersionsResponse struct {
 	Host     string            `json:"host"`
 	Versions map[string]string `json:"versions"`
+	// Warnings are problems the host found in itself: an installed commit
+	// that lags the shipped one past the threshold, or launchd jobs stuck
+	// failing to start. Empty when healthy; hosts that predate it omit it.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // SelfUpdateLogRequest tails the updater log. Lines caps the reply.

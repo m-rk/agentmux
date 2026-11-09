@@ -59,7 +59,11 @@ func (s *Server) selfUpdateOp(w http.ResponseWriter, r *http.Request, a *access,
 			s.refuse(w, a, gatewayapi.HTTPStatus(e.Reason), e.Reason, e.Detail)
 			return
 		}
-		s.reply(w, a, http.StatusOK, gatewayapi.VersionsResponse{Host: s.backend.Host(), Versions: out})
+		resp := gatewayapi.VersionsResponse{Host: s.backend.Host(), Versions: out}
+		if wb, ok := s.backend.(WarningBackend); ok {
+			resp.Warnings = wb.VersionWarnings(r.Context())
+		}
+		s.reply(w, a, http.StatusOK, resp)
 	case gatewayapi.OpSelfUpdateLog:
 		var req gatewayapi.SelfUpdateLogRequest
 		if !s.decode(w, a, body, &req, true) {
