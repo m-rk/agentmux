@@ -670,7 +670,11 @@ func compactAndResolveResume(tmux func(args ...string) *exec.Cmd, name, workdir,
 		if err != nil {
 			return "", fmt.Errorf("checking whether %s is already compacted: %w", session, err)
 		}
-		if !alreadyCompacted {
+		size := provision.LatestTranscriptBytes(workdir, runUser)
+		if alreadyCompacted {
+			fmt.Printf("%s: not compacting: nothing new since the last compact (transcript %d bytes)\n", name, size)
+		} else {
+			fmt.Printf("%s: compacting: new context since the last compact (transcript %d bytes before)\n", name, size)
 			home, owner, err := tmuxLockHomeAndOwner(runUser)
 			if err != nil {
 				return "", err

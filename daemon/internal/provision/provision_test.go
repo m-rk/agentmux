@@ -510,3 +510,52 @@ func TestTailLinesGrowsAcrossWindows(t *testing.T) {
 		}
 	}
 }
+
+// An idle session logs non-conversation lines (bridge status, local-command
+// output) all day, and a refused /compact leaves its echo behind each night.
+// Neither may bury the compact summary: the session is still at its
+// boundary and must not be compacted again (AMUX-130).
+func TestTranscriptAtCompactBoundaryIgnoresIdleNoise(t *testing.T) {
+	const (
+		summary = `{"type":"user","isCompactSummary":true,"message":{"role":"user","content":"This session is being continued"}}`
+		caveat  = `{"type":"user","isMeta":true,"message":{"role":"user","content":"<local-command-caveat>x</local-command-caveat>"}}`
+		cmd     = `{"type":"user","message":{"role":"user","content":"<command-name>/compact</command-name>"}}`
+		noise   = `{"type":"system","subtype":"bridge_status"}`
+		real    = `{"type":"user","message":{"role":"user","content":"do the thing"}}`
+	)
+	write := func(t *testing.T, lines []string) string {
+		path := filepath.Join(t.TempDir(), "s.jsonl")
+		if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	repeat := func(l string, n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = l
+		}
+		return out
+	}
+
+	// Summary, then thousands of status lines: far past the first window.
+	lines := append([]string{real, summary}, repeat(noise, 5000)...)
+	if got, err := transcriptAtCompactBoundary(write(t, lines)); err != nil || !got {
+		t.Errorf("summary under idle noise: got %v, %v; want true", got, err)
+	}
+
+	// Summary, then many nights of refused /compact echoes interleaved with noise.
+	lines = []string{real, summary}
+	for range maxBookkeepingLookback * 3 {
+		lines = append(lines, caveat, cmd, noise, noise, noise)
+	}
+	if got, err := transcriptAtCompactBoundary(write(t, lines)); err != nil || !got {
+		t.Errorf("summary under repeated compact echoes: got %v, %v; want true", got, err)
+	}
+
+	// Real activity after the summary, then noise: not a boundary.
+	lines = append([]string{summary, real}, repeat(noise, 5000)...)
+	if got, err := transcriptAtCompactBoundary(write(t, lines)); err != nil || got {
+		t.Errorf("real turn after summary: got %v, %v; want false", got, err)
+	}
+}

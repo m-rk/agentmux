@@ -435,11 +435,47 @@ func LastMessageIsCompactSummary(workdir, runUser string) (bool, error) {
 		return false, err
 	}
 	path := filepath.Join(home, ".claude", "projects", slugifyWorkdir(workdir), sessions[0].SessionID+".jsonl")
-	lines, err := tailLines(path, minTailScanLines)
-	if err != nil {
-		return false, err
+	return transcriptAtCompactBoundary(path)
+}
+
+// transcriptAtCompactBoundary reads back through the transcript at path until
+// the scan has a verdict or the file is exhausted, quadrupling the window
+// each time.
+func transcriptAtCompactBoundary(path string) (bool, error) {
+	for want := minTailScanLines; ; want *= 4 {
+		lines, err := tailLines(path, want)
+		if err != nil {
+			return false, err
+		}
+		boundary, decided := scanCompactBoundary(lines)
+		if decided || len(lines) < want || want >= maxTailScanLines {
+			return boundary, nil
+		}
 	}
-	return atCompactBoundary(lines), nil
+}
+
+// maxTailScanLines caps how far back LastMessageIsCompactSummary reads when
+// the scan stays undecided, so a huge transcript of non-conversation lines
+// can't turn the nightly check into a full-file parse. Hitting it reports
+// "not a boundary", the pre-existing safe default.
+const maxTailScanLines = 60000
+
+// LatestTranscriptBytes is the size of workdir's newest session transcript,
+// or 0 when there is none or it can't be read. It only feeds log lines.
+func LatestTranscriptBytes(workdir, runUser string) int64 {
+	sessions, err := ListResumable(workdir, runUser)
+	if err != nil || len(sessions) == 0 {
+		return 0
+	}
+	home, err := resumeHomeDir(runUser)
+	if err != nil {
+		return 0
+	}
+	info, err := os.Stat(filepath.Join(home, ".claude", "projects", slugifyWorkdir(workdir), sessions[0].SessionID+".jsonl"))
+	if err != nil {
+		return 0
+	}
+	return info.Size()
 }
 
 // minTailScanLines is how many raw transcript lines tailLines tries to
@@ -571,6 +607,22 @@ const maxBookkeepingLookback = 20
 // error, since a false negative here just means one redundant /compact,
 // not a failure.
 func atCompactBoundary(lines [][]byte) bool {
+	boundary, _ := scanCompactBoundary(lines)
+	return boundary
+}
+
+// scanCompactBoundary is atCompactBoundary plus whether the scan reached a
+// verdict. decided is false only when lines ran out before it found the
+// compact summary or a real turn, so the caller can read further back
+// instead of guessing: an idle session logs a steady stream of
+// non-conversation lines (bridge status, local-command output) that can
+// push the summary out of a short tail window.
+//
+// Slash-command echoes (the caveat, command-name and stdout lines a /compact
+// leaves, or a refused /compact leaves again each night) are recognized
+// scaffolding and don't count toward maxBookkeepingLookback; only unfamiliar
+// bookkeeping shapes do, so many idle nights in a row can't bury the summary.
+func scanCompactBoundary(lines [][]byte) (boundary, decided bool) {
 	skipped := 0
 	for i := len(lines) - 1; i >= 0; i-- {
 		var e transcriptEntry
@@ -581,16 +633,30 @@ func atCompactBoundary(lines [][]byte) bool {
 			continue // bookkeeping entry, not a conversation turn
 		}
 		if e.IsCompactSummary {
-			return true
+			return true, true
 		}
 		if isBookkeepingTurn(e) {
-			skipped++
-			if skipped > maxBookkeepingLookback {
-				return false
+			if !isLocalCommandEcho(e) {
+				skipped++
+				if skipped > maxBookkeepingLookback {
+					return false, true
+				}
 			}
 			continue
 		}
-		return false
+		return false, true
+	}
+	return false, false
+}
+
+// isLocalCommandEcho reports whether e is one of the CLI's own echo lines
+// for a slash command (see localCommandTags).
+func isLocalCommandEcho(e transcriptEntry) bool {
+	text := e.text()
+	for _, tag := range localCommandTags {
+		if strings.HasPrefix(text, tag) {
+			return true
+		}
 	}
 	return false
 }
