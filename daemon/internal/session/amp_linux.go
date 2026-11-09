@@ -44,6 +44,10 @@ func updateAmp(name string) error {
 		return fmt.Errorf("registry for %s is missing AGENTMUX_RUN_USER", name)
 	}
 	serviceName := "agentmux-" + name + ".service"
+	if unitDisabled(serviceName) {
+		fmt.Printf("%s: stopped on purpose (unit disabled), skipping the nightly update\n", name)
+		return nil
+	}
 	session := sessionNameOf(fields, name)
 	socket := tmuxSocket(name)
 

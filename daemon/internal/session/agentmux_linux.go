@@ -16,6 +16,10 @@ func updateAgentmux(name string) error {
 	}
 	runUser := fields["AGENTMUX_RUN_USER"]
 	serviceName := "agentmux-" + name + ".service"
+	if unitDisabled(serviceName) {
+		fmt.Printf("%s: stopped on purpose (unit disabled), skipping the nightly update\n", name)
+		return nil
+	}
 	agent := fields["AGENTMUX_AGENT"]
 	if runUser == "" {
 		return fmt.Errorf("registry for %s is missing AGENTMUX_RUN_USER", name)

@@ -23,6 +23,10 @@ func updateClaudeCode(name string) error {
 	if runUser == "" {
 		return fmt.Errorf("registry for %s is missing AGENTMUX_RUN_USER", name)
 	}
+	if unitDisabled(serviceName) {
+		fmt.Printf("%s: stopped on purpose (unit disabled), skipping the nightly update\n", name)
+		return nil
+	}
 	session := sessionNameOf(fields, "agentmux")
 	socket := tmuxSocket(name)
 
