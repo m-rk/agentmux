@@ -187,6 +187,7 @@ func (s *Server) CreateInstance(ctx context.Context, req *pb.CreateInstanceReque
 		ClaudeModel:     req.ClaudeModel,
 		ClaudeEffort:    req.ClaudeEffort,
 		ExistingWorkdir: req.ExistingWorkdir,
+		Env:             req.Env,
 	})
 	if err != nil {
 		return &pb.CreateInstanceResponse{Ok: false, Message: err.Error()}, nil

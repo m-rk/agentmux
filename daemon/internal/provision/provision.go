@@ -40,6 +40,7 @@ type Options struct {
 	ClaudeEffort    string   // claude-code only; pinned --effort (AGENTMUX_CLAUDE_EFFORT) — see proto doc
 	AllowFiles      []string // files outside the workdir the agent may read and edit — see proto doc
 	AllowWorktree   bool     // opencode task worker's own worktree only
+	Env             []string // claude-code and codex only; KEY=VALUE launch env, OTEL_* / CLAUDE_CODE_ENABLE_TELEMETRY only — see proto doc
 	ExistingWorkdir bool     // Workdir must be an existing directory no other instance uses — see proto doc
 }
 
@@ -102,6 +103,9 @@ func Create(opts Options) (string, error) {
 		if err := checkExistingWorkdir(name, opts.Workdir); err != nil {
 			return "", err
 		}
+	}
+	if _, err := telemetryEnvFor(opts); err != nil {
+		return "", err
 	}
 	if opts.Agent != "amp" && (opts.AmpDirs != "" || opts.AmpDiscoverDirs || opts.AmpUpdate != "" || opts.AmpMode != "") {
 		return "", fmt.Errorf("amp-only options (-amp-dirs, -amp-discover-dirs, -amp-update, -amp-mode) are not supported for the %q agent", opts.Agent)

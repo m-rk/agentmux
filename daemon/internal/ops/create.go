@@ -40,6 +40,10 @@ type CreateRequest struct {
 	// them. An unsupported value is refused, never replaced by a default.
 	Model  string
 	Effort string
+	// Env is the new instance's launch environment, KEY=VALUE, OTEL_* and
+	// CLAUDE_CODE_ENABLE_TELEMETRY keys only (claude-code and codex). Not
+	// inherited from the template; never logged or echoed in full.
+	Env []string
 }
 
 // CreateResult is the new (or reused) session plus what Create decided.
@@ -212,6 +216,15 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 		return CreateResult{}, Refuse(safesend.ReasonUnsupported, "model and effort pins are supported for claude-code only; template %s runs %s", tmpl.Instance, agent)
 	}
 
+	if len(req.Env) > 0 {
+		if agent != "claude-code" && agent != "codex" {
+			return CreateResult{}, Refuse(safesend.ReasonUnsupported, "-env is supported for claude-code and codex only; template %s runs %s", tmpl.Instance, agent)
+		}
+		if err := provision.ValidateTelemetryEnv(req.Env); err != nil {
+			return CreateResult{}, Refuse(safesend.ReasonInvalid, "%v", err)
+		}
+	}
+
 	toplevel, err := e.git(ctx, tmplWorkdir, "rev-parse", "--show-toplevel")
 	if err != nil || toplevel == "" {
 		return CreateResult{}, Refuse(safesend.ReasonUnsupported, "template %s workdir %s is not in a Git checkout", tmpl.Instance, tmplWorkdir)
@@ -256,6 +269,12 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 		}
 	}
 
+	if existing != nil && len(req.Env) > 0 {
+		if cur, err := session.ReadRegistry(req.Instance); err == nil && !provision.RegistryEnvMatches(cur, req.Env) {
+			return CreateResult{}, Refuse(safesend.ReasonInvalid, "instance %q already exists with a different -env: it only applies when the instance is created", req.Instance)
+		}
+	}
+
 	if req.Base != "" {
 		if b, err := e.git(ctx, toplevel, "check-ref-format", "--branch", req.Base); err != nil || b != req.Base {
 			return CreateResult{}, Refuse(safesend.ReasonInvalid, "base %q is not a valid branch name", req.Base)
@@ -292,6 +311,9 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 		}
 		if claudeModel != "" || claudeEffort != "" {
 			plan = append(plan, "launch claude with model "+orDefault(claudeModel)+", effort "+orDefault(claudeEffort))
+		}
+		if len(req.Env) > 0 {
+			plan = append(plan, "launch with env "+strings.Join(provision.EnvKeys(req.Env), ", ")+" (values not shown)")
 		}
 		if existing != nil {
 			plan = append(plan, "reuse instance "+req.Instance)
@@ -333,6 +355,7 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 			AllowWorktree:     agent == "opencode",
 			ClaudeModel:       claudeModel,
 			ClaudeEffort:      claudeEffort,
+			Env:               req.Env,
 		})
 		if err != nil {
 			return CreateResult{}, err

@@ -755,3 +755,64 @@ func TestCreateRetryAfterFailureStillReportsBaseCommit(t *testing.T) {
 		t.Fatalf("unexpected warnings %v", res.Warnings)
 	}
 }
+
+func claudeTemplate(t *testing.T) *createEnv {
+	t.Helper()
+	c := newCreateEnv(t)
+	tmpl := filepath.Join(discovery.EnvDir, "tmpl.env")
+	data, _ := os.ReadFile(tmpl)
+	os.WriteFile(tmpl, []byte(strings.Replace(string(data), "AGENTMUX_AGENT=opencode", "AGENTMUX_AGENT=claude-code", 1)), 0o644)
+	return c
+}
+
+func TestCreateEnvPassedToDaemon(t *testing.T) {
+	c := claudeTemplate(t)
+	req := c.req()
+	req.Env = []string{"CLAUDE_CODE_ENABLE_TELEMETRY=1", "OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer s3cret"}
+	if _, err := c.env.Create(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.d.created[0].Env; len(got) != 2 || got[1] != req.Env[1] {
+		t.Fatalf("daemon env = %q", got)
+	}
+}
+
+func TestCreateEnvRefusedBeforeAnythingIsCreated(t *testing.T) {
+	c := claudeTemplate(t)
+	req := c.req()
+	req.Env = []string{"OTEL_SERVICE_NAME=x", "AWS_SECRET_ACCESS_KEY=topsecretvalue"}
+	_, err := c.env.Create(context.Background(), req)
+	wantReason(t, err, safesend.ReasonInvalid)
+	if !strings.Contains(err.Error(), "AWS_SECRET_ACCESS_KEY") || strings.Contains(err.Error(), "topsecretvalue") {
+		t.Errorf("error should name the key and not the value: %v", err)
+	}
+	if len(c.d.created) != 0 {
+		t.Errorf("created %d instances", len(c.d.created))
+	}
+	if _, serr := os.Stat(filepath.Join(c.wtRoot, "task-1")); serr == nil {
+		t.Errorf("a refused -env still made the worktree")
+	}
+}
+
+func TestCreateEnvRefusedForOtherAgents(t *testing.T) {
+	c := newCreateEnv(t) // opencode template
+	req := c.req()
+	req.Env = []string{"OTEL_SERVICE_NAME=x"}
+	_, err := c.env.Create(context.Background(), req)
+	wantReason(t, err, safesend.ReasonUnsupported)
+}
+
+func TestCreateEnvDryRunShowsKeysOnly(t *testing.T) {
+	c := claudeTemplate(t)
+	req := c.req()
+	req.DryRun = true
+	req.Env = []string{"OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer s3cret"}
+	res, err := c.env.Create(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := strings.Join(res.Plan, "\n")
+	if !strings.Contains(plan, "OTEL_EXPORTER_OTLP_HEADERS") || strings.Contains(plan, "s3cret") {
+		t.Errorf("plan = %q", plan)
+	}
+}

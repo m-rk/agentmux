@@ -268,3 +268,19 @@ func TestPrepareClaudeAllowSettings(t *testing.T) {
 		t.Errorf("path with no allow-files = %q, want empty", got)
 	}
 }
+
+func TestLaunchEnvArgsCarriesStoredEnv(t *testing.T) {
+	fields := map[string]string{
+		"AGENTMUX_WORKDIR":                          "/w",
+		"AGENTMUX_ENV_OTEL_SERVICE_NAME":            "svc",
+		"AGENTMUX_ENV_CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+	}
+	got := launchEnvArgs(fields)
+	want := []string{"-e", "CLAUDE_CODE_ENABLE_TELEMETRY=1", "-e", "OTEL_SERVICE_NAME=svc"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("launchEnvArgs = %q, want %q", got, want)
+	}
+	if len(launchEnvArgs(map[string]string{"AGENTMUX_WORKDIR": "/w"})) != 0 {
+		t.Error("no stored env should add no args")
+	}
+}

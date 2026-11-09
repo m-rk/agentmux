@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/m-rk/agentmux/daemon/internal/provision"
 	"github.com/m-rk/agentmux/daemon/internal/runas"
 )
 
@@ -310,6 +311,11 @@ func QueueCodexMessage(ctx context.Context, instance, thread, message string) er
 func codexRunCommand(ctx context.Context, instance string, argv []string) *exec.Cmd {
 	cmd := runas.CurrentUserCommandContext(ctx, "codex", argv...)
 	cmd.Env = append(cmd.Env, AmpRunEnv(instance)...)
+	// The instance's stored launch env (telemetry); a registry that can't
+	// be read just means none.
+	if fields, err := registry(instance); err == nil {
+		cmd.Env = append(cmd.Env, provision.EnvFromRegistry(fields)...)
+	}
 	return cmd
 }
 

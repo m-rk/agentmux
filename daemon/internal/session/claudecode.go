@@ -129,6 +129,7 @@ func RunClaudeCode(name string) error {
 	// -e per variable before the command, applying to that session's
 	// initial pane (confirmed live against tmux 3.4).
 	tmuxArgs := append([]string{"-L", socket, "new-session", "-d", "-s", session, "-c", workdir}, taskSessionEnvArgs(name)...)
+	tmuxArgs = append(tmuxArgs, launchEnvArgs(fields)...)
 	tmuxArgs = append(tmuxArgs, append([]string{"claude"}, claudeArgs...)...)
 	cmd := withPath("tmux", tmuxArgs...)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -154,6 +155,18 @@ func taskSessionEnvArgs(name string) []string {
 		return nil
 	}
 	return []string{"-e", liveguard.InstanceEnv + "=" + name, "-e", liveguard.TaskEnv + "=1"}
+}
+
+// launchEnvArgs is one tmux new-session -e pair per variable stored with the
+// instance (see provision.EnvKeyPrefix), so the agent has its telemetry
+// settings from its first moment and again after every restart. Values go
+// only through -e, never claude's argv.
+func launchEnvArgs(fields map[string]string) []string {
+	var args []string
+	for _, kv := range provision.EnvFromRegistry(fields) {
+		args = append(args, "-e", kv)
+	}
+	return args
 }
 
 // claudeLaunchArgs builds the arguments after `claude`. settingsPath is

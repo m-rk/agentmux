@@ -38,19 +38,21 @@ func runSessionsCreate(args []string) {
 	fs.Var(&allowFiles, "allow-file", "absolute path, on the target host, of one file outside the worktree the agent may read and edit (repeatable)")
 	model := fs.String("model", "", "claude-code only: pin the instance's model (an alias such as opus, or a full id); default: the template's")
 	effort := fs.String("effort", "", "claude-code only: pin the instance's effort (low, medium, high, xhigh, max); default: the template's")
+	var envPairs stringList
+	fs.Var(&envPairs, "env", "launch environment KEY=VALUE for the new instance, claude-code and codex only; only OTEL_* keys and CLAUDE_CODE_ENABLE_TELEMETRY are accepted (repeatable; values are never printed)")
 	dryRun := fs.Bool("dry-run", false, "check template, names and origin base without creating anything (deploy smoke test)")
 	socketPath := fs.String("socket", daemoninstall.SocketPath(), "Unix socket of the local agentmuxd")
 	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml with the gateway URL of other hosts")
 	fs.Parse(args)
 	if fs.NArg() != 0 || *template == "" || *instance == "" || *branch == "" {
-		fmt.Fprintln(os.Stderr, "usage: agentmux sessions create [-json] [-dry-run] [-socket PATH] [-hosts PATH] -template <instance>@<host> -instance NAME -branch B [-base BRANCH] [-worktree NAME] [-allow-file PATH ...] [-model MODEL] [-effort EFFORT]")
+		fmt.Fprintln(os.Stderr, "usage: agentmux sessions create [-json] [-dry-run] [-socket PATH] [-hosts PATH] -template <instance>@<host> -instance NAME -branch B [-base BRANCH] [-worktree NAME] [-allow-file PATH ...] [-model MODEL] [-effort EFFORT] [-env KEY=VALUE ...]")
 		os.Exit(2)
 	}
 
 	req := ops.CreateRequest{
 		Template: *template, Instance: *instance, Branch: *branch,
 		Base: *base, Worktree: *worktree, AllowFiles: allowFiles,
-		DryRun: *dryRun, Model: *model, Effort: *effort,
+		DryRun: *dryRun, Model: *model, Effort: *effort, Env: envPairs,
 	}
 	var res ops.CreateResult
 	route, err := resolveRoute(req.Template, *hostsPath, address.LocalHostName())
@@ -61,7 +63,7 @@ func runSessionsCreate(args []string) {
 			res, err = route.Remote.Create(ctx, gatewayapi.CreateRequest{
 				Template: req.Template, Instance: req.Instance, Branch: req.Branch,
 				Base: req.Base, Worktree: req.Worktree, AllowFiles: req.AllowFiles,
-				DryRun: req.DryRun, Model: req.Model, Effort: req.Effort,
+				DryRun: req.DryRun, Model: req.Model, Effort: req.Effort, Env: req.Env,
 			})
 		} else {
 			res, err = ops.Env{SocketPath: *socketPath}.Create(ctx, req)

@@ -203,7 +203,11 @@ func createClaudeCode(opts Options) (string, error) {
 		return "", err
 	}
 
-	regPath, err := writeRegistry(name, []kv{
+	envFields, err := telemetryEnvFor(opts)
+	if err != nil {
+		return "", err
+	}
+	regPath, err := writeRegistry(name, append([]kv{
 		{"AGENTMUX_INSTANCE_NAME", name},
 		{"AGENTMUX_SESSION_NAME", sessionName},
 		{"AGENTMUX_TMUX_SESSION_NAME", sessionName},
@@ -217,7 +221,7 @@ func createClaudeCode(opts Options) (string, error) {
 		{"AGENTMUX_COMPACT_ON_UPDATE", opts.CompactOnUpdate},
 		{ClaudeModelKey, claudeModel},
 		{ClaudeEffortKey, claudeEffort},
-	})
+	}, envFields...))
 	if err != nil {
 		return "", err
 	}

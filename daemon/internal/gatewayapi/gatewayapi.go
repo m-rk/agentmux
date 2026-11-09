@@ -120,6 +120,9 @@ type CreateRequest struct {
 	// keeps the template's.
 	Model  string `json:"model,omitempty"`
 	Effort string `json:"effort,omitempty"`
+	// Env is the new instance's launch environment (KEY=VALUE; OTEL_* and
+	// CLAUDE_CODE_ENABLE_TELEMETRY only). Never logged.
+	Env []string `json:"env,omitempty"`
 }
 
 // CreateResponse is the session plus branch and created; a refusal is a

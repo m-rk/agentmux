@@ -110,7 +110,11 @@ func createCodex(opts Options) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	regPath, err := writeRegistry(name, []kv{
+	envFields, err := telemetryEnvFor(opts)
+	if err != nil {
+		return "", err
+	}
+	regPath, err := writeRegistry(name, append([]kv{
 		{"AGENTMUX_INSTANCE_NAME", name},
 		{"AGENTMUX_AGENT", "codex"},
 		{"AGENTMUX_MODEL", opts.Model},
@@ -121,7 +125,7 @@ func createCodex(opts Options) (string, error) {
 		{allowfiles.RegistryKey, allowFiles},
 		{"AGENTMUX_RUN_USER", runUser},
 		{"AGENTMUX_SERVICE_NAME", serviceName},
-	})
+	}, envFields...))
 	if err != nil {
 		return "", err
 	}

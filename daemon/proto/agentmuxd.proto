@@ -236,6 +236,10 @@ message CreateInstanceRequest {
   // other instance already uses, and use it as is: nothing is created, no
   // worktree or branch is made. Without it, a missing workdir is created.
   bool existing_workdir = 20;
+  // claude-code and codex only. Launch environment as KEY=VALUE, restricted
+  // to OTEL_* keys and CLAUDE_CODE_ENABLE_TELEMETRY. Stored with the
+  // instance so it survives restarts; values are never logged.
+  repeated string env = 21;
 }
 
 message CreateInstanceResponse {

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/m-rk/agentmux/daemon/internal/discovery"
 	"github.com/m-rk/agentmux/daemon/internal/liveguard"
 )
 
@@ -253,5 +254,18 @@ func TestCodexRunCommandCarriesTaskIdentity(t *testing.T) {
 		if strings.HasPrefix(e, "OPENAI_API_KEY=") || strings.HasPrefix(e, "CODEX_API_KEY=") {
 			t.Errorf("codex run env carries %s", strings.SplitN(e, "=", 2)[0])
 		}
+	}
+}
+
+// A codex run child gets the env stored with its instance.
+func TestCodexRunCommandCarriesStoredEnv(t *testing.T) {
+	dir := t.TempDir()
+	prev := discovery.EnvDir
+	discovery.EnvDir = dir
+	t.Cleanup(func() { discovery.EnvDir = prev })
+	os.WriteFile(filepath.Join(dir, "task-7.env"), []byte("AGENTMUX_INSTANCE_NAME=task-7\nAGENTMUX_ENV_OTEL_SERVICE_NAME=svc\n"), 0o644)
+	cmd := codexRunCommand(context.Background(), "task-7", []string{"exec", "-"})
+	if !contains(cmd.Env, "OTEL_SERVICE_NAME=svc") {
+		t.Errorf("codex run env lacks the stored OTEL_SERVICE_NAME")
 	}
 }

@@ -921,8 +921,12 @@ type CreateInstanceRequest struct {
 	// other instance already uses, and use it as is: nothing is created, no
 	// worktree or branch is made. Without it, a missing workdir is created.
 	ExistingWorkdir bool `protobuf:"varint,20,opt,name=existing_workdir,json=existingWorkdir,proto3" json:"existing_workdir,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// claude-code and codex only. Launch environment as KEY=VALUE, restricted
+	// to OTEL_* keys and CLAUDE_CODE_ENABLE_TELEMETRY. Stored with the
+	// instance so it survives restarts; values are never logged.
+	Env           []string `protobuf:"bytes,21,rep,name=env,proto3" json:"env,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CreateInstanceRequest) Reset() {
@@ -1093,6 +1097,13 @@ func (x *CreateInstanceRequest) GetExistingWorkdir() bool {
 		return x.ExistingWorkdir
 	}
 	return false
+}
+
+func (x *CreateInstanceRequest) GetEnv() []string {
+	if x != nil {
+		return x.Env
+	}
+	return nil
 }
 
 type CreateInstanceResponse struct {
@@ -2109,7 +2120,7 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\x06action\x18\x02 \x01(\x0e2\x1b.agentmuxd.v1.ControlActionR\x06action\";\n" +
 	"\x0fControlResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\xc7\x05\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xd9\x05\n" +
 	"\x15CreateInstanceRequest\x12#\n" +
 	"\rinstance_name\x18\x01 \x01(\tR\finstanceName\x12\x14\n" +
 	"\x05agent\x18\x02 \x01(\tR\x05agent\x12\x1a\n" +
@@ -2133,7 +2144,8 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\fclaude_model\x18\x11 \x01(\tR\vclaudeModel\x12#\n" +
 	"\rclaude_effort\x18\x12 \x01(\tR\fclaudeEffort\x12%\n" +
 	"\x0eallow_worktree\x18\x13 \x01(\bR\rallowWorktree\x12)\n" +
-	"\x10existing_workdir\x18\x14 \x01(\bR\x0fexistingWorkdir\"B\n" +
+	"\x10existing_workdir\x18\x14 \x01(\bR\x0fexistingWorkdir\x12\x10\n" +
+	"\x03env\x18\x15 \x03(\tR\x03env\"B\n" +
 	"\x16CreateInstanceResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"\x19\n" +

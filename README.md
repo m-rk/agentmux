@@ -101,6 +101,11 @@ Every backend here aims for:
   -instance NAME -workdir /path/to/folder [-model M] [-effort E]`. A missing
   folder, or one that is already another instance's workdir, is refused;
   add `-create-workdir` to create a missing folder instead.
+  `agentmux new -y` and `agentmux sessions create` also take a repeatable
+  `-env KEY=VALUE` (claude-code and codex) to start the agent with telemetry
+  settings. Only `OTEL_*` keys and `CLAUDE_CODE_ENABLE_TELEMETRY` are
+  accepted; any other key is refused by name. The values are stored with the
+  instance, so they survive restarts, and are never printed or logged.
 - **Multi-host** — list other machines in `~/.config/agentmux/hosts.yaml`
   (e.g. reachable over Tailscale) and the TUI dials all of them at once,
   merged into one table.
