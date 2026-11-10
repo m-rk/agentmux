@@ -71,7 +71,7 @@ Each entry of the array is a grant object:
 
 | field      | meaning |
 |------------|---------|
-| `ops`      | any of `list`, `status`, `threads`, `read`, `send`, `create`, `template-add`, `run`, `retire`, `gc`, `events`, `ship-publish`, `versions`, `selfupdate-log` |
+| `ops`      | any of `list`, `status`, `threads`, `read`, `send`, `create`, `template-add`, `run`, `retire`, `gc`, `events`, `ship-publish`, `versions`, `selfupdate-log`, `runners` |
 | `sessions` | `path.Match` patterns over `<instance>@<host>`; `*` does not match `/` |
 
 Entries add up: a call is allowed if any one entry allows it. There is no
