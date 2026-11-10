@@ -118,7 +118,10 @@ type Offering struct {
 // A check that failed or could not run is reported with Available false
 // and a Reason; the entry is never dropped.
 type HostAvailability struct {
-	Host      string `json:"host"`
+	Host string `json:"host"`
+	// Label is a display name for the host: the short hostname for
+	// "local", otherwise the same as Host. Never an instance address.
+	Label     string `json:"label,omitempty"`
 	Available bool   `json:"available"`
 	// Reason says why not, when Available is false.
 	Reason string `json:"reason,omitempty"`
@@ -137,6 +140,9 @@ type FuelTank struct {
 	// (read from the provider).
 	CapSource string `yaml:"cap_source,omitempty" json:"cap_source,omitempty"`
 	Note      string `yaml:"note,omitempty" json:"note,omitempty"`
+	// Subscription is read live where the runner can say: "present",
+	// "absent", or "unreadable: <why>". Never a key. Empty when not read.
+	Subscription string `yaml:"-" json:"subscription,omitempty"`
 }
 
 // Config is the host config file.

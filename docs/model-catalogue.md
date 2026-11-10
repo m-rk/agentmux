@@ -30,7 +30,7 @@ command.
       "fuel": "claude",
       "tier": "hardest",
       "hosts": [
-        {"host": "local", "available": true, "checked_at": "2026-01-01T00:00:00Z"},
+        {"host": "local", "label": "box-1", "available": true, "checked_at": "2026-01-01T00:00:00Z"},
         {"host": "host-a", "available": false, "reason": "host unreachable", "checked_at": "2026-01-01T00:00:00Z"}
       ]
     }
@@ -51,3 +51,33 @@ command.
 - `hosts[]`: one live result per configured host. A check that failed is
   listed with `available: false` and a `reason`; an entry is never dropped.
 - Fields are only ever added. Readers must ignore fields they don't know.
+
+## Live checks
+
+`agentmux models list -json` returns `{"sources": [...], "catalogue": {...}}`.
+For each host named in `hosts`, it asks:
+
+- this machine (`local`, or its own hostname): which runner executables are on `PATH`;
+- any other host: the host's gateway `runners` op, from `hosts.yaml`. The gateway
+  grant needs `runners` in its ops list. A host without a gateway, a gateway
+  that predates the op, a missing grant or an unreachable host is reported as
+  unavailable with the reason; the entry stays.
+
+`host` is the name as written in config (a `hosts.yaml` name, or `local`);
+`label` is a display name, which for `local` is the short hostname. Amp modes
+are not verified: an Amp offering is available when `amp` is installed.
+
+## Amp modes per launch
+
+Each Amp mode is its own offering with a `mode`. A launch passes it instead of
+the host-wide `mode:` in `amp.yaml`: `agentmux sessions run -mode MODE`, or
+`-amp-mode MODE` when creating an instance.
+
+## Fuel
+
+`fuel[]` records caps that can't be read from a provider as `cap_source:
+manual`. When Amp is installed, the `chatgpt` tank also gets `subscription`:
+`present`, `absent` or `unreadable: <why>`, from `amp model-providers list`.
+That output is read only after a check that no key appears in the clear
+(an unmasked-looking word makes the read fail and the output is dropped); only
+the yes/no is kept, and no key is ever stored or printed.

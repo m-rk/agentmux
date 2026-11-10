@@ -40,6 +40,7 @@ type fakeBackend struct {
 	versions    map[string]string
 	versionsErr error
 	warnings    []string
+	runners     map[string]gatewayapi.RunnerStatus
 	logLines    []string
 	logErr      error
 }
@@ -159,6 +160,12 @@ func (f *fakeBackend) VersionWarnings(context.Context) []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.warnings...)
+}
+
+func (f *fakeBackend) Runners(context.Context) map[string]gatewayapi.RunnerStatus {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.runners
 }
 
 func (f *fakeBackend) SelfUpdateLog(_ context.Context, lines int) ([]string, error) {

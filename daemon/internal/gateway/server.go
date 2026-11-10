@@ -273,6 +273,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, a *access) {
 		s.reply(w, a, http.StatusOK, out)
 	case gatewayapi.OpShipPublish, gatewayapi.OpVersions, gatewayapi.OpSelfUpdateLog:
 		s.selfUpdateOp(w, r, a, id, op, body)
+	case gatewayapi.OpRunners:
+		s.runnersOp(w, r, a, id)
 	}
 }
 

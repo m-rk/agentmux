@@ -27,3 +27,10 @@ func (c *Client) SelfUpdateLog(ctx context.Context, lines int) (gatewayapi.SelfU
 	err := c.call(ctx, gatewayapi.OpSelfUpdateLog, QueryTimeout, gatewayapi.SelfUpdateLogRequest{Lines: lines}, &out)
 	return out, err
 }
+
+// Runners reports which agent runners are installed on the host.
+func (c *Client) Runners(ctx context.Context) (gatewayapi.RunnersResponse, error) {
+	var out gatewayapi.RunnersResponse
+	err := c.call(ctx, gatewayapi.OpRunners, QueryTimeout, struct{}{}, &out)
+	return out, err
+}

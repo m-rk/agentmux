@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -139,5 +140,26 @@ func TestVersionWarningsFromStateFiles(t *testing.T) {
 	got := VersionWarnings(home, now, selfupdate.ParseLaunchctlList("-\t78\tcom.agentmux.x\n"))
 	if len(got) != 2 || !strings.Contains(got[0], "lags shipped") || !strings.Contains(got[1], "com.agentmux.x (exit 78)") {
 		t.Errorf("warnings = %v, want lag then stuck job", got)
+	}
+}
+
+func TestRunnersReportsPresence(t *testing.T) {
+	h := newHarness(t, all(gatewayapi.OpRunners))
+	h.backend.runners = map[string]gatewayapi.RunnerStatus{"amp": {Present: true}, "kilo": {Present: false}}
+	rec := h.post(gatewayapi.OpRunners, `{}`)
+	var res gatewayapi.RunnersResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatalf("%v: %s", err, rec.Body.String())
+	}
+	if !res.Runners["amp"].Present || res.Runners["kilo"].Present {
+		t.Errorf("runners = %+v", res.Runners)
+	}
+}
+
+func TestRunnersNeedsItsOwnGrant(t *testing.T) {
+	h := newHarness(t, all(gatewayapi.OpVersions))
+	rec := h.post(gatewayapi.OpRunners, `{}`)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("code = %d, want 403", rec.Code)
 	}
 }
