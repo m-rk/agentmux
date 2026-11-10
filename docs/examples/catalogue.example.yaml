@@ -1,0 +1,44 @@
+# Example ~/.config/agentmux/catalogue.yaml. Every name below is made up;
+# the real file lives in host config, never in the repo.
+fuel:
+  - name: chatgpt
+    cap_percent: 50          # a fact set by hand: it cannot be read from the provider
+    cap_source: manual
+offerings:
+  - id: claude-large
+    runner: claude-code
+    model: example-large-1
+    version: "1"
+    label: Large
+    family: example-large
+    efforts: [low, medium, high]
+    speeds: [standard, fast]
+    fuel: claude
+    tier: hardest
+    hosts: [local, host-a]
+  - id: codex-mid
+    runner: codex
+    model: example-mid-2
+    version: "2"
+    label: Mid
+    family: example-mid
+    efforts: [low, medium, high]
+    fuel: chatgpt
+    tier: hard
+    hosts: [local]
+  - id: amp-deep
+    runner: amp
+    mode: example-deep       # an Amp mode; a launch picks it instead of amp.yaml's mode
+    label: Amp deep
+    fuel: amp
+    tier: hard
+    hosts: [local, host-a]
+  - id: opencode-small
+    runner: opencode
+    model: example-provider/small-3
+    label: Small
+    family: example-small
+    fuel: provider
+    tier: easy
+    instances: [example-worker]   # instances created with this provider and model
+    hosts: [host-a]
