@@ -77,7 +77,7 @@ the host-wide `mode:` in `amp.yaml`: `agentmux sessions run -mode MODE`, or
 
 `fuel[]` records caps that can't be read from a provider as `cap_source:
 manual`. When Amp is installed, the `chatgpt` tank also gets `subscription`:
-`present`, `absent` or `unreadable: <why>`, from `amp model-providers list`.
+`present`, `absent` or `unreadable: <why>`, from `amp config model-providers list`.
 That output is read only after a check that no key appears in the clear
 (an unmasked-looking word makes the read fail and the output is dropped); only
 the yes/no is kept, and no key is ever stored or printed.

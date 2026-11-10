@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// Amp can draw on a ChatGPT subscription. `amp model-providers list`
+// Amp can draw on a ChatGPT subscription. `amp config model-providers list`
 // lists provider keys and subscriptions; this reads it only after
 // checking that no key is printed in the clear, keeps nothing but a
 // yes/no, and never stores or returns the output.
@@ -21,7 +21,7 @@ var (
 
 // ErrUnmasked is returned when provider output may hold a key in the
 // clear. The caller must discard the output.
-var ErrUnmasked = errors.New("amp model-providers output is not masked; refusing to read it")
+var ErrUnmasked = errors.New("amp config model-providers output is not masked; refusing to read it")
 
 // CheckMasked reports ErrUnmasked if any word of output looks like an
 // unmasked secret: a known key prefix with a long tail, or a long run of
@@ -52,13 +52,13 @@ func ChatGPTSubscription(output string) (bool, error) {
 	return strings.Contains(strings.ToLower(output), "chatgpt"), nil
 }
 
-// AmpChatGPTSubscription runs `amp model-providers list` on this host and
+// AmpChatGPTSubscription runs `amp config model-providers list` on this host and
 // returns "present" or "absent", or an error. The output is checked for
 // masking before it is looked at and is dropped on return.
 func AmpChatGPTSubscription(ctx context.Context) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "amp", "model-providers", "list").Output()
+	out, err := exec.CommandContext(ctx, "amp", "config", "model-providers", "list").Output()
 	if err != nil {
 		return "", errors.New("amp model-providers list failed")
 	}
