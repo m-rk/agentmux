@@ -626,6 +626,14 @@ func TestCreateAsRootDropsToRunUser(t *testing.T) {
 // to the task instance; allow-files are reported as not applied.
 func TestCreateCodexCarriesAddDirsAndWarnsOnAllowFiles(t *testing.T) {
 	c := newCreateEnv(t)
+	t.Setenv("HOME", t.TempDir())
+	hub := filepath.Join(os.Getenv("HOME"), ".cache", "go-build")
+	if err := os.MkdirAll(hub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hub, "seed"), []byte("warm"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	reg := "AGENTMUX_AGENT=codex\nAGENTMUX_WORKDIR=" + c.repo + "\nAGENTMUX_CODEX_ADD_DIRS=/vault/tasks\n"
 	if err := os.WriteFile(filepath.Join(discovery.EnvDir, "tmpl.env"), []byte(reg), 0o644); err != nil {
 		t.Fatal(err)
@@ -647,10 +655,29 @@ func TestCreateCodexCarriesAddDirsAndWarnsOnAllowFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A private Go cache, seeded from the hub's, so builds are warm and the
+	// shared cache stays read-only to the sandbox.
+	cache := session.CodexGoCacheDir(os.Getenv("HOME"), "task-1")
+	if fields[session.CodexGoCacheKey] != cache {
+		t.Errorf("go cache = %q, want %q", fields[session.CodexGoCacheKey], cache)
+	}
+	// Seeding needs reflinks (a plain copy of the cache per task would fill the
+	// disk), so on a filesystem without them the cache is there but empty;
+	// either way it never holds a partial copy.
+	entries, err := os.ReadDir(cache)
+	if err != nil {
+		t.Fatalf("go cache dir: %v", err)
+	}
+	switch b, rerr := os.ReadFile(filepath.Join(cache, "seed")); {
+	case rerr == nil && string(b) != "warm":
+		t.Errorf("seeded entry = %q, want the hub's", b)
+	case rerr != nil && len(entries) != 0:
+		t.Errorf("go cache holds a partial seed: %v", entries)
+	}
 	// The template's dirs plus the git dirs a commit writes: never the
 	// shared .git itself, which codex's sandbox keeps read-only.
 	git := filepath.Join(c.repo, ".git")
-	wantDirs := strings.Join([]string{"/vault/tasks", filepath.Join(git, "worktrees", filepath.Base(res.Workdir)), filepath.Join(git, "objects"), filepath.Join(git, "refs"), filepath.Join(git, "logs")}, ",")
+	wantDirs := strings.Join([]string{"/vault/tasks", filepath.Join(git, "worktrees", filepath.Base(res.Workdir)), filepath.Join(git, "objects"), filepath.Join(git, "refs"), filepath.Join(git, "logs"), cache}, ",")
 	if fields[session.CodexAddDirsKey] != wantDirs {
 		t.Errorf("add-dirs = %q, want %q", fields[session.CodexAddDirsKey], wantDirs)
 	}

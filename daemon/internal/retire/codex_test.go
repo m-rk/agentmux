@@ -58,13 +58,20 @@ func TestApplyCodexStopsRunningChildAndKeepsBranch(t *testing.T) {
 	st := State{Workdir: work, Repo: repo, Branch: "task/cx-work",
 		Branches: []BranchFate{{Branch: "task/cx-work", Kept: "not merged"}}}
 	removed := false
+	cache := session.CodexGoCacheDir(home, "task-cx")
+	if err := os.MkdirAll(cache, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	res, err := apply(ctx, func(context.Context, string) (string, error) { removed = true; return "", nil },
-		"task-cx", "codex", map[string]string{}, st)
+		"task-cx", "codex", map[string]string{session.CodexGoCacheKey: cache}, st)
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	if !removed {
 		t.Error("managed half was not removed")
+	}
+	if _, err := os.Stat(cache); !os.IsNotExist(err) {
+		t.Errorf("go cache %s survived retire (%v)", cache, err)
 	}
 	if res.BranchDeleted || res.BranchKept == "" {
 		t.Errorf("branch fate = %+v, want kept", res)

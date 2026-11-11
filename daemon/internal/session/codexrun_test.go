@@ -269,3 +269,17 @@ func TestCodexRunCommandCarriesStoredEnv(t *testing.T) {
 		t.Errorf("codex run env lacks the stored OTEL_SERVICE_NAME")
 	}
 }
+
+// A task with a recorded private Go cache runs codex with GOCACHE pointing at it.
+func TestCodexRunCommandSetsGoCache(t *testing.T) {
+	old := discovery.EnvDir
+	discovery.EnvDir = t.TempDir()
+	t.Cleanup(func() { discovery.EnvDir = old })
+	if err := os.WriteFile(filepath.Join(discovery.EnvDir, "task-9.env"), []byte(CodexGoCacheKey+"=/cache/task-9\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := codexRunCommand(context.Background(), "task-9", []string{"exec", "-"})
+	if !contains(cmd.Env, "GOCACHE=/cache/task-9") {
+		t.Errorf("codex run env lacks GOCACHE: %v", cmd.Env)
+	}
+}

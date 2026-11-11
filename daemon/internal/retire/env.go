@@ -539,6 +539,12 @@ func apply(ctx context.Context, removeManaged func(context.Context, string) (str
 		// Stop in-flight `codex exec` children before the worktree goes;
 		// the branch and codex's own rollout files are kept.
 		session.StopCodexRuns(instance, st.Workdir)
+		// The private Go cache is derived data; drop it with the instance.
+		// Only the path recorded at create is removed, and only if it is the
+		// instance's own directory.
+		if dir := fields[session.CodexGoCacheKey]; dir != "" && filepath.Base(dir) == instance && filepath.IsAbs(dir) {
+			_ = os.RemoveAll(dir)
+		}
 	case "opencode":
 		res.OpencodeSessions = st.OpencodeSessions
 	}

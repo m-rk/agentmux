@@ -35,6 +35,17 @@ const CodexUnsafeSandboxEnv = "AGENTMUX_CODEX_ALLOW_UNSAFE_SANDBOX"
 // `--add-dir`. A task instance copies it from its template at create time.
 const CodexAddDirsKey = "AGENTMUX_CODEX_ADD_DIRS"
 
+// CodexGoCacheKey is the registry key holding a codex task instance's
+// private, writable Go build cache. The sandbox keeps the hub's shared cache
+// read-only (a worker must not poison entries other builds trust), so runs
+// get their own copy via GOCACHE.
+const CodexGoCacheKey = "AGENTMUX_CODEX_GOCACHE"
+
+// CodexGoCacheDir is where an instance's private Go cache lives under home.
+func CodexGoCacheDir(home, instance string) string {
+	return filepath.Join(home, ".cache", "agentmux", "go-build", instance)
+}
+
 // CodexAddDirs splits the registry value into directories, dropping blanks.
 func CodexAddDirs(value string) []string {
 	var out []string
@@ -311,10 +322,13 @@ func QueueCodexMessage(ctx context.Context, instance, thread, message string) er
 func codexRunCommand(ctx context.Context, instance string, argv []string) *exec.Cmd {
 	cmd := runas.CurrentUserCommandContext(ctx, "codex", argv...)
 	cmd.Env = append(cmd.Env, AmpRunEnv(instance)...)
-	// The instance's stored launch env (telemetry); a registry that can't
-	// be read just means none.
+	// The instance's stored launch env (telemetry) and private Go cache; a
+	// registry that can't be read just means none.
 	if fields, err := registry(instance); err == nil {
 		cmd.Env = append(cmd.Env, provision.EnvFromRegistry(fields)...)
+		if filepath.IsAbs(fields[CodexGoCacheKey]) {
+			cmd.Env = append(cmd.Env, "GOCACHE="+fields[CodexGoCacheKey])
+		}
 	}
 	return cmd
 }

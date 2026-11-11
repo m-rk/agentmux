@@ -402,6 +402,13 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 		for _, d := range e.codexGitDirs(ctx, wtPath, req.DryRun) {
 			dirs = appendUnique(dirs, d)
 		}
+		if cache := e.codexGoCache(req.Instance, req.DryRun); cache != "" {
+			dirs = appendUnique(dirs, cache)
+			fields[session.CodexGoCacheKey] = cache
+			if err := session.SetRegistryField(req.Instance, session.CodexGoCacheKey, cache); err != nil {
+				return CreateResult{}, Refuse(safesend.ReasonFailed, "recording codex go cache for %s: %v", req.Instance, err)
+			}
+		}
 		if len(dirs) > 0 {
 			fields[session.CodexAddDirsKey] = strings.Join(dirs, ",")
 			if err := session.SetRegistryField(req.Instance, session.CodexAddDirsKey, fields[session.CodexAddDirsKey]); err != nil {
