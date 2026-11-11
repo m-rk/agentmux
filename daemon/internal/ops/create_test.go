@@ -743,6 +743,55 @@ func TestCreateClaudePinBadValues(t *testing.T) {
 	}
 }
 
+// A speed pin follows the same rules as model and effort: inherited from the
+// template, overridden by the request, refused when unknown or for another
+// agent.
+func TestCreateClaudeSpeed(t *testing.T) {
+	c := newCreateEnv(t)
+	tmpl := filepath.Join(discovery.EnvDir, "tmpl.env")
+	data, _ := os.ReadFile(tmpl)
+	data = []byte(strings.Replace(string(data), "AGENTMUX_AGENT=opencode", "AGENTMUX_AGENT=claude-code\nAGENTMUX_CLAUDE_SPEED=standard", 1))
+	if err := os.WriteFile(tmpl, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	req := c.req()
+	req.Instance, req.Branch = "task-inherit", "feature/inherit"
+	if _, err := c.env.Create(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.d.created[0].ClaudeSpeed; got != "standard" {
+		t.Errorf("inherited speed = %q, want the template's standard", got)
+	}
+	req = c.req()
+	req.Speed = "fast"
+	if _, err := c.env.Create(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.d.created[1].ClaudeSpeed; got != "fast" {
+		t.Errorf("speed = %q, want fast", got)
+	}
+	req.Speed = "turbo"
+	_, err := c.env.Create(context.Background(), req)
+	wantReason(t, err, safesend.ReasonInvalid)
+
+	// A different speed for the existing instance is refused, not ignored.
+	reg := filepath.Join(discovery.EnvDir, "task-1.env")
+	f, _ := os.OpenFile(reg, os.O_APPEND|os.O_WRONLY, 0o644)
+	f.WriteString("AGENTMUX_CLAUDE_SPEED=fast\n")
+	f.Close()
+	req.Speed = "standard"
+	_, err = c.env.Create(context.Background(), req)
+	wantReason(t, err, safesend.ReasonInvalid)
+}
+
+func TestCreateSpeedRefusedForOtherAgents(t *testing.T) {
+	c := newCreateEnv(t) // opencode template
+	req := c.req()
+	req.Speed = "fast"
+	_, err := c.env.Create(context.Background(), req)
+	wantReason(t, err, safesend.ReasonUnsupported)
+}
+
 func TestCreatePinRefusedForOtherAgents(t *testing.T) {
 	c := newCreateEnv(t) // opencode template
 	req := c.req()

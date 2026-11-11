@@ -924,7 +924,12 @@ type CreateInstanceRequest struct {
 	// claude-code and codex only. Launch environment as KEY=VALUE, restricted
 	// to OTEL_* keys and CLAUDE_CODE_ENABLE_TELEMETRY. Stored with the
 	// instance so it survives restarts; values are never logged.
-	Env           []string `protobuf:"bytes,21,rep,name=env,proto3" json:"env,omitempty"`
+	Env []string `protobuf:"bytes,21,rep,name=env,proto3" json:"env,omitempty"`
+	// claude-code only. Pin the session's speed: "fast" starts it in fast mode
+	// (settings fastMode: true), "standard" keeps it off even if the account
+	// saved fast mode; empty leaves claude's own default. Stored in the
+	// registry and applied on every launch, restarts included.
+	ClaudeSpeed   string `protobuf:"bytes,22,opt,name=claude_speed,json=claudeSpeed,proto3" json:"claude_speed,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1104,6 +1109,13 @@ func (x *CreateInstanceRequest) GetEnv() []string {
 		return x.Env
 	}
 	return nil
+}
+
+func (x *CreateInstanceRequest) GetClaudeSpeed() string {
+	if x != nil {
+		return x.ClaudeSpeed
+	}
+	return ""
 }
 
 type CreateInstanceResponse struct {
@@ -2120,7 +2132,7 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\x06action\x18\x02 \x01(\x0e2\x1b.agentmuxd.v1.ControlActionR\x06action\";\n" +
 	"\x0fControlResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\xd9\x05\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xfc\x05\n" +
 	"\x15CreateInstanceRequest\x12#\n" +
 	"\rinstance_name\x18\x01 \x01(\tR\finstanceName\x12\x14\n" +
 	"\x05agent\x18\x02 \x01(\tR\x05agent\x12\x1a\n" +
@@ -2145,7 +2157,8 @@ const file_agentmuxd_proto_rawDesc = "" +
 	"\rclaude_effort\x18\x12 \x01(\tR\fclaudeEffort\x12%\n" +
 	"\x0eallow_worktree\x18\x13 \x01(\bR\rallowWorktree\x12)\n" +
 	"\x10existing_workdir\x18\x14 \x01(\bR\x0fexistingWorkdir\x12\x10\n" +
-	"\x03env\x18\x15 \x03(\tR\x03env\"B\n" +
+	"\x03env\x18\x15 \x03(\tR\x03env\x12!\n" +
+	"\fclaude_speed\x18\x16 \x01(\tR\vclaudeSpeed\"B\n" +
 	"\x16CreateInstanceResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"\x19\n" +

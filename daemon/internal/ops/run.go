@@ -67,6 +67,9 @@ type RunRequest struct {
 	Model   string
 	Effort  string
 	Sandbox string
+	// Speed ("standard" or "fast") is the launch pin of a claude-code run,
+	// like Model and Effort; every other agent refuses it.
+	Speed string
 }
 
 // RunResult is the thread, plus its state when already known.
@@ -302,6 +305,9 @@ func (e Env) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	}
 	if info, err := os.Stat(workdir); err != nil || !info.IsDir() {
 		return RunResult{}, Refuse(safesend.ReasonFailed, "workdir %s is not a directory", workdir)
+	}
+	if strings.TrimSpace(req.Speed) != "" && src.Agent != "claude-code" {
+		return RunResult{}, Refuse(safesend.ReasonUnsupported, "-speed is for claude-code instances only; %s runs %s", addr.Instance, src.Agent)
 	}
 	if src.Agent == "codex" {
 		return e.runCodex(ctx, req, addr, text, fields, workdir)

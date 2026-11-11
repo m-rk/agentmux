@@ -192,6 +192,8 @@ is what review used to catch by hand. `-json` prints
 
 ### Pinning a claude model and effort
 
+(Speed is pinned the same way, see [Fast mode](#fast-mode) below.)
+
 A claude-code instance is otherwise created with whatever model the account
 or the template's settings default to. To pin one:
 
@@ -239,6 +241,31 @@ reply), and `claude.mismatch: true` when the two disagree. A caller that
 posts the launch should read `actual_model`, say so on a mismatch, and raise
 a question rather than carry on. The gateway of an older host ignores the
 unknown `model`/`effort` fields, so check `status` rather than assuming.
+
+#### Fast mode
+
+`-speed standard|fast` pins the speed of a claude-code instance, on
+`sessions create` and `sessions run`, exactly like `-model` and `-effort`:
+recorded in the registry (`AGENTMUX_CLAUDE_SPEED`), inherited from the
+template when the request has none, applied on every launch, and for a run
+the session is restarted when it differs from the current pin. The catalogue
+lists `fast` in an offering's `speeds`; this is what launches it.
+
+Claude Code has no fast-mode flag, only a `fastMode` setting, so agentmux
+writes it into the per-instance settings file that already carries the
+allow-file grant (`~/.agentmux/.settings/<instance>.claude.json`, passed as
+`claude --settings`): `fast` writes `fastMode: true`, and `standard` writes
+`fastMode: false`, which also keeps off a fast mode the account saved from an
+earlier `/fast`. No pin writes nothing.
+
+Whether the session really runs fast is up to the model and the account, so
+confirm it: `sessions status` reports `claude.pinned_speed`,
+`claude.actual_speed` (from the newest reply's usage record; empty until the
+first reply) and `claude.speed_mismatch: true` when they disagree. A caller
+should say so and raise a question rather than carry on. An unknown speed is
+refused (`invalid`); `-speed` on a codex, amp or opencode instance is refused
+(`unsupported`). The gateway of an older host ignores the unknown `speed`
+field and runs at the account's default, so check `status` there too.
 
 ## Running an amp thread
 

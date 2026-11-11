@@ -186,6 +186,7 @@ func (s *Server) CreateInstance(ctx context.Context, req *pb.CreateInstanceReque
 		AllowWorktree:   req.AllowWorktree,
 		ClaudeModel:     req.ClaudeModel,
 		ClaudeEffort:    req.ClaudeEffort,
+		ClaudeSpeed:     req.ClaudeSpeed,
 		ExistingWorkdir: req.ExistingWorkdir,
 		Env:             req.Env,
 	})

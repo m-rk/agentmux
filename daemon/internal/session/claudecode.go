@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -120,7 +121,7 @@ func RunClaudeCode(name string) error {
 		return ensureClaudeRemoteControl(tmux, name, socket, session)
 	}
 
-	claudeArgs := claudeLaunchArgs(display, resume, prepareClaudeAllowSettings(name, workdir, fields), fields[provision.ClaudeModelKey], fields[provision.ClaudeEffortKey])
+	claudeArgs := claudeLaunchArgs(display, resume, prepareClaudeSettings(name, workdir, fields), fields[provision.ClaudeModelKey], fields[provision.ClaudeEffortKey])
 	// exec.Command takes args as a slice, not a shell string, so unlike
 	// rc-start.sh there's no manual shell-quoting to get right here.
 	// Task instances stamp the session with the task identity (see
@@ -198,19 +199,25 @@ func claudeAllowSettingsPath(home, name string) string {
 	return filepath.Join(home, ".agentmux", ".settings", name+".claude.json")
 }
 
-// prepareClaudeAllowSettings (re)writes the instance's allow-file settings
-// from the registry and returns their path, or "" when the instance has no
-// usable allow-files — in which case any stale settings file is removed.
-// It never fails the launch: a problem is logged and the session starts
-// without the grant. Runs as the instance's own user, so the files are
-// owned by it without any chown.
-func prepareClaudeAllowSettings(name, workdir string, fields map[string]string) string {
+// prepareClaudeSettings (re)writes the instance's generated settings from
+// the registry and returns their path, or "" when there is nothing to
+// say — no usable allow-files and no pinned speed — in which case any stale
+// settings file is removed. It never fails the launch: a problem is logged
+// and the session starts without that part. Runs as the instance's own
+// user, so the files are owned by it without any chown.
+//
+// The file carries two things: the read/edit grant for allow-files, and the
+// pinned speed. Claude Code has no fast-mode flag, only the fastMode
+// setting, so "fast" writes fastMode: true and "standard" writes
+// fastMode: false (which also overrides a fast mode the account saved).
+func prepareClaudeSettings(name, workdir string, fields map[string]string) string {
 	home, herr := os.UserHomeDir()
 	if herr != nil {
-		fmt.Fprintf(os.Stderr, "%s: allow-file: resolving home: %v\n", name, herr)
+		fmt.Fprintf(os.Stderr, "%s: settings: resolving home: %v\n", name, herr)
 		return ""
 	}
 	path := claudeAllowSettingsPath(home, name)
+	var data []byte
 	files, err := allowfiles.Decode(fields[allowfiles.RegistryKey])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: allow-file: %v\n", name, err)
@@ -219,28 +226,61 @@ func prepareClaudeAllowSettings(name, workdir string, fields map[string]string) 
 	for _, w := range warns {
 		fmt.Fprintf(os.Stderr, "%s: allow-file: skipping: %s\n", name, w)
 	}
-	if len(files) == 0 {
+	if len(files) > 0 {
+		blocked := allowfiles.ClaudeBlocksOutsideReads(
+			filepath.Join(home, ".claude", "settings.json"),
+			filepath.Join(workdir, ".claude", "settings.json"),
+			filepath.Join(workdir, ".claude", "settings.local.json"),
+		)
+		var warns []string
+		data, warns, err = allowfiles.ClaudeSettings(files, blocked)
+		for _, w := range warns {
+			fmt.Fprintf(os.Stderr, "%s: allow-file: %s\n", name, w)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: allow-file: rendering settings: %v\n", name, err)
+			data = nil
+		}
+	}
+	data, err = claudeSettingsWithSpeed(data, fields[provision.ClaudeSpeedKey])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: settings: speed %q: %v\n", name, fields[provision.ClaudeSpeedKey], err)
+	}
+	if len(data) == 0 {
 		_ = os.Remove(path)
 		return ""
 	}
-	blocked := allowfiles.ClaudeBlocksOutsideReads(
-		filepath.Join(home, ".claude", "settings.json"),
-		filepath.Join(workdir, ".claude", "settings.json"),
-		filepath.Join(workdir, ".claude", "settings.local.json"),
-	)
-	data, warns, err := allowfiles.ClaudeSettings(files, blocked)
-	for _, w := range warns {
-		fmt.Fprintf(os.Stderr, "%s: allow-file: %s\n", name, w)
-	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: allow-file: rendering settings: %v\n", name, err)
-		return ""
-	}
 	if err := writeFileAtomic(path, data); err != nil {
-		fmt.Fprintf(os.Stderr, "%s: allow-file: writing %s: %v\n", name, path, err)
+		fmt.Fprintf(os.Stderr, "%s: settings: writing %s: %v\n", name, path, err)
 		return ""
 	}
 	return path
+}
+
+// claudeSettingsWithSpeed adds the fastMode setting for a pinned speed to
+// the rendered settings JSON (empty means none yet). No pin, or an unknown
+// one, returns data unchanged.
+func claudeSettingsWithSpeed(data []byte, speed string) ([]byte, error) {
+	var fast bool
+	switch speed {
+	case provision.ClaudeSpeedFast:
+		fast = true
+	case provision.ClaudeSpeedStandard:
+	default:
+		return data, nil
+	}
+	doc := map[string]any{}
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &doc); err != nil {
+			return data, err
+		}
+	}
+	doc["fastMode"] = fast
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return data, err
+	}
+	return append(out, '\n'), nil
 }
 
 // writeFileAtomic writes data to path (0600) via a rename, creating its

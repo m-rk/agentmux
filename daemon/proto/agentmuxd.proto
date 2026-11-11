@@ -240,6 +240,11 @@ message CreateInstanceRequest {
   // to OTEL_* keys and CLAUDE_CODE_ENABLE_TELEMETRY. Stored with the
   // instance so it survives restarts; values are never logged.
   repeated string env = 21;
+  // claude-code only. Pin the session's speed: "fast" starts it in fast mode
+  // (settings fastMode: true), "standard" keeps it off even if the account
+  // saved fast mode; empty leaves claude's own default. Stored in the
+  // registry and applied on every launch, restarts included.
+  string claude_speed = 22;
 }
 
 message CreateInstanceResponse {

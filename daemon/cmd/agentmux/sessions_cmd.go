@@ -39,7 +39,7 @@ const sessionsUsage = `usage:
   agentmux sessions send -by PRINCIPAL [-via relayed|dispatched|sent] [-from REF] [-correlation ID]
                          [-hosts PATH] [-wait DUR] [-json] <instance>@<host>[#<thread>] (TEXT | -file PATH|-)
   agentmux sessions create [-json] [-dry-run] [-socket PATH] [-hosts PATH] -template <instance>@<host> -instance NAME -branch B
-                           [-base BRANCH] [-worktree NAME] [-allow-file PATH ...] [-model MODEL] [-effort EFFORT] [-env KEY=VALUE ...]
+                           [-base BRANCH] [-worktree NAME] [-allow-file PATH ...] [-model MODEL] [-effort EFFORT] [-speed standard|fast] [-env KEY=VALUE ...]
   agentmux sessions template add -from <instance>@<host> -agent codex [-name NAME] [-dry-run] [-json]
   agentmux sessions run [-json] [-dry-run] [-hosts PATH] [-thread THREAD_ID] [-title TEXT] [-mode MODE] [-template NAME] -file PATH|- <instance>@<host>[#<thread>]
   agentmux sessions check [-json]

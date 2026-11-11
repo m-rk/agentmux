@@ -1,11 +1,14 @@
 package session
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/m-rk/agentmux/daemon/internal/provision"
 )
 
 // fakeTmuxCapture returns a tmux stand-in whose capture-pane always reports
@@ -238,7 +241,7 @@ func TestPrepareClaudeAllowSettings(t *testing.T) {
 	realNote, _ := filepath.EvalSymlinks(note)
 	fields := map[string]string{"AGENTMUX_ALLOW_FILES": `["` + realNote + `"]`}
 
-	path := prepareClaudeAllowSettings("inst", work, fields)
+	path := prepareClaudeSettings("inst", work, fields)
 	if want := filepath.Join(home, ".agentmux", ".settings", "inst.claude.json"); path != want {
 		t.Fatalf("path = %q, want %q", path, want)
 	}
@@ -257,14 +260,14 @@ func TestPrepareClaudeAllowSettings(t *testing.T) {
 	// A file that went away is skipped; with nothing left the stale
 	// settings file is removed and no --settings is passed.
 	os.Remove(note)
-	if got := prepareClaudeAllowSettings("inst", work, fields); got != "" {
+	if got := prepareClaudeSettings("inst", work, fields); got != "" {
 		t.Errorf("path with all files gone = %q, want empty", got)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Errorf("stale settings file still present: %v", err)
 	}
 	// Cleared field: same.
-	if got := prepareClaudeAllowSettings("inst", work, map[string]string{}); got != "" {
+	if got := prepareClaudeSettings("inst", work, map[string]string{}); got != "" {
 		t.Errorf("path with no allow-files = %q, want empty", got)
 	}
 }
@@ -282,5 +285,59 @@ func TestLaunchEnvArgsCarriesStoredEnv(t *testing.T) {
 	}
 	if len(launchEnvArgs(map[string]string{"AGENTMUX_WORKDIR": "/w"})) != 0 {
 		t.Error("no stored env should add no args")
+	}
+}
+
+// A pinned speed becomes the fastMode setting, alone or beside the allow-file
+// grant; no pin and nothing else to say writes no file.
+func TestPrepareClaudeSettingsSpeed(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	work := filepath.Join(home, "work")
+	read := func(path string) map[string]any {
+		t.Helper()
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(b, &doc); err != nil {
+			t.Fatalf("settings are not JSON: %v: %s", err, b)
+		}
+		return doc
+	}
+
+	if got := prepareClaudeSettings("inst", work, map[string]string{}); got != "" {
+		t.Errorf("no pin wrote %q", got)
+	}
+	path := prepareClaudeSettings("inst", work, map[string]string{provision.ClaudeSpeedKey: "fast"})
+	if path == "" || read(path)["fastMode"] != true {
+		t.Fatalf("fast: path %q, settings %v", path, path != "" && read(path) != nil)
+	}
+	path = prepareClaudeSettings("inst", work, map[string]string{provision.ClaudeSpeedKey: "standard"})
+	if path == "" || read(path)["fastMode"] != false {
+		t.Fatalf("standard should write fastMode false (it overrides a saved fast mode)")
+	}
+
+	note := filepath.Join(home, "vault", "n.md")
+	if err := os.MkdirAll(filepath.Dir(note), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(note, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	realNote, _ := filepath.EvalSymlinks(note)
+	path = prepareClaudeSettings("inst", work, map[string]string{provision.ClaudeSpeedKey: "fast", "AGENTMUX_ALLOW_FILES": `["` + realNote + `"]`})
+	doc := read(path)
+	if doc["fastMode"] != true || doc["permissions"] == nil {
+		t.Errorf("fast beside allow-files = %v, want fastMode and permissions", doc)
+	}
+
+	// Unpinning drops the file again.
+	if got := prepareClaudeSettings("inst", work, map[string]string{}); got != "" {
+		t.Errorf("cleared pin still wrote %q", got)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("stale settings file still present: %v", err)
 	}
 }

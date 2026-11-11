@@ -41,8 +41,8 @@ var claudeDeliver = func(ctx context.Context, e Env, instance, text string, rela
 }
 
 // runClaude is Run for a claude-code instance. A claude session is a
-// resident process whose model and effort are fixed by the flags it was
-// launched with, so a requested model or effort that differs from the
+// resident process whose model, effort and speed are fixed by how it was
+// launched, so a requested model, effort or speed that differs from the
 // instance's current pin is recorded in its registry (the same
 // AGENTMUX_CLAUDE_MODEL/EFFORT `sessions create` writes) and the session is
 // relaunched, which passes `claude --model/--effort`; one that already
@@ -65,20 +65,27 @@ func (e Env) runClaude(ctx context.Context, req RunRequest, addr address.Address
 	if err != nil {
 		return RunResult{}, Refuse(safesend.ReasonInvalid, "%v", err)
 	}
-	curModel, curEffort := fields[provision.ClaudeModelKey], fields[provision.ClaudeEffortKey]
-	newModel, newEffort := curModel, curEffort
+	speed, err := provision.CleanClaudeSpeed(req.Speed)
+	if err != nil {
+		return RunResult{}, Refuse(safesend.ReasonInvalid, "%v", err)
+	}
+	curModel, curEffort, curSpeed := fields[provision.ClaudeModelKey], fields[provision.ClaudeEffortKey], fields[provision.ClaudeSpeedKey]
+	newModel, newEffort, newSpeed := curModel, curEffort, curSpeed
 	if model != "" {
 		newModel = model
 	}
 	if effort != "" {
 		newEffort = effort
 	}
-	relaunch := newModel != curModel || newEffort != curEffort
+	if speed != "" {
+		newSpeed = speed
+	}
+	relaunch := newModel != curModel || newEffort != curEffort || newSpeed != curSpeed
 
 	if req.DryRun {
 		step := "send prompt to claude-code session on " + addr.Session().String()
 		if relaunch {
-			step = "relaunch claude with model " + orDefault(newModel) + ", effort " + orDefault(newEffort) + ", then " + step
+			step = "relaunch claude with model " + orDefault(newModel) + ", effort " + orDefault(newEffort) + ", speed " + orDefault(newSpeed) + ", then " + step
 		}
 		return RunResult{OK: true, Address: req.Address, Agent: "claude-code", DryRun: true, Plan: []string{step}}, nil
 	}
@@ -93,6 +100,11 @@ func (e Env) runClaude(ctx context.Context, req RunRequest, addr address.Address
 			_ = session.SetRegistryField(addr.Instance, provision.ClaudeModelKey, curModel)
 			return RunResult{}, Refuse(safesend.ReasonFailed, "recording effort for %s: %v", addr.Instance, err)
 		}
+		if err := session.SetRegistryField(addr.Instance, provision.ClaudeSpeedKey, newSpeed); err != nil {
+			_ = session.SetRegistryField(addr.Instance, provision.ClaudeModelKey, curModel)
+			_ = session.SetRegistryField(addr.Instance, provision.ClaudeEffortKey, curEffort)
+			return RunResult{}, Refuse(safesend.ReasonFailed, "recording speed for %s: %v", addr.Instance, err)
+		}
 	}
 	if err := claudeDeliver(ctx, e, addr.Instance, text, relaunch); err != nil {
 		if relaunch {
@@ -100,6 +112,7 @@ func (e Env) runClaude(ctx context.Context, req RunRequest, addr address.Address
 			// pick up a pin whose run never happened.
 			_ = session.SetRegistryField(addr.Instance, provision.ClaudeModelKey, curModel)
 			_ = session.SetRegistryField(addr.Instance, provision.ClaudeEffortKey, curEffort)
+			_ = session.SetRegistryField(addr.Instance, provision.ClaudeSpeedKey, curSpeed)
 		}
 		return RunResult{}, err
 	}

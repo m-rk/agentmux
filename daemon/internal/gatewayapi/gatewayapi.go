@@ -120,6 +120,8 @@ type CreateRequest struct {
 	// keeps the template's.
 	Model  string `json:"model,omitempty"`
 	Effort string `json:"effort,omitempty"`
+	// Speed pins a claude-code instance's speed, standard or fast.
+	Speed string `json:"speed,omitempty"`
 	// Env is the new instance's launch environment (KEY=VALUE; OTEL_* and
 	// CLAUDE_CODE_ENABLE_TELEMETRY only). Never logged.
 	Env []string `json:"env,omitempty"`
@@ -162,6 +164,8 @@ type RunRequest struct {
 	Model   string `json:"model,omitempty"`
 	Effort  string `json:"effort,omitempty"`
 	Sandbox string `json:"sandbox,omitempty"`
+	// Speed is the launch pin of a claude-code run, standard or fast.
+	Speed string `json:"speed,omitempty"`
 }
 
 // RunResponse is the thread plus its state; a refusal is a non-2xx

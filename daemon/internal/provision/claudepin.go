@@ -13,6 +13,8 @@ import (
 const (
 	ClaudeModelKey  = "AGENTMUX_CLAUDE_MODEL"
 	ClaudeEffortKey = "AGENTMUX_CLAUDE_EFFORT"
+	// ClaudeSpeedKey pins the session's speed: "fast" or "standard".
+	ClaudeSpeedKey = "AGENTMUX_CLAUDE_SPEED"
 )
 
 var (
@@ -48,6 +50,24 @@ func CleanClaudeEffort(effort string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("unsupported claude effort %q: want one of %s", effort, strings.Join(claudeEfforts, ", "))
+}
+
+// Claude speeds. Claude Code has no flag for fast mode, only a `fastMode`
+// setting, so a pinned speed is written into the instance's generated
+// settings file (see session.claudeSettingsWithSpeed).
+const (
+	ClaudeSpeedStandard = "standard"
+	ClaudeSpeedFast     = "fast"
+)
+
+// CleanClaudeSpeed validates a pinned claude speed; empty means no pin.
+func CleanClaudeSpeed(speed string) (string, error) {
+	speed = strings.TrimSpace(speed)
+	switch speed {
+	case "", ClaudeSpeedStandard, ClaudeSpeedFast:
+		return speed, nil
+	}
+	return "", fmt.Errorf("unsupported claude speed %q: want standard or fast", speed)
 }
 
 // ClaudeModelMatches reports whether the model a session actually ran

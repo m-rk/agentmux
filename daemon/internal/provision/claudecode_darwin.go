@@ -114,6 +114,10 @@ func createClaudeCode(opts Options) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	claudeSpeed, err := CleanClaudeSpeed(opts.ClaudeSpeed)
+	if err != nil {
+		return "", err
+	}
 	if opts.ResumeSessionID != "" {
 		if err := validateIdentifier("resume session ID", opts.ResumeSessionID); err != nil {
 			return "", err
@@ -182,6 +186,7 @@ func createClaudeCode(opts Options) (string, error) {
 		{"AGENTMUX_COMPACT_ON_UPDATE", opts.CompactOnUpdate},
 		{ClaudeModelKey, claudeModel},
 		{ClaudeEffortKey, claudeEffort},
+		{ClaudeSpeedKey, claudeSpeed},
 	}, envFields...))
 	if err != nil {
 		return "", err

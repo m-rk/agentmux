@@ -162,8 +162,14 @@ type StatusResult struct {
 type ClaudeInfo struct {
 	PinnedModel  string `json:"pinned_model,omitempty"`
 	PinnedEffort string `json:"pinned_effort,omitempty"`
+	PinnedSpeed  string `json:"pinned_speed,omitempty"`
 	ActualModel  string `json:"actual_model,omitempty"`
-	Mismatch     bool   `json:"mismatch,omitempty"`
+	// ActualSpeed is the speed the newest reply ran at; SpeedMismatch is true
+	// when a speed was pinned and that reply ran at another one (for example
+	// the model has no fast mode, or the account can't use it).
+	ActualSpeed   string `json:"actual_speed,omitempty"`
+	SpeedMismatch bool   `json:"speed_mismatch,omitempty"`
+	Mismatch      bool   `json:"mismatch,omitempty"`
 }
 
 // RunStateInfo is the stream-log state of a `sessions run` thread.
@@ -390,12 +396,13 @@ func claudeInfo(addr address.Address) *ClaudeInfo {
 	if err != nil {
 		return nil
 	}
-	info := &ClaudeInfo{PinnedModel: fields[provision.ClaudeModelKey], PinnedEffort: fields[provision.ClaudeEffortKey]}
+	info := &ClaudeInfo{PinnedModel: fields[provision.ClaudeModelKey], PinnedEffort: fields[provision.ClaudeEffortKey], PinnedSpeed: fields[provision.ClaudeSpeedKey]}
 	if src, _, err := Source(addr); err == nil {
-		info.ActualModel, _ = transcript.ClaudeModel(src)
+		info.ActualModel, info.ActualSpeed, _ = transcript.ClaudeModelAndSpeed(src)
 	}
 	info.Mismatch = info.PinnedModel != "" && info.ActualModel != "" && !provision.ClaudeModelMatches(info.PinnedModel, info.ActualModel)
-	if info.PinnedModel == "" && info.PinnedEffort == "" && info.ActualModel == "" {
+	info.SpeedMismatch = info.PinnedSpeed != "" && info.ActualSpeed != "" && info.PinnedSpeed != info.ActualSpeed
+	if info.PinnedModel == "" && info.PinnedEffort == "" && info.PinnedSpeed == "" && info.ActualModel == "" {
 		return nil
 	}
 	return info

@@ -41,6 +41,7 @@ func runSessionsRun(args []string) {
 	fs.Var(&labels, "label", "amp thread label; repeatable, rides -l on every run so `amp threads list --label X` finds it")
 	mode := fs.String("mode", "", "explicit amp -m/--mode for this run only, overriding the host file and the instance override")
 	model := fs.String("model", "", "codex or claude-code: model for this run (codex default: the instance's model; claude-code: pinned on the instance and the session relaunched when it differs, unknown values refused)")
+	speed := fs.String("speed", "", "claude-code: standard or fast (fast mode, set at launch through the session's settings); other agents refuse it")
 	effort := fs.String("effort", "", "codex: reasoning effort for this run (-c model_reasoning_effort=...); claude-code: low, medium, high, xhigh or max (claude --effort)")
 	sandbox := fs.String("sandbox", "", "codex only: read-only or workspace-write (default); danger-full-access needs AGENTMUX_CODEX_ALLOW_UNSAFE_SANDBOX=1 on the instance")
 	dryRun := fs.Bool("dry-run", false, "validate the run without starting any amp thread (deploy smoke test)")
@@ -49,7 +50,7 @@ func runSessionsRun(args []string) {
 	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml with the gateway URL of other hosts")
 	fs.Parse(args)
 	if fs.NArg() != 1 || *file == "" {
-		fmt.Fprintln(os.Stderr, "usage: agentmux sessions run [-json] [-dry-run] [-socket PATH] [-hosts PATH] [-thread THREAD_ID] [-title TEXT] [-label LABEL ...] [-mode MODE] [-model MODEL] [-effort EFFORT] [-sandbox MODE] [-template NAME] -file PATH|- <instance>@<host>[#<thread>]")
+		fmt.Fprintln(os.Stderr, "usage: agentmux sessions run [-json] [-dry-run] [-socket PATH] [-hosts PATH] [-thread THREAD_ID] [-title TEXT] [-label LABEL ...] [-mode MODE] [-model MODEL] [-effort EFFORT] [-speed standard|fast] [-sandbox MODE] [-template NAME] -file PATH|- <instance>@<host>[#<thread>]")
 		os.Exit(2)
 	}
 	// Task sessions refuse unless this is itself a dry run (see liveguard),
@@ -78,7 +79,7 @@ func runSessionsRun(args []string) {
 		failRun(*jsonOut, addrText, safesend.ReasonInvalid, err.Error())
 	}
 
-	req := ops.RunRequest{Address: addrText, Text: text, Title: *title, Labels: labels, Mode: *mode, DryRun: *dryRun, Template: *template, Model: *model, Effort: *effort, Sandbox: *sandbox}
+	req := ops.RunRequest{Address: addrText, Text: text, Title: *title, Labels: labels, Mode: *mode, DryRun: *dryRun, Template: *template, Model: *model, Effort: *effort, Sandbox: *sandbox, Speed: *speed}
 	var res ops.RunResult
 	route, rerr := resolveRoute(req.Address, *hostsPath, address.LocalHostName())
 	switch {
@@ -89,7 +90,7 @@ func runSessionsRun(args []string) {
 		ctx, cancel := context.WithTimeout(context.Background(), gatewayclient.RunTimeout+time.Minute)
 		defer cancel()
 		var rerr error
-		res, rerr = route.Remote.Run(ctx, gatewayapi.RunRequest{Address: req.Address, Text: req.Text, Title: req.Title, Labels: req.Labels, Mode: req.Mode, DryRun: req.DryRun, Template: req.Template, Model: req.Model, Effort: req.Effort, Sandbox: req.Sandbox})
+		res, rerr = route.Remote.Run(ctx, gatewayapi.RunRequest{Address: req.Address, Text: req.Text, Title: req.Title, Labels: req.Labels, Mode: req.Mode, DryRun: req.DryRun, Template: req.Template, Model: req.Model, Effort: req.Effort, Sandbox: req.Sandbox, Speed: req.Speed})
 		if rerr != nil {
 			e := ops.AsError(rerr)
 			failRun(*jsonOut, req.Address, e.Reason, e.Detail)

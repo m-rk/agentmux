@@ -95,7 +95,7 @@ func TestRunClaudeCodeStampsTaskEnv(t *testing.T) {
 		return exec.Command("true")
 	}
 	t.Cleanup(func() { withPath = prevWithPath })
-	// prepareClaudeAllowSettings resolves the home for a settings path;
+	// prepareClaudeSettings resolves the home for a settings path;
 	// point it at a temp home so the test never touches the real one.
 	t.Setenv("HOME", t.TempDir())
 	if err := RunClaudeCode("task-9"); err != nil {

@@ -40,6 +40,9 @@ type CreateRequest struct {
 	// them. An unsupported value is refused, never replaced by a default.
 	Model  string
 	Effort string
+	// Speed pins a claude-code instance's speed, "fast" or "standard"; empty
+	// keeps the template's. Other agents refuse it.
+	Speed string
 	// Env is the new instance's launch environment, KEY=VALUE, OTEL_* and
 	// CLAUDE_CODE_ENABLE_TELEMETRY keys only (claude-code and codex). Not
 	// inherited from the template; never logged or echoed in full.
@@ -196,13 +199,16 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 		agent = "claude-code" // claude-code registry entries predate AGENTMUX_AGENT
 	}
 
-	claudeModel, claudeEffort := "", ""
+	claudeModel, claudeEffort, claudeSpeed := "", "", ""
 	if agent == "claude-code" {
 		var err error
 		if claudeModel, err = provision.CleanClaudeModel(req.Model); err != nil {
 			return CreateResult{}, Refuse(safesend.ReasonInvalid, "%v", err)
 		}
 		if claudeEffort, err = provision.CleanClaudeEffort(req.Effort); err != nil {
+			return CreateResult{}, Refuse(safesend.ReasonInvalid, "%v", err)
+		}
+		if claudeSpeed, err = provision.CleanClaudeSpeed(req.Speed); err != nil {
 			return CreateResult{}, Refuse(safesend.ReasonInvalid, "%v", err)
 		}
 		// No pin given: the new instance inherits the template's.
@@ -212,8 +218,11 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 		if claudeEffort == "" {
 			claudeEffort = fields[provision.ClaudeEffortKey]
 		}
-	} else if strings.TrimSpace(req.Model) != "" || strings.TrimSpace(req.Effort) != "" {
-		return CreateResult{}, Refuse(safesend.ReasonUnsupported, "model and effort pins are supported for claude-code only; template %s runs %s", tmpl.Instance, agent)
+		if claudeSpeed == "" {
+			claudeSpeed = fields[provision.ClaudeSpeedKey]
+		}
+	} else if strings.TrimSpace(req.Model) != "" || strings.TrimSpace(req.Effort) != "" || strings.TrimSpace(req.Speed) != "" {
+		return CreateResult{}, Refuse(safesend.ReasonUnsupported, "model, effort and speed pins are supported for claude-code only; template %s runs %s", tmpl.Instance, agent)
 	}
 
 	if len(req.Env) > 0 {
@@ -263,8 +272,8 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 
 	if existing != nil && agent == "claude-code" {
 		if cur, err := session.ReadRegistry(req.Instance); err == nil {
-			if (req.Model != "" && strings.TrimSpace(req.Model) != cur[provision.ClaudeModelKey]) || (req.Effort != "" && strings.TrimSpace(req.Effort) != cur[provision.ClaudeEffortKey]) {
-				return CreateResult{}, Refuse(safesend.ReasonInvalid, "instance %q already exists with model %s, effort %s: a pin only applies when the instance is created", req.Instance, orDefault(cur[provision.ClaudeModelKey]), orDefault(cur[provision.ClaudeEffortKey]))
+			if (req.Model != "" && strings.TrimSpace(req.Model) != cur[provision.ClaudeModelKey]) || (req.Effort != "" && strings.TrimSpace(req.Effort) != cur[provision.ClaudeEffortKey]) || (req.Speed != "" && strings.TrimSpace(req.Speed) != cur[provision.ClaudeSpeedKey]) {
+				return CreateResult{}, Refuse(safesend.ReasonInvalid, "instance %q already exists with model %s, effort %s, speed %s: a pin only applies when the instance is created", req.Instance, orDefault(cur[provision.ClaudeModelKey]), orDefault(cur[provision.ClaudeEffortKey]), orDefault(cur[provision.ClaudeSpeedKey]))
 			}
 		}
 	}
@@ -309,8 +318,8 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 		if req.Base != "" {
 			plan = append(plan, "from origin/"+req.Base+" @ "+baseCommit)
 		}
-		if claudeModel != "" || claudeEffort != "" {
-			plan = append(plan, "launch claude with model "+orDefault(claudeModel)+", effort "+orDefault(claudeEffort))
+		if claudeModel != "" || claudeEffort != "" || claudeSpeed != "" {
+			plan = append(plan, "launch claude with model "+orDefault(claudeModel)+", effort "+orDefault(claudeEffort)+", speed "+orDefault(claudeSpeed))
 		}
 		if len(req.Env) > 0 {
 			plan = append(plan, "launch with env "+strings.Join(provision.EnvKeys(req.Env), ", ")+" (values not shown)")
@@ -355,6 +364,7 @@ func (e Env) Create(ctx context.Context, req CreateRequest) (CreateResult, error
 			AllowWorktree:     agent == "opencode",
 			ClaudeModel:       claudeModel,
 			ClaudeEffort:      claudeEffort,
+			ClaudeSpeed:       claudeSpeed,
 			Env:               req.Env,
 		})
 		if err != nil {

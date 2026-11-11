@@ -52,6 +52,14 @@ command.
   listed with `available: false` and a `reason`; an entry is never dropped.
 - Fields are only ever added. Readers must ignore fields they don't know.
 
+### Launching a speed
+
+An offering's `speeds` are what a launch may ask for. For a Claude offering,
+`fast` is passed through `sessions create -speed` / `sessions run -speed`,
+which sets the session's `fastMode` setting at start; see
+[Fast mode](gateway.md#fast-mode). Whether it took is checked from the
+session's own replies, not assumed. Codex and Amp instances refuse `-speed`.
+
 ## Live checks
 
 `agentmux models list -json` returns `{"sources": [...], "catalogue": {...}}`.

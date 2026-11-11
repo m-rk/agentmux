@@ -216,3 +216,24 @@ func TestClaudeModelReadsNewestRealAssistantModel(t *testing.T) {
 		t.Fatalf("model = %q, %v; want claude-opus-5-5", m, err)
 	}
 }
+
+// The speed comes from the same newest real reply as the model, so a
+// synthetic CLI line after it changes neither.
+func TestClaudeModelAndSpeed(t *testing.T) {
+	home := t.TempDir()
+	src := Source{Instance: "i", Agent: "claude-code", Workdir: "/work/app", Home: home}
+	dir := claudeDir(src)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lines := `{"type":"assistant","message":{"model":"claude-opus-5-5","usage":{"speed":"standard"}}}
+{"type":"assistant","message":{"model":"claude-opus-5-5","usage":{"speed":"fast"}}}
+{"type":"assistant","message":{"model":"<synthetic>","usage":{"speed":"standard"}}}
+`
+	if err := os.WriteFile(filepath.Join(dir, "s1.jsonl"), []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if m, sp, err := ClaudeModelAndSpeed(src); err != nil || m != "claude-opus-5-5" || sp != "fast" {
+		t.Fatalf("model/speed = %q/%q, %v; want claude-opus-5-5/fast", m, sp, err)
+	}
+}

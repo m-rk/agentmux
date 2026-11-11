@@ -46,3 +46,16 @@ func TestClaudeModelMatches(t *testing.T) {
 		}
 	}
 }
+
+func TestCleanClaudeSpeed(t *testing.T) {
+	for _, ok := range []string{"", " fast ", "standard"} {
+		if _, err := CleanClaudeSpeed(ok); err != nil {
+			t.Errorf("CleanClaudeSpeed(%q): %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"turbo", "Fast", "on"} {
+		if _, err := CleanClaudeSpeed(bad); err == nil {
+			t.Errorf("CleanClaudeSpeed(%q) accepted", bad)
+		}
+	}
+}

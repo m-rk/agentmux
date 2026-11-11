@@ -409,27 +409,38 @@ func claudeHarnessNote(text string) bool {
 // answered with, read from the newest transcript's assistant records
 // (synthetic CLI replies are skipped). "" means no assistant reply yet.
 func ClaudeModel(src Source) (string, error) {
+	model, _, err := ClaudeModelAndSpeed(src)
+	return model, err
+}
+
+// ClaudeModelAndSpeed is ClaudeModel plus the speed ("standard" or "fast")
+// recorded on that same newest assistant reply (message.usage.speed), empty
+// when the transcript predates the field.
+func ClaudeModelAndSpeed(src Source) (string, string, error) {
 	ids, _, err := claudeFiles(src)
 	if err != nil || len(ids) == 0 {
-		return "", err
+		return "", "", err
 	}
 	f, err := os.Open(filepath.Join(claudeDir(src), ids[0]+".jsonl"))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer f.Close()
-	model := ""
+	model, speed := "", ""
 	err = eachLine(f, claudeMaxLine, func(line []byte) bool {
 		var rec struct {
 			Type    string `json:"type"`
 			Message struct {
 				Model string `json:"model"`
+				Usage struct {
+					Speed string `json:"speed"`
+				} `json:"usage"`
 			} `json:"message"`
 		}
 		if json.Unmarshal(line, &rec) == nil && rec.Type == "assistant" && rec.Message.Model != "" && rec.Message.Model != "<synthetic>" {
-			model = rec.Message.Model
+			model, speed = rec.Message.Model, rec.Message.Usage.Speed
 		}
 		return true
 	})
-	return model, err
+	return model, speed, err
 }
