@@ -169,10 +169,17 @@ Chromium as the task's run user. Limits are fixed:
 - Unknown request fields are rejected: the broker takes no command, browser
   flag or environment from a worker.
 
-Pictures are stored under `~/.agentmux/preview/<instance>/` of the run user
-(the newest 20 are kept) and removed when the instance is retired. A server
-the worker runs on a unix socket is not supported: the task profile denies
-`bind` and `connect` on every socket, not just TCP ones.
+Pictures are stored under `/var/lib/agentmux/preview/<instance>/`, a
+root-owned directory the worker can read but not write (the newest 20 are
+kept), and removed when the instance is retired. The root broker never works
+inside a path the run user owns: the store is created by walking from `/` and
+refusing any symlink, every operation in it goes through an `os.Root` that
+refuses a link leaving the store, the worker's folder is pinned to the
+directory that was validated, and the browser's profile and output sit in a
+scratch directory under the store that is handed to the run user with an
+fd-based chown and read back through the same `os.Root`. A server the worker
+runs on a unix socket is not supported: the task profile denies `bind` and
+`connect` on every socket, not just TCP ones.
 
 The browser is pinned to Chromium revision 1243, the headless shell that
 playwright-core 1.63.x installs under `~/.cache/ms-playwright`. Anything else on

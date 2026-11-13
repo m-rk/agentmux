@@ -80,11 +80,12 @@ func TestHandlerServesFolderReadOnlyAndCannotFollowLinksOut(t *testing.T) {
 	if err := os.Symlink(secret, filepath.Join(dir, "link")); err != nil {
 		t.Fatal(err)
 	}
-	h, err := Handler(dir)
+	root, err := os.OpenRoot(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(h)
+	defer root.Close()
+	srv := httptest.NewServer(Handler(root))
 	defer srv.Close()
 	get := func(method, p string) (int, string) {
 		req, _ := http.NewRequest(method, srv.URL+p, nil)
@@ -169,7 +170,7 @@ func captureOpts(t *testing.T, ws string, req Request, run RunFunc) Options {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Options{Req: req, Workspace: ws, RunUser: u.Username, Chrome: "chrome", Run: run, Store: filepath.Join(t.TempDir(), "store")}
+	return Options{Req: req, Workspace: ws, RunUser: u.Username, Chrome: "chrome", Run: run, StoreBase: filepath.Join(evalDir(t, t.TempDir()), "store")}
 }
 
 func TestCaptureStoresPNGUnderInstance(t *testing.T) {
@@ -189,8 +190,8 @@ func TestCaptureStoresPNGUnderInstance(t *testing.T) {
 	if !strings.HasPrefix(page, "http://127.0.0.1:") || !strings.HasSuffix(page, "/index.html") {
 		t.Errorf("browser was pointed at %q", page)
 	}
-	if filepath.Dir(res.Path) != o.Store {
-		t.Errorf("stored at %s, want under %s", res.Path, o.Store)
+	if want := filepath.Join(o.StoreBase, "task-capture-test"); filepath.Dir(res.Path) != want {
+		t.Errorf("stored at %s, want under %s", res.Path, want)
 	}
 	if data, err := os.ReadFile(res.Path); err != nil || !strings.HasPrefix(string(data), pngMagic) {
 		t.Errorf("stored file: %v", err)
@@ -198,7 +199,7 @@ func TestCaptureStoresPNGUnderInstance(t *testing.T) {
 	// No temp or profile litter stays in the store.
 	entries, _ := os.ReadDir(filepath.Dir(res.Path))
 	for _, e := range entries {
-		if !strings.HasPrefix(e.Name(), "capture-") {
+		if !strings.HasPrefix(e.Name(), "capture-") { // scratch and profile are removed
 			t.Errorf("leftover %s", e.Name())
 		}
 	}
@@ -243,15 +244,196 @@ func TestCaptureRefusals(t *testing.T) {
 
 func TestPruneKeepsNewest(t *testing.T) {
 	dir := t.TempDir()
+	store, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
 	for _, n := range []string{"capture-1.png", "capture-2.png", "capture-3.png", "other.txt"} {
 		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	Prune(dir, 2)
+	Prune(store, 2)
 	for n, want := range map[string]bool{"capture-1.png": false, "capture-2.png": true, "capture-3.png": true, "other.txt": true} {
 		if _, err := os.Stat(filepath.Join(dir, n)); (err == nil) != want {
 			t.Errorf("%s present=%v, want %v", n, err == nil, want)
 		}
+	}
+}
+
+func evalDir(t *testing.T, d string) string {
+	t.Helper()
+	real, err := filepath.EvalSymlinks(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return real
+}
+
+// The store is the broker's one place to write. If the store, a parent of it,
+// or an instance's directory in it is a symlink to somewhere else, the broker
+// refuses and creates, removes and changes nothing there.
+func TestCaptureRefusesSymlinkedStore(t *testing.T) {
+	ws := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(ws, "dist"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := evalDir(t, t.TempDir())
+	if err := os.WriteFile(filepath.Join(outside, "keep"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var page string
+	run := fakeChrome(pngMagic, &page)
+	snapshot := func() string {
+		entries, _ := os.ReadDir(outside)
+		var names []string
+		for _, e := range entries {
+			info, _ := e.Info()
+			names = append(names, e.Name()+":"+info.Mode().String())
+		}
+		return strings.Join(names, ",")
+	}
+	before := snapshot()
+
+	linkTo := func(t *testing.T, at string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(at), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := map[string]func(t *testing.T) string{
+		"store itself is a symlink": func(t *testing.T) string {
+			base := filepath.Join(evalDir(t, t.TempDir()), "store")
+			linkTo(t, base)
+			return base
+		},
+		"a parent of the store is a symlink": func(t *testing.T) string {
+			parent := filepath.Join(evalDir(t, t.TempDir()), "var")
+			linkTo(t, parent)
+			return filepath.Join(parent, "store")
+		},
+		"the instance directory is a symlink": func(t *testing.T) string {
+			base := filepath.Join(evalDir(t, t.TempDir()), "store")
+			linkTo(t, filepath.Join(base, "task-capture-test"))
+			return base
+		},
+	}
+	for name, setup := range cases {
+		base := setup(t)
+		o := Options{Req: Request{Instance: "task-capture-test", Path: "dist"}, Workspace: ws, RunUser: currentUserName(t), Chrome: "chrome", Run: run, StoreBase: base}
+		res := Capture(context.Background(), o)
+		if res.OK || res.Error == "" {
+			t.Errorf("%s: capture went ahead: %+v", name, res)
+		}
+		if after := snapshot(); after != before {
+			t.Errorf("%s: the symlink target changed: %q -> %q", name, before, after)
+		}
+	}
+	if page != "" {
+		t.Errorf("the browser ran (%s) although the store was refused", page)
+	}
+}
+
+// A symlink the run user plants in its scratch directory cannot make the
+// broker read another file: the picture is read through the store's os.Root.
+func TestCaptureRefusesSymlinkedPicture(t *testing.T) {
+	ws := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(ws, "dist"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(evalDir(t, t.TempDir()), "secret.png")
+	if err := os.WriteFile(secret, []byte(pngMagic+"secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plant := func(ctx context.Context, runUser, chrome string, args []string) ([]byte, error) {
+		for _, a := range args {
+			if v, ok := strings.CutPrefix(a, "--screenshot="); ok {
+				return nil, os.Symlink(secret, v)
+			}
+		}
+		return nil, nil
+	}
+	o := captureOpts(t, ws, Request{Instance: "task-capture-test", Path: "dist"}, plant)
+	res := Capture(context.Background(), o)
+	if res.OK {
+		t.Fatalf("a symlinked picture was stored: %+v", res)
+	}
+	entries, _ := os.ReadDir(filepath.Join(o.StoreBase, "task-capture-test"))
+	if len(entries) != 0 {
+		t.Errorf("store should be empty, has %v", entries)
+	}
+}
+
+func TestRemoveStoreNeverFollowsLinks(t *testing.T) {
+	base := evalDir(t, t.TempDir())
+	outside := evalDir(t, t.TempDir())
+	if err := os.WriteFile(filepath.Join(outside, "keep"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(base, "task-link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(base, "task-real", "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(base, "task-real", "sub", "out")); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveStore(base, "task-link"); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveStore(base, "task-real"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "keep")); err != nil {
+		t.Errorf("RemoveStore reached through a symlink: %v", err)
+	}
+	for _, n := range []string{"task-link", "task-real"} {
+		if _, err := os.Lstat(filepath.Join(base, n)); !os.IsNotExist(err) {
+			t.Errorf("%s survived: %v", n, err)
+		}
+	}
+	if err := RemoveStore(base, "../x"); err == nil {
+		t.Error("a path-like instance name should be refused")
+	}
+	if err := RemoveStore(filepath.Join(base, "missing"), "task-a"); err != nil {
+		t.Errorf("missing store: %v", err)
+	}
+}
+
+func currentUserName(t *testing.T) string {
+	t.Helper()
+	u, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u.Username
+}
+
+// The folder is pinned: a directory swapped for a symlink after validation is
+// refused rather than followed.
+func TestPinnedRootRefusesSwappedFolder(t *testing.T) {
+	base := evalDir(t, t.TempDir())
+	real := filepath.Join(base, "dist")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := pinnedRoot(real); err != nil {
+		t.Fatalf("plain folder: %v", err)
+	} else {
+		r.Close()
+	}
+	elsewhere := evalDir(t, t.TempDir())
+	swapped := filepath.Join(base, "swapped")
+	if err := os.Symlink(elsewhere, swapped); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := pinnedRoot(swapped); err == nil {
+		r.Close()
+		t.Error("a symlinked folder must be refused")
 	}
 }
