@@ -559,3 +559,53 @@ func TestTranscriptAtCompactBoundaryIgnoresIdleNoise(t *testing.T) {
 		t.Errorf("real turn after summary: got %v, %v; want false", got, err)
 	}
 }
+
+// A /compact the CLI refuses is recorded as a plain "/compact" user line plus
+// its echo, and the compact and restart add bridge and system lines of their
+// own. A transcript that gained only those since the last compact is idle:
+// it must not be compacted again, however many nights pass (AMUX-136).
+func TestTranscriptAtCompactBoundaryIgnoresOwnCompactLines(t *testing.T) {
+	const (
+		summary = `{"type":"user","isCompactSummary":true,"message":{"role":"user","content":"This session is being continued"}}`
+		caveat  = `{"type":"user","isMeta":true,"message":{"role":"user","content":"<local-command-caveat>x</local-command-caveat>"}}`
+		echo    = `{"type":"user","message":{"role":"user","content":"<command-name>/compact</command-name>"}}`
+		typed   = `{"type":"user","message":{"role":"user","content":"/compact"}}`
+		system  = `{"type":"system","subtype":"bridge_status"}`
+		bridge  = `{"type":"bridge-session"}`
+		real    = `{"type":"user","message":{"role":"user","content":"do the thing"}}`
+		path    = `{"type":"user","message":{"role":"user","content":"/tmp/out is empty, why?"}}`
+	)
+	check := func(name string, lines []string, want bool) {
+		t.Helper()
+		p := filepath.Join(t.TempDir(), "s.jsonl")
+		if err := os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := transcriptAtCompactBoundary(p); err != nil || got != want {
+			t.Errorf("%s: got %v, %v; want %v", name, got, err, want)
+		}
+	}
+	night := []string{typed, caveat, echo, system, bridge}
+
+	// The previous compact's summary, then three nights of the compact's and
+	// restart's own lines: still idle.
+	lines := []string{real, summary}
+	for range 3 {
+		lines = append(lines, night...)
+	}
+	check("summary then own compact lines", lines, true)
+
+	// A session that never had a real turn has nothing to compact, however
+	// many refused /compact lines it has collected.
+	lines = nil
+	for range 3 {
+		lines = append(lines, night...)
+	}
+	check("no real turn at all", lines, true)
+
+	// A real turn after the last night's lines is activity again.
+	check("real turn after own lines", append(append([]string{real, summary}, night...), real), false)
+
+	// A line that merely starts with "/" but is a path is conversation.
+	check("path-like user line", append(append([]string{summary}, night...), path), false)
+}

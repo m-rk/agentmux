@@ -449,8 +449,18 @@ func transcriptAtCompactBoundary(path string) (bool, error) {
 			return false, err
 		}
 		boundary, decided := scanCompactBoundary(lines)
-		if decided || len(lines) < want || want >= maxTailScanLines {
+		if decided {
 			return boundary, nil
+		}
+		if len(lines) < want {
+			// The whole file held no summary and no real turn: nothing but
+			// bookkeeping, so there is nothing to compact (AMUX-136). A
+			// session that never had a conversation is not compacted, and a
+			// refused /compact's own echo no longer makes it look new.
+			return true, nil
+		}
+		if want >= maxTailScanLines {
+			return false, nil
 		}
 	}
 }
@@ -550,13 +560,7 @@ func isBookkeepingTurn(e transcriptEntry) bool {
 	if e.Type == "assistant" && e.Message.Model == "<synthetic>" {
 		return true
 	}
-	text := e.text()
-	for _, tag := range localCommandTags {
-		if strings.HasPrefix(text, tag) {
-			return true
-		}
-	}
-	return false
+	return isLocalCommandEcho(e)
 }
 
 // maxBookkeepingLookback bounds how many CLI-bookkeeping conversation
@@ -659,8 +663,15 @@ func isLocalCommandEcho(e transcriptEntry) bool {
 			return true
 		}
 	}
-	return false
+	return bareSlashCommand.MatchString(strings.TrimSpace(text))
 }
+
+// bareSlashCommand matches a user line that is only a slash command typed at
+// the prompt, such as "/compact". When a /compact is refused the CLI records
+// that line as a plain user turn, which is not conversation: counting it made
+// every refused night look like new activity (AMUX-136). The command name has
+// no "/" inside, so a path such as "/tmp/x is broken" still counts as a turn.
+var bareSlashCommand = regexp.MustCompile(`^/[A-Za-z][A-Za-z0-9:_-]*([ \t][^\n]*)?$`)
 
 // tailLines reads the final non-empty lines of path without loading the
 // whole file into memory — Claude Code session transcripts can run into
