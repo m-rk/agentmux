@@ -42,6 +42,13 @@ func runTaskcheckBroker(args []string) {
 		fmt.Fprintln(os.Stderr, "task-check broker service must run as root")
 		os.Exit(1)
 	}
+	// The preview mailbox shares this root service (one unit to install and
+	// restart). A failure there must not take the task-check broker down.
+	go func() {
+		if err := servePreviewBroker(); err != nil {
+			fmt.Fprintf(os.Stderr, "preview broker: %v\n", err)
+		}
+	}()
 	if err := serveTaskcheckBroker(); err != nil {
 		fmt.Fprintf(os.Stderr, "task-check broker: %v\n", err)
 		os.Exit(1)

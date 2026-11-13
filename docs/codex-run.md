@@ -137,6 +137,51 @@ check could not start or finish. This route does not grant access to the
 general daemon socket or change Codex's sandbox settings. The normal ship
 check remains authoritative.
 
+### Screenshots of a local preview from a Codex task
+
+A Codex task cannot screenshot its own preview. The sandbox denies the worker
+TCP sockets (so it cannot serve a page, whatever `allow_local_binding` says,
+which governs only the managed proxy) and headless Chromium aborts at startup
+inside it. The managed network allowlist stays as it is; the capture runs on
+the host instead.
+
+Build the page to a static folder inside the worktree, then run
+`agentmux sessions preview [-page /index.html] [-width N] [-height N] [-json] FOLDER`.
+It prints the path of the PNG, which the worker can read (and which an image-
+capable review step can open). The request goes through a preview mailbox in
+`/tmp`, served by the same root broker service as `sessions check` (one unit to
+install and restart); it does not connect to `agentmuxd`.
+
+The broker serves the folder read-only on a loopback port and runs a headless
+Chromium as the task's run user. Limits are fixed:
+
+- The folder must resolve, symlinks included, to a directory inside the
+  instance's own workspace, which comes from the instance registry and never
+  from the request. The request file's owner must be the task's run user.
+- One capture at a time per instance, and two at once on the host.
+- A 45 s timeout for the whole capture, a viewport of at most 2560 by 2560, and
+  a picture of at most 8 MiB.
+- The browser is pointed at a dead proxy with only loopback bypassed, so it
+  never fetches a remote URL, whatever the page asks for. Chromium's own
+  sandbox is off, because current Ubuntu disables the unprivileged user
+  namespaces it needs; the unprivileged user, the dead proxy and a static
+  folder are what contain it.
+- Unknown request fields are rejected: the broker takes no command, browser
+  flag or environment from a worker.
+
+Pictures are stored under `~/.agentmux/preview/<instance>/` of the run user
+(the newest 20 are kept) and removed when the instance is retired. A server
+the worker runs on a unix socket is not supported: the task profile denies
+`bind` and `connect` on every socket, not just TCP ones.
+
+The browser is pinned to Chromium revision 1243, the headless shell that
+playwright-core 1.63.x installs under `~/.cache/ms-playwright`. Anything else on
+the host that drives that Chromium through playwright-core must stay on 1.63.x;
+bump both together. `AGENTMUX_PREVIEW_CHROME` in the broker's environment points
+it at a different binary.
+
+This is Linux only, like the task-check broker.
+
 ## Spend
 
 Usage draws on the logged-in ChatGPT plan's quota and rate limits, not

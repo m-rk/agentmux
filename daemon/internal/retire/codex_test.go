@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/m-rk/agentmux/daemon/internal/preview"
 	"github.com/m-rk/agentmux/daemon/internal/session"
 )
 
@@ -90,4 +91,32 @@ func TestApplyCodexStopsRunningChildAndKeepsBranch(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("run child was not stopped: %+v", session.CodexRunStateOf(logPath))
+}
+
+func TestRemovePreviewStoreDropsOnlyTheInstancesCaptures(t *testing.T) {
+	home := t.TempDir()
+	mine := preview.StoreDir(home, "task-a")
+	other := preview.StoreDir(home, "task-b")
+	for _, d := range []string{mine, other} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "capture-1.png"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	removePreviewStore(home, "task-a")
+	if _, err := os.Stat(mine); !os.IsNotExist(err) {
+		t.Errorf("captures for the retired instance survived (%v)", err)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Errorf("another instance's captures were removed: %v", err)
+	}
+	// Names that are not a plain task instance, and a relative home, remove nothing.
+	removePreviewStore(home, "task-b/../task-b")
+	removePreviewStore(home, "forgentic")
+	removePreviewStore("relative", "task-b")
+	if _, err := os.Stat(other); err != nil {
+		t.Errorf("refused names still removed captures: %v", err)
+	}
 }

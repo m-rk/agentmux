@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/m-rk/agentmux/daemon/internal/preview"
 	"github.com/m-rk/agentmux/daemon/internal/runas"
 	"github.com/m-rk/agentmux/daemon/internal/safesend"
 	"github.com/m-rk/agentmux/daemon/internal/session"
@@ -545,6 +546,10 @@ func apply(ctx context.Context, removeManaged func(context.Context, string) (str
 		if dir := fields[session.CodexGoCacheKey]; dir != "" && filepath.Base(dir) == instance && filepath.IsAbs(dir) {
 			_ = os.RemoveAll(dir)
 		}
+		// Host-side preview captures are stored under the run user's home.
+		if u, err := user.Lookup(strings.TrimSpace(fields["AGENTMUX_RUN_USER"])); err == nil {
+			removePreviewStore(u.HomeDir, instance)
+		}
 	case "opencode":
 		res.OpencodeSessions = st.OpencodeSessions
 	}
@@ -992,4 +997,13 @@ func opEnvFile(instance string, fields map[string]string) string {
 		return ""
 	}
 	return filepath.Join(home, ".agentmux", "env", instance+".env")
+}
+
+// removePreviewStore drops the host-side preview captures stored for instance
+// under home (see internal/preview). Only the instance's own directory goes.
+func removePreviewStore(home, instance string) {
+	if !strings.HasPrefix(instance, TaskPrefix) || strings.ContainsAny(instance, "/\\") || !filepath.IsAbs(home) {
+		return
+	}
+	_ = os.RemoveAll(preview.StoreDir(home, instance))
 }
