@@ -605,8 +605,8 @@ func ensureClaudeRemoteControl(tmux func(args ...string) *exec.Cmd, name, socket
 }
 
 // ensureClaudeAuthNotified checks name's Claude Code OAuth token expiry
-// (Linux only today — see provision.CheckTokenExpiry's doc comment on the
-// macOS gap) and sends a Discord notification the first time it crosses
+// (on macOS only a logged-out state is detectable, reported as already
+// expired — see provision.CheckTokenExpiry) and sends a Discord notification the first time it crosses
 // into "expiring soon" or "already expired," debounced via two registry
 // fields so a 5-minute tick doesn't resend the same notification forever.
 // Never returns an error: a broken Discord webhook or an unsupported
@@ -648,7 +648,7 @@ func ensureClaudeAuthNotified(name, runUser, displayName string) {
 
 	switch {
 	case expired && !notifiedExpired:
-		notify(fmt.Sprintf("🔴 %s: Claude Code's refresh token has expired — the session will stop working on its next token refresh. Re-authenticate with: agentmux auth login -instance %s", displayName, name))
+		notify(fmt.Sprintf("🔴 %s: Claude Code is logged out or its refresh token has expired — Remote Control and the session will stop working. Re-authenticate with: agentmux auth login -instance %s", displayName, name))
 		_ = SetRegistryField(name, "AGENTMUX_AUTH_NOTIFIED_EXPIRED", "true")
 	case expiringSoon && !notifiedSoon:
 		notify(fmt.Sprintf("🟡 %s: Claude Code's refresh token expires %s — re-authenticate soon with `agentmux auth login -instance %s` to avoid an interruption.", displayName, status.RefreshExpiresAt.Format(time.RFC1123), name))

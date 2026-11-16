@@ -4,10 +4,10 @@ import "time"
 
 // TokenExpiryStatus reports what's known about an instance's OAuth token
 // expiry. Supported is false when this platform/agent combination has no
-// known way to read expiry timestamps (currently: any agent on macOS, where
-// Claude Code's credentials live in Keychain rather than a plain file) —
-// callers should fall back to a plain logged-in/logged-out check in that
-// case, via claudeLoggedIn or similar. AccessExpiresAt/RefreshExpiresAt are
+// known way to read expiry (currently: non-claude agents). On macOS, where
+// Claude Code's credentials live in Keychain rather than a plain file, there
+// are no timestamps: Supported is true, and a logged-out login is reported
+// as a refresh expiry of "now". AccessExpiresAt/RefreshExpiresAt are
 // the zero time.Time when Supported is true but that particular field
 // wasn't found in the credential store.
 type TokenExpiryStatus struct {
