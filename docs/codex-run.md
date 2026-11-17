@@ -169,7 +169,7 @@ Chromium as the task's run user. Limits are fixed:
 - Unknown request fields are rejected: the broker takes no command, browser
   flag or environment from a worker.
 
-Pictures are stored under `/var/lib/agentmux/preview/<instance>/`, a
+Pictures are stored under `/var/lib/agentmux-preview/<instance>/`, a
 root-owned directory the worker can read but not write (the newest 20 are
 kept), and removed when the instance is retired. The root broker never works
 inside a path the run user owns: the store is created by walking from `/` and
@@ -180,6 +180,15 @@ scratch directory under the store that is handed to the run user with an
 fd-based chown and read back through the same `os.Root`. A server the worker
 runs on a unix socket is not supported: the task profile denies `bind` and
 `connect` on every socket, not just TCP ones.
+
+Inside the Codex sandbox host root is not mapped into the task's user
+namespace, so the root-owned mailbox and store read as the kernel's overflow
+uid (usually 65534). The worker side of `sessions preview` and `sessions check`
+accepts that uid in place of root only when it is running in a user namespace;
+the broker itself still refuses to start on a mailbox it does not own. Every
+directory from `/` down to the store is kept searchable (0755) so the worker can
+open the picture at the path it is given; the broker refuses to capture into a
+store a task user could not reach.
 
 The browser is pinned to Chromium revision 1243, the headless shell that
 playwright-core 1.63.x installs under `~/.cache/ms-playwright`. Anything else on

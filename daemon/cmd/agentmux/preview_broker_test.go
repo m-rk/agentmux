@@ -105,3 +105,19 @@ func mustOnly(t *testing.T, dir string) string {
 	}
 	return entries[0].Name()
 }
+
+func TestBrokerOwnerOK(t *testing.T) {
+	if !brokerOwnerOK(0, 0) || !brokerOwnerOK(1001, 1001) {
+		t.Error("the expected owner must pass")
+	}
+	if brokerOwnerOK(1001, 0) {
+		t.Error("another real user must not pass as root")
+	}
+	// The overflow uid stands for root only inside a user namespace.
+	if got, want := brokerOwnerOK(overflowUID(), 0), inUserNamespace(); got != want {
+		t.Errorf("overflow uid as root = %v, want %v (in a user namespace: %v)", got, want, inUserNamespace())
+	}
+	if brokerOwnerOK(overflowUID(), 1001) {
+		t.Error("the overflow uid is never a non-root owner")
+	}
+}

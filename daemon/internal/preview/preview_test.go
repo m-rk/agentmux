@@ -166,11 +166,12 @@ func fakeChrome(body string, gotPage *string) RunFunc {
 
 func captureOpts(t *testing.T, ws string, req Request, run RunFunc) Options {
 	t.Helper()
+	baseDir := evalDir(t, t.TempDir())
 	u, err := user.Current()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Options{Req: req, Workspace: ws, RunUser: u.Username, Chrome: "chrome", Run: run, StoreBase: filepath.Join(evalDir(t, t.TempDir()), "store")}
+	return Options{Req: req, Workspace: ws, RunUser: u.Username, Chrome: "chrome", Run: run, StoreBase: filepath.Join(baseDir, "store")}
 }
 
 func TestCaptureStoresPNGUnderInstance(t *testing.T) {
@@ -267,6 +268,13 @@ func evalDir(t *testing.T, d string) string {
 	real, err := filepath.EvalSymlinks(d)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// t.TempDir and its per-test parent are 0700; the store and every
+	// directory above it must be searchable by task users.
+	for _, p := range []string{filepath.Dir(real), real} {
+		if err := os.Chmod(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return real
 }
@@ -435,5 +443,31 @@ func TestPinnedRootRefusesSwappedFolder(t *testing.T) {
 	if r, err := pinnedRoot(swapped); err == nil {
 		r.Close()
 		t.Error("a symlinked folder must be refused")
+	}
+}
+
+// A store the worker cannot walk to would hand back a path it cannot open.
+func TestOpenStoreRequiresSearchableDirectories(t *testing.T) {
+	base := filepath.Join(evalDir(t, t.TempDir()), "a", "store")
+	root, err := openStore(base, "task-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root.Close()
+	for _, d := range []string{base, filepath.Dir(base)} {
+		info, _ := os.Stat(d)
+		if info.Mode().Perm() != 0o755 {
+			t.Errorf("%s created with mode %v, want 0755", d, info.Mode().Perm())
+		}
+	}
+	if err := os.Chmod(filepath.Dir(base), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(filepath.Dir(base), 0o755)
+	if root, err := openStore(base, "task-a"); err == nil {
+		root.Close()
+		t.Error("a store under a private directory must be refused")
+	} else if !strings.Contains(err.Error(), "not searchable") {
+		t.Errorf("error = %v", err)
 	}
 }

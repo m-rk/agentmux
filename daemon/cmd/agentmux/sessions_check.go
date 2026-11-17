@@ -73,6 +73,37 @@ func callTaskcheckBroker(ctx context.Context, instance string) (taskcheck.Result
 	return callTaskcheckBrokerAt(ctx, instance, os.Getuid(), taskcheckBrokerRequests, taskcheckBrokerResponses)
 }
 
+// brokerOwnerOK reports whether a mailbox directory's uid is the expected
+// owner. Inside a Codex sandbox (a user namespace) host root is not mapped, so
+// root-owned directories read as the kernel's overflow uid; there, that uid
+// stands for root. The root broker refuses to start on a directory it does not
+// own, so a squatted mailbox never gets a request to read.
+func brokerOwnerOK(uid, owner uint32) bool {
+	if uid == owner {
+		return true
+	}
+	return owner == 0 && inUserNamespace() && uid == overflowUID()
+}
+
+// inUserNamespace is true when uid 0 is not the host's root.
+func inUserNamespace() bool {
+	data, err := os.ReadFile("/proc/self/uid_map")
+	if err != nil {
+		return false
+	}
+	f := strings.Fields(string(data))
+	return !(len(f) == 3 && f[0] == "0" && f[1] == "0" && f[2] == "4294967295")
+}
+
+func overflowUID() uint32 {
+	if data, err := os.ReadFile("/proc/sys/kernel/overflowuid"); err == nil {
+		if v, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 32); err == nil {
+			return uint32(v)
+		}
+	}
+	return 65534
+}
+
 func validateTaskcheckBrokerDirs(root string, owner uint32) error {
 	for _, dir := range []struct {
 		path string
@@ -88,7 +119,7 @@ func validateTaskcheckBrokerDirs(root string, owner uint32) error {
 			return err
 		}
 		stat, ok := info.Sys().(*syscall.Stat_t)
-		if !ok || stat.Uid != owner || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		if !ok || !brokerOwnerOK(stat.Uid, owner) || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("broker directory %q has unsafe ownership or type", dir.path)
 		}
 		if info.Mode().Perm() != dir.mode.Perm() || info.Mode()&os.ModeSticky != dir.mode&os.ModeSticky {

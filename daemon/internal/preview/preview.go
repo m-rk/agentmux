@@ -171,7 +171,11 @@ func FindChrome(home, override string) (string, error) {
 // subdirectory per instance. It is never under a user-owned path, so a task
 // user cannot point it somewhere else; every operation inside it goes through
 // an os.Root, which refuses any symlink that leaves the store.
-const StoreBase = "/var/lib/agentmux/preview"
+//
+// It is its own directory rather than a subdirectory of /var/lib/agentmux,
+// which the doctor state keeps private (0700) to root: a task user has to be
+// able to walk to the pictures it is handed.
+const StoreBase = "/var/lib/agentmux-preview"
 
 // StoreDir is where an instance's captures are, under base.
 func StoreDir(base, instance string) string { return filepath.Join(base, instance) }
@@ -186,6 +190,11 @@ func openStore(base, instance string) (*os.Root, error) {
 	}
 	base = filepath.Clean(base)
 	if err := mkdirNoFollow(base); err != nil {
+		return nil, err
+	}
+	// The worker reads its pictures from here as another user, so the store
+	// and every directory above it must be searchable by others.
+	if err := checkSearchable(base); err != nil {
 		return nil, err
 	}
 	root, err := os.OpenRoot(base)
@@ -231,11 +240,32 @@ func mkdirNoFollow(dir string) error {
 			if err := os.Mkdir(cur, 0o755); err != nil {
 				return fmt.Errorf("creating capture store: %w", err)
 			}
+			if err := os.Chmod(cur, 0o755); err != nil { // not subject to the umask
+				return fmt.Errorf("creating capture store: %w", err)
+			}
 		default:
 			return fmt.Errorf("checking capture store: %w", err)
 		}
 	}
 	return nil
+}
+
+// checkSearchable fails when dir, or a directory above it, cannot be entered
+// by other users. A task user could not reach its picture otherwise, and the
+// capture would "succeed" with a path the worker cannot open.
+func checkSearchable(dir string) error {
+	for p := dir; ; p = filepath.Dir(p) {
+		info, err := os.Stat(p)
+		if err != nil {
+			return err
+		}
+		if info.Mode().Perm()&0o001 == 0 {
+			return fmt.Errorf("capture store directory %s is not searchable by task users (mode %v)", p, info.Mode().Perm())
+		}
+		if p == filepath.Dir(p) {
+			return nil
+		}
+	}
 }
 
 // RemoveStore deletes instance's captures under base without following any
