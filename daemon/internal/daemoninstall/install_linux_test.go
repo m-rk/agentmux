@@ -61,3 +61,21 @@ func TestTaskcheckBrokerUnitIsNarrow(t *testing.T) {
 		t.Fatalf("broker service does not have a dedicated entry point: %s", service)
 	}
 }
+
+// `systemctl enable` only makes a unit start at boot when it has an [Install]
+// section; without one the broker was "static" and stayed down after a reboot.
+func TestTaskcheckBrokerUnitStartsWithTheDaemon(t *testing.T) {
+	service := fmt.Sprintf(taskcheckServiceTemplate, binPath)
+	_, install, ok := strings.Cut(service, "\n[Install]\n")
+	if !ok {
+		t.Fatalf("broker service has no [Install] section, so enable cannot start it at boot:\n%s", service)
+	}
+	if strings.TrimSpace(install) != "WantedBy=agentmuxd.service" {
+		t.Errorf("[Install] = %q, want WantedBy=agentmuxd.service", strings.TrimSpace(install))
+	}
+	for _, want := range []string{"After=agentmuxd.service", "Requires=agentmuxd.service"} {
+		if !strings.Contains(service, "\n"+want+"\n") {
+			t.Errorf("broker service lacks %s", want)
+		}
+	}
+}

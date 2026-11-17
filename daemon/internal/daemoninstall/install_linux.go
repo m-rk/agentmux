@@ -81,6 +81,11 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 `
+	// The broker is wanted by the daemon rather than by multi-user.target:
+	// it then starts at boot (the daemon is) and also whenever the daemon is
+	// started again after a stop, which Requires= alone propagates only one
+	// way. Without an [Install] section `enable` was a no-op and the broker
+	// stayed down after every reboot.
 	taskcheckServiceTemplate = `[Unit]
 Description=agentmux task-check broker
 After=agentmuxd.service
@@ -93,6 +98,9 @@ Restart=on-failure
 RestartSec=1
 TimeoutStartSec=infinity
 KillMode=process
+
+[Install]
+WantedBy=agentmuxd.service
 `
 )
 
