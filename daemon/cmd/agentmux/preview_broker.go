@@ -96,18 +96,8 @@ func callPreviewBrokerAt(ctx context.Context, req preview.Request, uid int, requ
 	if err != nil {
 		return preview.Result{}, err
 	}
-	f, err := os.OpenFile(requestPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
+	if err := submitBrokerRequest(requestsDir, name, body); err != nil {
 		return preview.Result{}, fmt.Errorf("submitting preview request: %w", err)
-	}
-	if _, err := f.Write(body); err != nil {
-		_ = f.Close()
-		_ = os.Remove(requestPath)
-		return preview.Result{}, err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(requestPath)
-		return preview.Result{}, err
 	}
 	responsePath := filepath.Join(responsesDir, name)
 	ticker := time.NewTicker(200 * time.Millisecond)

@@ -143,18 +143,8 @@ func callTaskcheckBrokerAt(ctx context.Context, instance string, uid int, reques
 	if err != nil {
 		return taskcheck.Result{}, err
 	}
-	f, err := os.OpenFile(requestPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
+	if err := submitBrokerRequest(requestsDir, name, body); err != nil {
 		return taskcheck.Result{}, fmt.Errorf("submitting task-check request: %w", err)
-	}
-	if _, err := f.Write(body); err != nil {
-		_ = f.Close()
-		_ = os.Remove(requestPath)
-		return taskcheck.Result{}, err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(requestPath)
-		return taskcheck.Result{}, err
 	}
 	responsePath := filepath.Join(responsesDir, name)
 	ticker := time.NewTicker(200 * time.Millisecond)
@@ -172,6 +162,32 @@ func callTaskcheckBrokerAt(ctx context.Context, instance string, uid int, reques
 		case <-ticker.C:
 		}
 	}
+}
+
+// submitBrokerRequest puts body in requestsDir under name all at once. It is
+// written under a dot-prefixed name the brokers never pick up and renamed into
+// place when complete, so a broker polling the directory can't take the
+// request while it is still empty and answer it as invalid.
+func submitBrokerRequest(requestsDir, name string, body []byte) error {
+	partPath := filepath.Join(requestsDir, "."+name+".part")
+	f, err := os.OpenFile(partPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(body); err != nil {
+		_ = f.Close()
+		_ = os.Remove(partPath)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(partPath)
+		return err
+	}
+	if err := os.Rename(partPath, filepath.Join(requestsDir, name)); err != nil {
+		_ = os.Remove(partPath)
+		return err
+	}
+	return nil
 }
 
 func readTaskcheckResponse(path string, uid int) (taskcheck.Result, bool, error) {

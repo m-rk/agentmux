@@ -38,6 +38,9 @@ func TestCallPreviewBrokerAt(t *testing.T) {
 		for {
 			entries, _ := os.ReadDir(requests)
 			for _, e := range entries {
+				if strings.HasPrefix(e.Name(), ".") { // still being written; brokers skip it
+					continue
+				}
 				data, err := os.ReadFile(filepath.Join(requests, e.Name()))
 				if err != nil {
 					continue
@@ -104,6 +107,29 @@ func mustOnly(t *testing.T, dir string) string {
 		t.Fatalf("want exactly one file in %s: %v %v", dir, entries, err)
 	}
 	return entries[0].Name()
+}
+
+// A request appears under its real name only once it is complete, so a broker
+// polling the directory never reads an empty one; nothing else is left behind.
+func TestSubmitBrokerRequestIsAtomic(t *testing.T) {
+	dir := t.TempDir()
+	body := []byte(`{"instance":"task-a"}`)
+	if err := submitBrokerRequest(dir, "1001-x.json", body); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustOnly(t, dir); got != "1001-x.json" {
+		t.Fatalf("files = %s", got)
+	}
+	info, err := os.Stat(filepath.Join(dir, "1001-x.json"))
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode: %v %v", info, err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "1001-x.json")); string(data) != string(body) {
+		t.Errorf("body = %q", data)
+	}
+	if err := submitBrokerRequest(filepath.Join(dir, "missing"), "1001-y.json", body); err == nil {
+		t.Error("a missing mailbox must fail")
+	}
 }
 
 func TestBrokerOwnerOK(t *testing.T) {

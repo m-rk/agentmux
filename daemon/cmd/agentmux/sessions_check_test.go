@@ -31,8 +31,14 @@ func TestTaskcheckClientUsesOnlyFixedFileRequest(t *testing.T) {
 				brokerDone <- err
 				return
 			}
-			if len(entries) > 0 {
-				name := entries[0].Name()
+			var name string
+			for _, e := range entries {
+				if !strings.HasPrefix(e.Name(), ".") { // dot names are still being written
+					name = e.Name()
+					break
+				}
+			}
+			if name != "" {
 				requestBytes, err := os.ReadFile(filepath.Join(requestsDir, name))
 				if err != nil {
 					brokerDone <- err
