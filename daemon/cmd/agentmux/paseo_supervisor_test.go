@@ -59,7 +59,7 @@ func TestSupervisorProblem(t *testing.T) {
 	if ok.problem() != "" {
 		t.Fatalf("got %q", ok.problem())
 	}
-	failing := &paseoSupervisor{Kind: "systemd unit", Name: paseoUnit, Args: []string{"paseo", "daemon", "run"}, Failing: "activating/auto-restart"}
+	failing := &paseoSupervisor{Kind: "systemd unit", Name: "paseo.service", Args: []string{"paseo", "daemon", "run"}, Failing: "activating/auto-restart"}
 	if !strings.Contains(failing.problem(), "is failing") {
 		t.Fatalf("got %q", failing.problem())
 	}
