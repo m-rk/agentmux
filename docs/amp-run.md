@@ -148,6 +148,11 @@ continuing) ends the same way, with an error like `User cancelled
 (SIGINT/SIGTERM)`. Poll `sessions status` for `running` / `done` /
 `waiting` / `failed` rather than trusting the thread's agent state.
 
+`sessions stop` ends a run on purpose: it writes an `agentmux.stop` record
+before killing the run, and once the launcher's exit record follows, the
+thread reads `stopped` instead of `failed`. See
+[Stopping a run](gateway.md#stopping-a-run).
+
 Through the gateway it is the `run` op, granted like `send` (it starts an
 agent that will act on text it is given, and shares `send`'s rate bucket).
 The grant is checked against the session without its `#thread`: a thread

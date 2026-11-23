@@ -245,6 +245,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, a *access) {
 		}
 		a.target = clip(req.Address)
 		s.runOp(w, r, a, id, req)
+	case gatewayapi.OpStop:
+		var req gatewayapi.StopRequest
+		if !s.decode(w, a, body, &req, false) {
+			return
+		}
+		a.target = clip(req.Address)
+		s.stopOp(w, r, a, id, req)
 	case gatewayapi.OpRetire:
 		var req gatewayapi.RetireRequest
 		if !s.decode(w, a, body, &req, false) {
@@ -366,6 +373,40 @@ func (s *Server) sendOp(w http.ResponseWriter, r *http.Request, a *access, id Id
 	})
 	if !res.OK {
 		a.reason = string(res.Reason)
+	}
+	s.reply(w, a, http.StatusOK, res)
+}
+
+// stopOp cancels an instance's active run. A grant for "stop" or "send" on
+// the session allows it, and it shares the send rate bucket. The principal
+// is the caller's identity; via defaults to relayed as for a send.
+func (s *Server) stopOp(w http.ResponseWriter, r *http.Request, a *access, id Identity, req gatewayapi.StopRequest) {
+	if !s.send.allow(a.principal) {
+		s.rateLimited(w, a, s.send.limit)
+		return
+	}
+	addr, err := address.Parse(req.Address)
+	if err != nil {
+		s.refuse(w, a, http.StatusBadRequest, safesend.ReasonInvalid, err.Error())
+		return
+	}
+	session := addr.Session().String()
+	if !sessionAllowed(id.Grants, gatewayapi.OpStop, session) && !sessionAllowed(id.Grants, gatewayapi.OpSend, session) {
+		s.refuse(w, a, http.StatusForbidden, safesend.ReasonForbidden, fmt.Sprintf("stop of %s is not permitted", addr.Session()))
+		return
+	}
+	via := req.Via
+	if via == "" {
+		via = "relayed"
+	}
+	res, err := s.backend.Stop(r.Context(), ops.StopRequest{
+		Address: req.Address, Via: via, By: a.principal, From: req.From,
+		Correlation: req.Correlation, DryRun: req.DryRun,
+	})
+	if err != nil {
+		e := ops.AsError(err)
+		s.refuse(w, a, gatewayapi.HTTPStatus(e.Reason), e.Reason, e.Detail)
+		return
 	}
 	s.reply(w, a, http.StatusOK, res)
 }

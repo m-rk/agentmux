@@ -407,6 +407,8 @@ type codexEvent struct {
 	Run      string `json:"run"`
 	Code     int    `json:"code"`
 	PID      int    `json:"pid"`
+	By       string `json:"by"`
+	At       string `json:"at"`
 	ThreadID string `json:"thread_id"`
 	Message  string `json:"message"`
 	Error    *struct {
@@ -482,7 +484,7 @@ func scanCodexThread(logPath, runID string, offset int64) (id string, done bool,
 
 // CodexRunState is what the JSONL log says about a codex run thread.
 type CodexRunState struct {
-	// State is "running", "done" or "failed".
+	// State is "running", "done", "failed" or "stopped".
 	State string `json:"state"`
 	// Reason is set when State is "failed".
 	Reason string `json:"reason,omitempty"`
@@ -492,6 +494,14 @@ type CodexRunState struct {
 	// Stalled marks a running log with no append for CodexRunStalledAfter.
 	Stalled  bool   `json:"stalled,omitempty"`
 	ThreadID string `json:"thread_id,omitempty"`
+	// StoppedAt and StoppedBy are set when State is "stopped": the run was
+	// ended by `sessions stop` (see StopCodexRun).
+	StoppedAt string `json:"stopped_at,omitempty"`
+	StoppedBy string `json:"stopped_by,omitempty"`
+
+	// run and pid are the current segment's launcher run id and pid.
+	run string
+	pid int
 }
 
 // CodexRunStateOf reads the log of one run thread. Each thread.started
@@ -519,6 +529,7 @@ func CodexRunStateOf(logPath string) CodexRunState {
 	var lastErr, curRun string
 	var curPID int
 	var exited bool
+	var stop *codexEvent
 	var exitCode int
 	for sc.Scan() {
 		var ev codexEvent
@@ -530,7 +541,7 @@ func CodexRunStateOf(logPath string) CodexRunState {
 			curRun = ev.Run
 			curPID = ev.PID
 			st.State, st.Reason, st.RateLimited, lastErr = "running", "", false, ""
-			exited = false
+			exited, stop = false, nil
 		case "thread.started":
 			if ev.ThreadID != "" {
 				st.ThreadID = ev.ThreadID
@@ -558,10 +569,27 @@ func CodexRunStateOf(logPath string) CodexRunState {
 			if ev.Run == curRun {
 				exited, exitCode = true, ev.Code
 			}
+		case "agentmux.stop":
+			if ev.Run == curRun {
+				e := ev
+				stop = &e
+			}
 		}
 	}
+	st.run, st.pid = curRun, curPID
 	if err := sc.Err(); err != nil {
 		st.State, st.Reason, st.RateLimited = "failed", fmt.Sprintf("reading codex run log: %v", err), false
+		return st
+	}
+	// A stopped run reads stopped once it is over (its exit record, or no
+	// launcher left); until then it is still running. A turn that completed
+	// before the stop landed stays done.
+	if stop != nil && st.State != "done" && (exited || st.State == "failed" || (curPID > 0 && !codexRunPIDAlive(curPID))) {
+		st.State, st.Reason, st.RateLimited = "stopped", "stopped", false
+		if stop.By != "" {
+			st.Reason = "stopped by " + stop.By
+		}
+		st.StoppedAt, st.StoppedBy = stop.At, stop.By
 		return st
 	}
 	if st.State != "running" {

@@ -71,7 +71,7 @@ Each entry of the array is a grant object:
 
 | field      | meaning |
 |------------|---------|
-| `ops`      | any of `list`, `status`, `threads`, `read`, `send`, `create`, `template-add`, `run`, `retire`, `gc`, `events`, `ship-publish`, `versions`, `selfupdate-log`, `runners` |
+| `ops`      | any of `list`, `status`, `threads`, `read`, `send`, `create`, `template-add`, `run`, `stop`, `retire`, `gc`, `events`, `ship-publish`, `versions`, `selfupdate-log`, `runners` |
 | `sessions` | `path.Match` patterns over `<instance>@<host>`; `*` does not match `/` |
 
 Entries add up: a call is allowed if any one entry allows it. There is no
@@ -79,7 +79,8 @@ deny. `create` starts an agent and a Git worktree on the host, so it is never
 implied by another op: grant it explicitly, with a session pattern that limits
 the names it may create (`task-*@build-box` above). The same holds for
 `retire` (ends a session and deletes its branch) and `gc` (deletes retired
-leftovers host-wide). `ip: tcp:4288` is the network path; the `app` capability is the
+leftovers host-wide). `stop` goes the other way: a `send` grant on a session
+also allows stopping its run, which leaves the session and its thread intact. `ip: tcp:4288` is the network path; the `app` capability is the
 authorization.
 
 `template-add` provisions a same-project runner from an existing instance;
@@ -315,6 +316,61 @@ From a shell, routed by the instance's host:
 ```sh
 agentmux sessions run -file prompt.md site-amp@build-box
 agentmux sessions run -file followup.md -thread T-11111111-1111-4111-8111-111111111111 site-amp@build-box
+```
+
+## Stopping a run
+
+`stop` cancels the active run of an instance and leaves the instance, its
+worktree and its branch alone: the Stop button for a worker, where `retire`
+would remove it. It takes the same principal as `send` (`-by`, `-via`,
+`-from`, `-correlation` on the CLI; through the gateway the principal is
+the caller's tailnet identity) and is audited in the same log, with the
+outcome `stop:<state>`. A task session refuses to run it, as for `send`.
+
+- **codex** and **amp**: the run of the address's `#thread`, else the
+  instance's newest run thread. The stop appends an `agentmux.stop` record
+  (who and when) to the thread's stream log, sends SIGTERM to everything
+  under the run's launcher, and SIGKILL to what is left after a grace
+  period. The launcher outlives it and writes its own `agentmux.exit`
+  record, so the run never reads as busy; if the launcher is already gone,
+  the stop writes that record itself. `sessions status` then reports
+  `state: stopped` with `run.stopped_at` and `run.stopped_by`, and
+  `sessions run -thread <id>` continues the thread like any finished one.
+- **claude-code**: a session mid-turn gets Escape, Claude Code's own
+  interrupt. A pane showing a prompt or a draft is left alone. The session
+  then reads `ready`.
+- Other agents are refused (`unsupported`).
+
+Stopping an idle instance, or a thread whose run already finished,
+succeeds without touching anything: `stopped` is false and `state` is
+`idle`, or the run's own `done`, `failed` or `stopped`.
+
+```json
+POST /v1/stop
+{"address": "task-42@build-box#<thread>", "from": "MERG-94"}
+```
+
+| field         | meaning |
+|---------------|---------|
+| `address`     | `<instance>@<host>[#<thread>]`; the grant is checked against the session without `#thread` |
+| `via`         | optional; `relayed` (default), `dispatched` or `sent` |
+| `from`, `correlation` | optional; recorded in the audit log |
+| `dry_run`     | optional; say what would be stopped without stopping it |
+
+A grant for `stop` or for `send` on the session allows it, and it shares
+`send`'s rate bucket. The reply:
+
+```json
+{"ok": true, "address": "task-42@build-box", "agent": "codex",
+ "thread": "<thread>", "state": "stopped", "stopped": true,
+ "stopped_at": "2026-11-23T12:00:00Z"}
+```
+
+From a shell, routed by the instance's host:
+
+```sh
+agentmux sessions stop -by orchestrator task-42@build-box
+agentmux sessions stop -by mark -dry-run task-42@build-box#<thread>
 ```
 
 ## Retiring a task session

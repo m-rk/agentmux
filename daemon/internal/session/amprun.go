@@ -487,7 +487,7 @@ func AmpAskUserChoice(line []byte) (waiting AmpWaitingOn, ok bool) {
 // running (the agent hasn't finished), done, failed with a reason, or
 // waiting on a question the agent asked through `ask_user_choice`.
 type AmpRunState struct {
-	// State is "running", "done", "failed", or "waiting".
+	// State is "running", "done", "failed", "waiting" or "stopped".
 	State string `json:"state"`
 	// Reason is set when State is "failed": the tail of the log.
 	Reason string `json:"reason,omitempty"`
@@ -495,6 +495,10 @@ type AmpRunState struct {
 	ThreadID string `json:"thread_id,omitempty"`
 	// WaitingOn is set when State is "waiting": the pending question.
 	WaitingOn *AmpWaitingOn `json:"waiting_on,omitempty"`
+	// StoppedAt and StoppedBy are set when State is "stopped": the run was
+	// ended by `sessions stop` (see StopAmpRunThread).
+	StoppedAt string `json:"stopped_at,omitempty"`
+	StoppedBy string `json:"stopped_by,omitempty"`
 }
 
 // AmpRunStateOf reads the stream log for a run thread. A result record
@@ -536,8 +540,25 @@ func AmpRunStateOfFile(logPath string) AmpRunState {
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
 	var lastID string
 	var waiting *AmpWaitingOn
+	// stop is a `sessions stop` record in the current segment, and
+	// stopExited whether the launcher's exit record followed it.
+	var stop *runStopRecord
+	var stopExited bool
 	for sc.Scan() {
 		line := sc.Bytes()
+		var rec runStopRecord
+		if json.Unmarshal(line, &rec) == nil && strings.HasPrefix(rec.Type, "agentmux.") {
+			switch rec.Type {
+			case "agentmux.start":
+				stop, stopExited = nil, false
+			case "agentmux.stop":
+				r := rec
+				stop, stopExited = &r, false
+			case "agentmux.exit":
+				stopExited = stop != nil
+			}
+			continue
+		}
 		var init ampStreamInit
 		if json.Unmarshal(line, &init) == nil && init.Type == "system" && init.Subtype == "init" && init.SessionID != "" {
 			lastID = init.SessionID
@@ -545,6 +566,7 @@ func AmpRunStateOfFile(logPath string) AmpRunState {
 			// working again, so an earlier segment's result no longer
 			// decides the state — nor does its pending question.
 			st.State, st.Reason, waiting = "running", "", nil
+			stop, stopExited = nil, false
 			continue
 		}
 		var res struct {
@@ -584,6 +606,14 @@ func AmpRunStateOfFile(logPath string) AmpRunState {
 		return st
 	}
 	st.ThreadID = lastID
+	if stop != nil && stopExited && st.State != "done" {
+		st.State, st.Reason, st.WaitingOn = "stopped", "stopped", nil
+		if stop.By != "" {
+			st.Reason = "stopped by " + stop.By
+		}
+		st.StoppedAt, st.StoppedBy = stop.At, stop.By
+		return st
+	}
 	if st.State == "running" {
 		if _, serr := os.Stat(logPath + ".done"); serr == nil && !ampDoneStale(logPath) {
 			st.State, st.Reason = "failed", ampLogTail(logPath)

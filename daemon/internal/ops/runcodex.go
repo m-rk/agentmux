@@ -119,7 +119,7 @@ func codexStatus(res StatusResult, addr address.Address) (StatusResult, error) {
 		return res, Refuse(safesend.ReasonNotFound, "thread %s has no run on this host", addr.Thread)
 	}
 	st := session.CodexRunStateOf(logPath)
-	res.Run = &RunStateInfo{State: st.State, Reason: st.Reason, RateLimited: st.RateLimited, Stalled: st.Stalled}
+	res.Run = &RunStateInfo{State: st.State, Reason: st.Reason, RateLimited: st.RateLimited, Stalled: st.Stalled, StoppedAt: st.StoppedAt, StoppedBy: st.StoppedBy}
 	res.State = st.State
 	return res, nil
 }

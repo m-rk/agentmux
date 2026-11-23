@@ -45,6 +45,10 @@ const sessionsUsage = `usage:
   agentmux sessions check [-json]
   agentmux sessions preview [-page /path] [-width N] [-height N] [-json] FOLDER
                                (task sessions) screenshot a static folder on the host; prints the PNG path
+  agentmux sessions stop -by PRINCIPAL [-via relayed|dispatched|sent] [-from REF] [-correlation ID]
+                        [-json] [-dry-run] [-hosts PATH] <instance>@<host>[#<thread>]
+                               cancel the instance's active run (codex, amp, claude-code); the instance,
+                               worktree and branch stay, and the thread can be continued
   agentmux sessions retire [-json] [-dry-run] [-hosts PATH] <instance>@<host>
   agentmux amp sweep [-json] [-dry-run] [-run-user USER]
                                archive junk amp threads that belong to no task instance
@@ -90,6 +94,8 @@ func runSessionsCmd(args []string) {
 		runSessionsPreview(args[1:])
 	case "check":
 		runSessionsCheck(args[1:])
+	case "stop":
+		runSessionsStop(args[1:])
 	case "retire":
 		runSessionsRetire(args[1:])
 	case "ship":

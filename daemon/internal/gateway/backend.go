@@ -21,6 +21,7 @@ type Backend interface {
 	Create(ctx context.Context, req ops.CreateRequest) (ops.CreateResult, error)
 	AddRunner(ctx context.Context, req ops.RunnerAddRequest) (ops.RunnerAddResult, error)
 	Run(ctx context.Context, req ops.RunRequest) (ops.RunResult, error)
+	Stop(ctx context.Context, req ops.StopRequest) (ops.StopResult, error)
 	Retire(ctx context.Context, req ops.RetireRequest) (ops.RetireResult, error)
 	GC(ctx context.Context, req ops.GCRequest) (ops.GCResult, error)
 	// ShipPublish merges commits into the ship gate (AMUX-29) and
@@ -64,6 +65,10 @@ func (b LocalBackend) AddRunner(ctx context.Context, req ops.RunnerAddRequest) (
 
 func (b LocalBackend) Run(ctx context.Context, req ops.RunRequest) (ops.RunResult, error) {
 	return b.Env.Run(ctx, req)
+}
+
+func (b LocalBackend) Stop(ctx context.Context, req ops.StopRequest) (ops.StopResult, error) {
+	return b.Env.Stop(ctx, req)
 }
 
 func (b LocalBackend) Retire(ctx context.Context, req ops.RetireRequest) (ops.RetireResult, error) {

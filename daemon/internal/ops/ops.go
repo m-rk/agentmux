@@ -174,10 +174,14 @@ type ClaudeInfo struct {
 
 // RunStateInfo is the stream-log state of a `sessions run` thread.
 type RunStateInfo struct {
-	// State is "running", "done", "waiting", or "failed".
+	// State is "running", "done", "waiting", "failed" or "stopped".
 	State string `json:"state"`
-	// Reason is set when State is "failed".
+	// Reason is set when State is "failed" or "stopped".
 	Reason string `json:"reason,omitempty"`
+	// StoppedAt and StoppedBy say when and by whom `sessions stop` ended
+	// the run, when State is "stopped".
+	StoppedAt string `json:"stopped_at,omitempty"`
+	StoppedBy string `json:"stopped_by,omitempty"`
 	// RateLimited marks a codex failure caused by a rate or usage limit.
 	RateLimited bool `json:"rate_limited,omitempty"`
 	// Stalled marks a codex run whose log has gone quiet while running.
@@ -246,7 +250,7 @@ func (e Env) Status(ctx context.Context, addrText string) (StatusResult, error) 
 				// otherwise fall back to amp's last-known agent state.
 				logPath := session.AmpRunLogPath(src.Home, addr.Instance, addr.Thread)
 				if runState := session.AmpRunStateOf(logPath); runState.ThreadID == addr.Thread || fileExists(logPath) {
-					res.Run = &RunStateInfo{State: runState.State, Reason: runState.Reason}
+					res.Run = &RunStateInfo{State: runState.State, Reason: runState.Reason, StoppedAt: runState.StoppedAt, StoppedBy: runState.StoppedBy}
 					if runState.WaitingOn != nil {
 						res.Run.WaitingOn = &WaitingOnInfo{
 							Tool: runState.WaitingOn.Tool, ToolUseID: runState.WaitingOn.ToolUseID,
@@ -259,6 +263,8 @@ func (e Env) Status(ctx context.Context, addrText string) (StatusResult, error) 
 						res.State = "done"
 					case "failed":
 						res.State = "failed"
+					case "stopped":
+						res.State = "stopped"
 					case "waiting":
 						// Waiting is not done: the run process is still
 						// alive behind the pending question, so the

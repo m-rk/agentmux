@@ -31,6 +31,8 @@ type fakeBackend struct {
 	ran         []ops.RunRequest
 	runRes      *ops.RunResult
 	runErr      error
+	stopped     []ops.StopRequest
+	stopErr     error
 	retired     []ops.RetireRequest
 	retireErr   error
 	gced        []ops.GCRequest
@@ -108,6 +110,16 @@ func (f *fakeBackend) Run(_ context.Context, req ops.RunRequest) (ops.RunResult,
 	return ops.RunResult{OK: true, Address: req.Address, Agent: "amp",
 		Thread: "T-11111111-1111-4111-8111-111111111111", ThreadID: "T-11111111-1111-4111-8111-111111111111",
 		ThreadURL: "https://ampcode.com/threads/T-11111111-1111-4111-8111-111111111111", State: "running"}, nil
+}
+
+func (f *fakeBackend) Stop(_ context.Context, req ops.StopRequest) (ops.StopResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.stopped = append(f.stopped, req)
+	if f.stopErr != nil {
+		return ops.StopResult{}, f.stopErr
+	}
+	return ops.StopResult{OK: true, Address: req.Address, Agent: "codex", State: "stopped", Stopped: true}, nil
 }
 
 func (f *fakeBackend) Retire(_ context.Context, req ops.RetireRequest) (ops.RetireResult, error) {
@@ -763,6 +775,41 @@ func TestRetireGrantChecksSessionAddress(t *testing.T) {
 	}
 	if len(h.backend.retired) != 1 {
 		t.Errorf("backend saw %d retires", len(h.backend.retired))
+	}
+}
+
+func TestStopAllowedByStopOrSendGrant(t *testing.T) {
+	for _, op := range []string{"stop", "send"} {
+		h := newHarness(t, gatewayapi.Grant{Ops: []string{op}, Sessions: []string{"task-*@*"}})
+		h.id.Node = "orch"
+		rec := h.post("stop", `{"address":"task-1@hostA#00000000-0000-4000-8000-0000000000c2","by":"mallory"}`)
+		if rec.Code != 400 {
+			t.Errorf("%s grant: a by field must be refused as unknown: %d %s", op, rec.Code, rec.Body)
+		}
+		rec = h.post("stop", `{"address":"task-1@hostA#00000000-0000-4000-8000-0000000000c2","from":"MERG-94"}`)
+		if rec.Code != 200 {
+			t.Fatalf("%s grant: %d %s", op, rec.Code, rec.Body)
+		}
+		var res gatewayapi.StopResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || !res.Stopped || res.State != "stopped" {
+			t.Fatalf("%s grant: response %+v %v", op, res, err)
+		}
+		got := h.backend.stopped
+		if len(got) != 1 || got[0].By != h.id.Principal() || got[0].Via != "relayed" || got[0].From != "MERG-94" {
+			t.Errorf("%s grant: backend saw %+v", op, got)
+		}
+		if rec := h.post("stop", `{"address":"other@hostA"}`); rec.Code != 403 || errReason(t, rec) != safesend.ReasonForbidden {
+			t.Errorf("%s grant: ungranted session: %d %s", op, rec.Code, rec.Body)
+		}
+	}
+	h := newHarness(t, all("list", "read", "status", "threads", "run", "retire"))
+	if rec := h.post("stop", `{"address":"task-1@hostA"}`); rec.Code != 403 || len(h.backend.stopped) != 0 {
+		t.Errorf("stop without a stop or send grant: %d %s", rec.Code, rec.Body)
+	}
+	h = newHarness(t, all("stop"))
+	h.backend.stopErr = ops.Refuse(safesend.ReasonUnsupported, "nope")
+	if rec := h.post("stop", `{"address":"task-1@hostA"}`); rec.Code != 501 || errReason(t, rec) != safesend.ReasonUnsupported {
+		t.Errorf("refusal mapping: %d %s", rec.Code, rec.Body)
 	}
 }
 

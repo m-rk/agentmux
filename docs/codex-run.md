@@ -36,7 +36,9 @@ Each `thread.started` / `agentmux.start` begins a segment. `turn.completed` is
 429 or a rate/usage limit); a bare `error` event is not terminal; an
 `agentmux.exit` with no result is `failed`; no event for 10 minutes while
 running reports `stalled`. A continue of a still-working thread is refused
-(`busy`).
+(`busy`). An `agentmux.stop` record from `sessions stop` followed by the
+launcher's exit record is `stopped` (with who and when); a continue resumes
+the thread as usual. See [Stopping a run](gateway.md#stopping-a-run).
 
 ## Send
 

@@ -105,6 +105,16 @@ func (c *Client) Run(ctx context.Context, req gatewayapi.RunRequest) (gatewayapi
 	return out, err
 }
 
+// StopTimeout bounds a stop: the run gets two grace periods to exit.
+const StopTimeout = 2 * time.Minute
+
+// Stop cancels the active run of one instance on the host.
+func (c *Client) Stop(ctx context.Context, req gatewayapi.StopRequest) (gatewayapi.StopResponse, error) {
+	var out gatewayapi.StopResponse
+	err := c.call(ctx, gatewayapi.OpStop, StopTimeout, req, &out)
+	return out, err
+}
+
 // Retire ends one finished task session on the host.
 func (c *Client) Retire(ctx context.Context, req gatewayapi.RetireRequest) (gatewayapi.RetireResponse, error) {
 	var out gatewayapi.RetireResponse
