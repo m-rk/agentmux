@@ -86,6 +86,8 @@ func main() {
 		runGatewayCmd(args[1:])
 	case "self-update":
 		runSelfUpdateCmd(args[1:])
+	case "usage-hook":
+		runUsageHook(args[1:])
 	case "ship-check":
 		runShipCheck(args[1:])
 	case "-h", "--help", "help":

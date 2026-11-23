@@ -201,13 +201,15 @@ func claudeAllowSettingsPath(home, name string) string {
 
 // prepareClaudeSettings (re)writes the instance's generated settings from
 // the registry and returns their path, or "" when there is nothing to
-// say — no usable allow-files and no pinned speed — in which case any stale
-// settings file is removed. It never fails the launch: a problem is logged
+// say (only when the agentmux binary can't be found for the usage hook and
+// there are no usable allow-files and no pinned speed), in which case any
+// stale settings file is removed. It never fails the launch: a problem is logged
 // and the session starts without that part. Runs as the instance's own
 // user, so the files are owned by it without any chown.
 //
-// The file carries two things: the read/edit grant for allow-files, and the
-// pinned speed. Claude Code has no fast-mode flag, only the fastMode
+// The file carries three things: the read/edit grant for allow-files, the
+// pinned speed, and the completed-turn usage Stop hook (see usagehook.go),
+// which every instance gets. Claude Code has no fast-mode flag, only the fastMode
 // setting, so "fast" writes fastMode: true and "standard" writes
 // fastMode: false (which also overrides a fast mode the account saved).
 func prepareClaudeSettings(name, workdir string, fields map[string]string) string {
@@ -245,6 +247,11 @@ func prepareClaudeSettings(name, workdir string, fields map[string]string) strin
 	data, err = claudeSettingsWithSpeed(data, fields[provision.ClaudeSpeedKey])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: settings: speed %q: %v\n", name, fields[provision.ClaudeSpeedKey], err)
+	}
+	if withHook, err := claudeSettingsWithUsageHook(data, claudeUsageHookCommand(name)); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: settings: usage hook: %v\n", name, err)
+	} else {
+		data = withHook
 	}
 	if len(data) == 0 {
 		_ = os.Remove(path)

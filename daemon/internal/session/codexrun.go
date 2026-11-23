@@ -378,15 +378,20 @@ func startCodexProcessDetached(ctx context.Context, instance string, argv []stri
 	// silently switch the account to metered billing. Positionals after -c's
 	// script: $0=bin, $1=log, $2=prompt file, $3=workdir, $4=run id (the prompt
 	// file's random suffix, which tells this run's records from those of an
-	// older run still being killed), $5...=codex args.
+	// older run still being killed), $5...=codex args. Once codex exits, and
+	// before the exit record (so a continue waits for it), the launcher runs
+	// the completed-turn usage hook on this run's segment: $o is where the
+	// segment starts and fd 4 a read handle that survives the log's rename.
 	runID := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(promptPath), "codex-prompt-"), ".txt")
 	launch := "f=\"$1\"; p=\"$2\"; d=\"$3\"; r=\"$4\"; shift 4; cd \"$d\" || exit 1; unset OPENAI_API_KEY CODEX_API_KEY; exec 3>>\"$f\"; " +
+		"o=$(wc -c <\"$f\" | tr -d ' '); exec 4<\"$f\"; " +
 		"s=$(date -u +%Y-%m-%dT%H:%M:%SZ); echo \"{\\\"type\\\":\\\"agentmux.start\\\",\\\"run\\\":\\\"$r\\\",\\\"pid\\\":$$,\\\"at\\\":\\\"$s\\\"}\" >&3; " +
-		"\"$0\" \"$@\" <\"$p\" >&3 2>&3; c=$?; rm -f \"$p\"; " +
+		"\"$0\" \"$@\" <\"$p\" >&3 2>&3 4<&-; c=$?; rm -f \"$p\"; " +
+		"[ -n \"$AGENTMUX_USAGE_HOOK\" ] && \"$AGENTMUX_USAGE_HOOK\" usage-hook codex --instance \"$AGENTMUX_INSTANCE_NAME\" --run \"$r\" --offset \"$o\" <&4 >/dev/null 2>&1; exec 4<&-; " +
 		"e=$(date -u +%Y-%m-%dT%H:%M:%SZ); echo \"{\\\"type\\\":\\\"agentmux.exit\\\",\\\"run\\\":\\\"$r\\\",\\\"code\\\":$c,\\\"at\\\":\\\"$e\\\"}\" >&3"
 	midArgs := append([]string{"-c", launch, bin, logPath, promptPath, workdir, runID}, rest...)
 	mid := runas.CurrentUserCommandContext(ctx, "sh", midArgs...)
-	mid.Env = cmd.Env
+	mid.Env = append(cmd.Env, codexUsageHookEnv(rest)...)
 	mid.Stdin = strings.NewReader("")
 	// A new session puts the launcher and codex out of the caller's process
 	// group, so an agent's shell tool or timed-out command cannot kill a run.
