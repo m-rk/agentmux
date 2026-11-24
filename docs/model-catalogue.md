@@ -62,7 +62,9 @@ session's own replies, not assumed. Codex and Amp instances refuse `-speed`.
 
 ## Live checks
 
-`agentmux models list -json` returns `{"sources": [...], "catalogue": {...}}`.
+`agentmux models list -json` returns `{"sources": [...], "catalogue": {...},
+"providers": [...]}`; `providers` is the last [provider probe](models-probe.md)
+of each provider tank on each host.
 For each host named in `hosts`, it asks:
 
 - this machine (`local`, or its own hostname): which runner executables are on `PATH`;
@@ -74,6 +76,8 @@ For each host named in `hosts`, it asks:
 `host` is the name as written in config (a `hosts.yaml` name, or `local`);
 `label` is a display name, which for `local` is the short hostname. Amp modes
 are not verified: an Amp offering is available when `amp` is installed.
+"Available" means the runner and its config are there, not that the provider
+answers; the plain-text list shows the last provider probe beside each entry.
 
 ## Amp modes per launch
 

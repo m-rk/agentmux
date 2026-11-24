@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/m-rk/agentmux/daemon/internal/catalogue"
 	"github.com/m-rk/agentmux/daemon/internal/gatewayapi"
 	"github.com/m-rk/agentmux/daemon/internal/ops"
 	"github.com/m-rk/agentmux/daemon/internal/safesend"
@@ -43,6 +44,7 @@ type fakeBackend struct {
 	versionsErr error
 	warnings    []string
 	runners     map[string]gatewayapi.RunnerStatus
+	probes      []catalogue.ProviderHealth
 	logLines    []string
 	logErr      error
 }
@@ -178,6 +180,15 @@ func (f *fakeBackend) Runners(context.Context) map[string]gatewayapi.RunnerStatu
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.runners
+}
+
+func (f *fakeBackend) ProviderHealth() []catalogue.ProviderHealth {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.probes == nil {
+		return []catalogue.ProviderHealth{}
+	}
+	return f.probes
 }
 
 func (f *fakeBackend) SelfUpdateLog(_ context.Context, lines int) ([]string, error) {

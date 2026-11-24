@@ -869,3 +869,34 @@ func allowFilesEnv(name, agent, workdir string, fields map[string]string) string
 	}
 	return key + "=" + string(data)
 }
+
+// ProbeSetup prepares dir for one headless opencode or kilo request on
+// instance's provider (`agentmux models probe`, AMUX-139): it writes the
+// project config the instance itself gets into dir and returns the
+// provider env overlay plus the variable that points the CLI at that
+// config (a temporary directory is no project, so opencode would not look
+// there on its own; confirmed live 2026-11-24). It only reads the
+// instance's registry; the instance, its workdir and its sessions are left
+// alone.
+func ProbeSetup(instance, dir string) ([]string, error) {
+	fields, err := registry(instance)
+	if err != nil {
+		return nil, err
+	}
+	agent := fields["AGENTMUX_AGENT"]
+	if agent != "opencode" && agent != "kilo" {
+		return nil, fmt.Errorf("instance %s runs %s, not opencode or kilo", instance, agent)
+	}
+	if err := configureAgent(agent, fields["AGENTMUX_PROVIDER"], fields["AGENTMUX_MODEL"],
+		fields["AGENTMUX_PROVIDER_BASE_URL"], fields["AGENTMUX_PROVIDER_API_KEY_ENV"], dir); err != nil {
+		return nil, err
+	}
+	env, err := readKiloExtraEnv()
+	if err != nil {
+		return nil, err
+	}
+	if agent == "kilo" {
+		return append(env, "KILO_CONFIG="+filepath.Join(dir, "kilo.json")), nil
+	}
+	return append(env, "OPENCODE_CONFIG="+filepath.Join(dir, "opencode.json")), nil
+}

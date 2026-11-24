@@ -33,6 +33,9 @@ type HostReport struct {
 	Runners   map[string]bool
 	Err       string
 	CheckedAt time.Time
+	// Probes are the host's own provider probe rows (Host "local" as the
+	// host itself names them). Nil: the host does not report probes.
+	Probes []ProviderHealth
 }
 
 // Hosts lists every host the config names, sorted.

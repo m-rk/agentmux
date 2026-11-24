@@ -90,6 +90,13 @@ func deployRestartServices(ctx context.Context, services []deployService) error 
 	if err := systemctlRun(ctx, "restart", "agentmux-taskcheck-broker.service"); err != nil {
 		return fmt.Errorf("restarting task-check broker: %w", err)
 	}
+	// The hourly provider probe (AMUX-139) is new to existing hosts:
+	// enable it once its unit is written. Enabling it again is a no-op.
+	if daemoninstall.ProbeUnitInstalled() {
+		if err := systemctlRun(ctx, "enable", "--now", daemoninstall.ProbeTimerName()); err != nil {
+			return fmt.Errorf("enabling provider probe timer: %w", err)
+		}
+	}
 	units := []string{"agentmuxd.service"}
 	for _, s := range services {
 		units = append(units, s.unit)

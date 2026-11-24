@@ -3,6 +3,7 @@ package daemoninstall
 import (
 	"fmt"
 	"os"
+	"os/user"
 )
 
 const (
@@ -13,6 +14,8 @@ const (
 	gcUnitPath               = "/etc/systemd/system/agentmuxd-gc.service"
 	gcTimerPath              = "/etc/systemd/system/agentmuxd-gc.timer"
 	taskcheckServiceUnitPath = "/etc/systemd/system/agentmux-taskcheck-broker.service"
+	probeUnitPath            = "/etc/systemd/system/agentmuxd-probe.service"
+	probeTimerPath           = "/etc/systemd/system/agentmuxd-probe.timer"
 	daemonSocket             = "/run/agentmux/agentmuxd.sock"
 	unitName                 = "agentmuxd.service"
 	// Use agentmuxd-* rather than agentmux-* so these host jobs cannot
@@ -22,6 +25,7 @@ const (
 	gcUnitName           = "agentmuxd-gc.service"
 	gcTimerName          = "agentmuxd-gc.timer"
 	taskcheckServiceUnit = "agentmux-taskcheck-broker.service"
+	probeTimerName       = "agentmuxd-probe.timer"
 	unitTemplate         = `[Unit]
 Description=agentmux daemon
 After=network-online.target
@@ -81,6 +85,33 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 `
+	// The provider probe runs as the operator user (User=), whose provider
+	// logins it checks and whose state and usage file it writes. It starts
+	// one runner process per try in a temporary directory and never an
+	// instance (AMUX-139). The gateway reads the probe state of this User=.
+	probeUnitTemplate = `[Unit]
+Description=agentmux provider probe: one tiny request to each model provider
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=%s
+ExecStart=%s models probe
+TimeoutStartSec=20min
+`
+
+	probeTimerTemplate = `[Unit]
+Description=Run the agentmux provider probe hourly
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
+`
+
 	// The broker is wanted by the daemon rather than by multi-user.target:
 	// it then starts at boot (the daemon is) and also whenever the daemon is
 	// started again after a stop, which Requires= alone propagates only one
@@ -138,6 +169,11 @@ func Install(doctorTime string) error {
 	if err := runCmd("systemctl", "restart", taskcheckServiceUnit); err != nil {
 		return err
 	}
+	if _, err := os.Stat(probeUnitPath); err == nil {
+		if err := runCmd("systemctl", "enable", "--now", probeTimerName); err != nil {
+			return err
+		}
+	}
 
 	fmt.Printf("Installed and started %s plus %s at %s Australia/Perth plus %s (binary: %s, socket: %s)\n", unitName, doctorTimerName, doctorTime, gcTimerName, binPath, daemonSocket)
 	return nil
@@ -183,8 +219,27 @@ func InstallForDeploy(doctorTime string) error {
 	if err := os.WriteFile(taskcheckServiceUnitPath, []byte(fmt.Sprintf(taskcheckServiceTemplate, binPath)), 0o644); err != nil {
 		return fmt.Errorf("writing %s: %w", taskcheckServiceUnitPath, err)
 	}
+	if u := ProbeRunUser(); u != "" {
+		if err := os.WriteFile(probeUnitPath, []byte(fmt.Sprintf(probeUnitTemplate, u, binPath)), 0o644); err != nil {
+			return fmt.Errorf("writing %s: %w", probeUnitPath, err)
+		}
+		if err := os.WriteFile(probeTimerPath, []byte(probeTimerTemplate), 0o644); err != nil {
+			return fmt.Errorf("writing %s: %w", probeTimerPath, err)
+		}
+	} else {
+		fmt.Printf("Skipped %s: run under sudo so the probe can run as the operator user\n", probeTimerName)
+	}
 
 	return nil
+}
+
+// ProbeTimerName is the hourly provider probe timer, for deploy to enable.
+func ProbeTimerName() string { return probeTimerName }
+
+// ProbeUnitInstalled reports whether the probe unit has been written.
+func ProbeUnitInstalled() bool {
+	_, err := os.Stat(probeUnitPath)
+	return err == nil
 }
 
 // Uninstall stops and removes the unit. It leaves the installed binary at
@@ -196,8 +251,9 @@ func Uninstall() error {
 	_ = runCmd("systemctl", "disable", "--now", doctorTimerName)
 	_ = runCmd("systemctl", "disable", "--now", gcTimerName)
 	_ = runCmd("systemctl", "disable", "--now", taskcheckServiceUnit)
+	_ = runCmd("systemctl", "disable", "--now", probeTimerName)
 	_ = runCmd("systemctl", "disable", "--now", unitName)
-	for _, path := range []string{taskcheckServiceUnitPath, gcTimerPath, gcUnitPath, doctorTimerPath, doctorUnitPath, unitPath} {
+	for _, path := range []string{probeTimerPath, probeUnitPath, taskcheckServiceUnitPath, gcTimerPath, gcUnitPath, doctorTimerPath, doctorUnitPath, unitPath} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("removing %s: %w", path, err)
 		}
@@ -219,5 +275,20 @@ func Status() (string, error) {
 	doctorEnabled := captureCmd("systemctl", "is-enabled", doctorTimerName)
 	gcActive := captureCmd("systemctl", "is-active", gcTimerName)
 	gcEnabled := captureCmd("systemctl", "is-enabled", gcTimerName)
-	return fmt.Sprintf("unit: %s\nactive: %s\nenabled: %s\nsocket: %s\n\ndoctor timer: %s\nactive: %s\nenabled: %s\n\ngc timer: %s\nactive: %s\nenabled: %s", unitPath, active, enabled, daemonSocket, doctorTimerPath, doctorActive, doctorEnabled, gcTimerPath, gcActive, gcEnabled), nil
+	probeActive := captureCmd("systemctl", "is-active", probeTimerName)
+	probeEnabled := captureCmd("systemctl", "is-enabled", probeTimerName)
+	return fmt.Sprintf("unit: %s\nactive: %s\nenabled: %s\nsocket: %s\n\ndoctor timer: %s\nactive: %s\nenabled: %s\n\ngc timer: %s\nactive: %s\nenabled: %s\n\nprobe timer: %s\nactive: %s\nenabled: %s", unitPath, active, enabled, daemonSocket, doctorTimerPath, doctorActive, doctorEnabled, gcTimerPath, gcActive, gcEnabled, probeTimerPath, probeActive, probeEnabled), nil
+}
+
+// ProbeRunUser is the operator user the probe runs as: SUDO_USER when
+// install runs under sudo and names a real, non-root user; else "".
+func ProbeRunUser() string {
+	u := os.Getenv("SUDO_USER")
+	if u == "" || u == "root" {
+		return ""
+	}
+	if _, err := user.Lookup(u); err != nil {
+		return ""
+	}
+	return u
 }

@@ -15,6 +15,8 @@ const (
 	// gcLabel is the daily retired-session collection; same namespace
 	// reasoning as the doctor (an instance named "gc" must not collide).
 	gcLabel = "com.m-rk.agentmux.gc"
+	// probeLabel is the hourly provider probe (AMUX-139).
+	probeLabel = "com.m-rk.agentmux.probe"
 )
 
 const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
@@ -99,6 +101,33 @@ const gcPlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 </plist>
 `
 
+// probePlistTemplate runs `agentmux models probe` hourly as the user, like
+// the Linux agentmuxd-probe.timer. StartInterval, not a calendar slot, so a
+// sleeping Mac catches up once on wake instead of firing every missed hour.
+const probePlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>%s</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>%s</string>
+        <string>models</string>
+        <string>probe</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>3600</integer>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>%s/probe.log</string>
+    <key>StandardErrorPath</key>
+    <string>%s/probe.err.log</string>
+</dict>
+</plist>
+`
+
 // agentmuxDir returns ~/.agentmux, the root for everything daemoninstall
 // manages on macOS: bin/ (the pinned binary), run/ (the daemon's Unix
 // socket), log/ (launchd's stdout/stderr redirection).
@@ -133,6 +162,10 @@ func doctorPlistPath() (string, error) {
 
 func gcPlistPath() (string, error) {
 	return launchAgentPath(gcLabel)
+}
+
+func probePlistPath() (string, error) {
+	return launchAgentPath(probeLabel)
 }
 
 func launchAgentPath(agentLabel string) (string, error) {
@@ -170,6 +203,10 @@ func Install(doctorTime string) error {
 	if err != nil {
 		return err
 	}
+	probePlist, err := probePlistPath()
+	if err != nil {
+		return err
+	}
 	gatewayPlist, err := launchAgentPath("com.m-rk.agentmux.gateway")
 	if err != nil {
 		return err
@@ -191,6 +228,10 @@ func Install(doctorTime string) error {
 	if err := runCmd("launchctl", "bootstrap", domain, gcPlist); err != nil {
 		return err
 	}
+	_ = runCmd("launchctl", "bootout", domain, probePlist)
+	if err := runCmd("launchctl", "bootstrap", domain, probePlist); err != nil {
+		return err
+	}
 	// Re-register an installed gateway after replacing the binary. On macOS
 	// launchd can retain the old executable's code-signing constraint.
 	if err := reloadGatewayAgent(domain, gatewayPlist); err != nil {
@@ -201,7 +242,7 @@ func Install(doctorTime string) error {
 	// Without this they fail to spawn silently after a swap (AMUX-125).
 	agentsDir := filepath.Dir(plist)
 	reloaded, err := reloadLoadedAgentJobs(domain, agentsDir, map[string]bool{
-		label: true, doctorLabel: true, gcLabel: true, "com.m-rk.agentmux.gateway": true,
+		label: true, doctorLabel: true, gcLabel: true, probeLabel: true, "com.m-rk.agentmux.gateway": true,
 	})
 	if len(reloaded) > 0 {
 		fmt.Printf("Re-registered %d other launchd jobs against the new binary\n", len(reloaded))
@@ -212,7 +253,7 @@ func Install(doctorTime string) error {
 
 	sock := filepath.Join(dir, "run", "agentmuxd.sock")
 	bin := filepath.Join(dir, "bin", "agentmux")
-	fmt.Printf("Installed and started %s plus %s at %s local time plus %s (binary: %s, socket: %s)\n", label, doctorLabel, doctorTime, gcLabel, bin, sock)
+	fmt.Printf("Installed and started %s plus %s at %s local time plus %s and %s (binary: %s, socket: %s)\n", label, doctorLabel, doctorTime, gcLabel, probeLabel, bin, sock)
 	return nil
 }
 
@@ -281,6 +322,14 @@ func InstallForDeploy(doctorTime string) error {
 	if err := os.WriteFile(gcPlist, []byte(gcContent), 0o644); err != nil {
 		return fmt.Errorf("writing %s: %w", gcPlist, err)
 	}
+	probePlist, err := probePlistPath()
+	if err != nil {
+		return err
+	}
+	probeContent := fmt.Sprintf(probePlistTemplate, probeLabel, bin, logDir, logDir)
+	if err := os.WriteFile(probePlist, []byte(probeContent), 0o644); err != nil {
+		return fmt.Errorf("writing %s: %w", probePlist, err)
+	}
 
 	return nil
 }
@@ -299,10 +348,15 @@ func Uninstall() error {
 	if gcErr != nil {
 		return gcErr
 	}
+	probePlist, probeErr := probePlistPath()
+	if probeErr != nil {
+		return probeErr
+	}
+	_ = runCmd("launchctl", "bootout", domain, probePlist)
 	_ = runCmd("launchctl", "bootout", domain, gcPlist)
 	_ = runCmd("launchctl", "bootout", domain, doctorPlist)
 	_ = runCmd("launchctl", "bootout", domain, plist)
-	for _, path := range []string{gcPlist, doctorPlist, plist} {
+	for _, path := range []string{probePlist, gcPlist, doctorPlist, plist} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("removing %s: %w", path, err)
 		}
@@ -327,5 +381,7 @@ func Status() (string, error) {
 	doctorOut := captureCmd("launchctl", "print", domain+"/"+doctorLabel)
 	gcPlist, _ := gcPlistPath()
 	gcOut := captureCmd("launchctl", "print", domain+"/"+gcLabel)
-	return fmt.Sprintf("plist: %s\nsocket: %s\n\n%s\n\ndoctor plist: %s\n%s\n\ngc plist: %s\n%s", plist, sock, out, doctorPlist, doctorOut, gcPlist, gcOut), nil
+	probePlist, _ := probePlistPath()
+	probeOut := captureCmd("launchctl", "print", domain+"/"+probeLabel)
+	return fmt.Sprintf("plist: %s\nsocket: %s\n\n%s\n\ndoctor plist: %s\n%s\n\ngc plist: %s\n%s\n\nprobe plist: %s\n%s", plist, sock, out, doctorPlist, doctorOut, gcPlist, gcOut, probePlist, probeOut), nil
 }

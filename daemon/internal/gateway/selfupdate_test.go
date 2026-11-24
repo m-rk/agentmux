@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/m-rk/agentmux/daemon/internal/catalogue"
 	"github.com/m-rk/agentmux/daemon/internal/gatewayapi"
 	"github.com/m-rk/agentmux/daemon/internal/selfupdate"
 )
@@ -153,6 +155,40 @@ func TestRunnersReportsPresence(t *testing.T) {
 	}
 	if !res.Runners["amp"].Present || res.Runners["kilo"].Present {
 		t.Errorf("runners = %+v", res.Runners)
+	}
+}
+
+func TestRunnersCarriesProbeRows(t *testing.T) {
+	h := newHarness(t, all(gatewayapi.OpRunners))
+	rec := h.post(gatewayapi.OpRunners, `{}`)
+	if !strings.Contains(rec.Body.String(), `"probes":[]`) {
+		t.Errorf("a host that never probed must say so with []: %s", rec.Body.String())
+	}
+	h.backend.probes = []catalogue.ProviderHealth{{Provider: "claude", Host: "local", Status: catalogue.HealthOK}}
+	rec = h.post(gatewayapi.OpRunners, `{}`)
+	var res gatewayapi.RunnersResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatalf("%v: %s", err, rec.Body.String())
+	}
+	if len(res.Probes) != 1 || res.Probes[0].Provider != "claude" || res.Probes[0].Status != "ok" {
+		t.Errorf("probes = %+v", res.Probes)
+	}
+}
+
+func TestProbeUserHomeReadsUnitUser(t *testing.T) {
+	me, err := user.Current()
+	if err != nil {
+		t.Skip(err)
+	}
+	unit := filepath.Join(t.TempDir(), "probe.service")
+	if err := os.WriteFile(unit, []byte("[Service]\nType=oneshot\nUser="+me.Username+"\nExecStart=/x models probe\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := probeUserHome(unit); got != me.HomeDir {
+		t.Errorf("home = %q, want %q", got, me.HomeDir)
+	}
+	if got := probeUserHome(filepath.Join(t.TempDir(), "missing")); got != "" {
+		t.Errorf("missing unit home = %q", got)
 	}
 }
 

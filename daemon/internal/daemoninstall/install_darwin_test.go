@@ -56,3 +56,18 @@ func TestDoctorLaunchAgentDoesNotOverlapInstanceLabels(t *testing.T) {
 		t.Fatalf("doctor label overlaps the com.agentmux.<instance> namespace: %s", doctorLabel)
 	}
 }
+
+func TestProbeLaunchAgentRunsHourly(t *testing.T) {
+	plist := fmt.Sprintf(probePlistTemplate, probeLabel, "/tmp/agentmux", "/tmp/log", "/tmp/log")
+	if err := xml.Unmarshal([]byte(plist), new(any)); err != nil {
+		t.Fatalf("probe plist is not valid XML: %v", err)
+	}
+	for _, want := range []string{"<string>models</string>\n        <string>probe</string>", "<key>StartInterval</key>\n    <integer>3600</integer>"} {
+		if !strings.Contains(plist, want) {
+			t.Errorf("plist is missing %q", want)
+		}
+	}
+	if strings.HasPrefix(probeLabel, "com.agentmux.") {
+		t.Fatalf("probe label overlaps the com.agentmux.<instance> namespace: %s", probeLabel)
+	}
+}

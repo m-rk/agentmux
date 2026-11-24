@@ -10,12 +10,14 @@ import (
 )
 
 func TestCheckHostsRecordsFailures(t *testing.T) {
-	local := func(context.Context, string) (map[string]bool, error) { return map[string]bool{"codex": true}, nil }
-	remote := func(_ context.Context, h string) (map[string]bool, error) {
+	local := func(context.Context, string) (hostCheck, error) {
+		return hostCheck{Runners: map[string]bool{"codex": true}}, nil
+	}
+	remote := func(_ context.Context, h string) (hostCheck, error) {
 		if h == "down" {
-			return nil, errors.New("check failed: unreachable")
+			return hostCheck{}, errors.New("check failed: unreachable")
 		}
-		return map[string]bool{"amp": true}, nil
+		return hostCheck{Runners: map[string]bool{"amp": true}}, nil
 	}
 	now := time.Unix(0, 0)
 	got := checkHosts(context.Background(), []string{"local", "up", "down"}, now, local, remote)

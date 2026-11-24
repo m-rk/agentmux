@@ -11,10 +11,20 @@ import (
 	"github.com/m-rk/agentmux/daemon/internal/gatewayclient"
 	"github.com/m-rk/agentmux/daemon/internal/hostsconfig"
 	"github.com/m-rk/agentmux/daemon/internal/ops"
+	"github.com/m-rk/agentmux/daemon/internal/runas"
 )
 
+// hostCheck is what one host says about itself: its runners and, when it
+// reports them, its own provider probe rows (Host "local" there).
+type hostCheck struct {
+	Runners map[string]bool
+	// Probes is nil when the host does not report probes (an older
+	// agentmux), empty when it has never probed.
+	Probes []catalogue.ProviderHealth
+}
+
 // runnerProbe asks one host which runners it has.
-type runnerProbe func(ctx context.Context, host string) (map[string]bool, error)
+type runnerProbe func(ctx context.Context, host string) (hostCheck, error)
 
 // checkHosts probes every host in parallel and returns one report each.
 // A failed probe is recorded as an error report, never dropped, so the
@@ -32,11 +42,11 @@ func checkHosts(ctx context.Context, hosts []string, now time.Time, local, remot
 				probe = local
 			}
 			rep := catalogue.HostReport{CheckedAt: now}
-			runners, err := probe(ctx, h)
+			hc, err := probe(ctx, h)
 			if err != nil {
 				rep.Err = err.Error()
 			} else {
-				rep.Runners = runners
+				rep.Runners, rep.Probes = hc.Runners, hc.Probes
 			}
 			mu.Lock()
 			out[h] = rep
@@ -47,16 +57,21 @@ func checkHosts(ctx context.Context, hosts []string, now time.Time, local, remot
 	return out
 }
 
-func localRunnerProbe(context.Context, string) (map[string]bool, error) {
-	return catalogue.LocalRunners(), nil
+func localRunnerProbe(context.Context, string) (hostCheck, error) {
+	st, _ := catalogue.LoadHealth(catalogue.HealthPath(runas.CurrentUserHome()))
+	probes := st.Providers
+	if probes == nil {
+		probes = []catalogue.ProviderHealth{}
+	}
+	return hostCheck{Runners: catalogue.LocalRunners(), Probes: probes}, nil
 }
 
 // gatewayRunnerProbe asks a host's gateway (from hosts.yaml) for its runners.
 func gatewayRunnerProbe(hostsPath string) runnerProbe {
 	cfg, cfgErr := hostsconfig.Load(hostsPath)
-	return func(ctx context.Context, host string) (map[string]bool, error) {
+	return func(ctx context.Context, host string) (hostCheck, error) {
 		if cfgErr != nil {
-			return nil, errString("host list unreadable")
+			return hostCheck{}, errString("host list unreadable")
 		}
 		var base string
 		for _, h := range cfg.Hosts {
@@ -65,7 +80,7 @@ func gatewayRunnerProbe(hostsPath string) runnerProbe {
 			}
 		}
 		if base == "" {
-			return nil, errString("host has no gateway in hosts.yaml")
+			return hostCheck{}, errString("host has no gateway in hosts.yaml")
 		}
 		c := &gatewayclient.Client{BaseURL: base, HTTP: &http.Client{}, Host: host}
 		cctx, cancel := context.WithTimeout(ctx, gatewayclient.QueryTimeout)
@@ -73,13 +88,13 @@ func gatewayRunnerProbe(hostsPath string) runnerProbe {
 		res, err := c.Runners(cctx)
 		if err != nil {
 			e := ops.AsError(err)
-			return nil, errString("check failed: " + e.Reason)
+			return hostCheck{}, errString("check failed: " + e.Reason)
 		}
 		out := map[string]bool{}
 		for r, st := range res.Runners {
 			out[r] = st.Present
 		}
-		return out, nil
+		return hostCheck{Runners: out, Probes: res.Probes}, nil
 	}
 }
 

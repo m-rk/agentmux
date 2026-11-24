@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/m-rk/agentmux/daemon/internal/gateway"
 )
 
 func TestDoctorSystemdScheduleFollowsRefresh(t *testing.T) {
@@ -77,5 +79,44 @@ func TestTaskcheckBrokerUnitStartsWithTheDaemon(t *testing.T) {
 		if !strings.Contains(service, "\n"+want+"\n") {
 			t.Errorf("broker service lacks %s", want)
 		}
+	}
+}
+
+func TestProbeTimerIsHourlyAndRunsAsTheOperator(t *testing.T) {
+	service := fmt.Sprintf(probeUnitTemplate, "op", binPath)
+	for _, want := range []string{"User=op", "ExecStart=/usr/local/bin/agentmux models probe", "Type=oneshot"} {
+		if !strings.Contains(service, want) {
+			t.Errorf("probe service is missing %q", want)
+		}
+	}
+	if strings.Contains(service, "Requires=agentmuxd.service") {
+		t.Error("the probe needs no daemon: it must not start or stop with it")
+	}
+	if !strings.Contains(probeTimerTemplate, "OnCalendar=hourly") {
+		t.Error("probe timer should run hourly")
+	}
+	if strings.Contains(probeTimerTemplate, "Persistent=true") {
+		t.Error("a missed hourly probe is not worth catching up")
+	}
+	if strings.HasPrefix(probeTimerName, "agentmux-") || !strings.HasSuffix(probeUnitPath, "agentmuxd-probe.service") {
+		t.Errorf("probe units overlap the agentmux-<instance> namespace: %s", probeTimerName)
+	}
+	if probeUnitPath != gateway.ProbeUnitPath {
+		t.Errorf("the gateway reads %s, install writes %s", gateway.ProbeUnitPath, probeUnitPath)
+	}
+}
+
+func TestProbeRunUserNeedsARealNonRootSudoUser(t *testing.T) {
+	t.Setenv("SUDO_USER", "")
+	if ProbeRunUser() != "" {
+		t.Error("no sudo user")
+	}
+	t.Setenv("SUDO_USER", "root")
+	if ProbeRunUser() != "" {
+		t.Error("root is not the operator")
+	}
+	t.Setenv("SUDO_USER", "no-such-user-amux139")
+	if ProbeRunUser() != "" {
+		t.Error("unknown user")
 	}
 }

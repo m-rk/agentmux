@@ -3,9 +3,13 @@ package gateway
 import (
 	"context"
 	"net/http"
+	"os"
+	"os/user"
+	"strings"
 
 	"github.com/m-rk/agentmux/daemon/internal/catalogue"
 	"github.com/m-rk/agentmux/daemon/internal/gatewayapi"
+	"github.com/m-rk/agentmux/daemon/internal/runas"
 	"github.com/m-rk/agentmux/daemon/internal/safesend"
 )
 
@@ -22,6 +26,49 @@ func (LocalBackend) Runners(_ context.Context) map[string]gatewayapi.RunnerStatu
 		out[r] = gatewayapi.RunnerStatus{Present: present}
 	}
 	return out
+}
+
+// ProbeBackend is implemented by a Backend that keeps provider probe rows
+// (AMUX-139). Optional, like RunnerBackend.
+type ProbeBackend interface {
+	ProviderHealth() []catalogue.ProviderHealth
+}
+
+// ProbeUnitPath is the systemd unit `daemon install` writes for the hourly
+// probe; its User= names whose state a root daemon reads.
+const ProbeUnitPath = "/etc/systemd/system/agentmuxd-probe.service"
+
+// ProviderHealth reads this host's probe state: the daemon user's own, or
+// on a root daemon the probe unit's user's. Unreadable state is no rows.
+func (LocalBackend) ProviderHealth() []catalogue.ProviderHealth {
+	home := runas.CurrentUserHome()
+	if os.Geteuid() == 0 {
+		home = probeUserHome(ProbeUnitPath)
+		if home == "" {
+			return []catalogue.ProviderHealth{}
+		}
+	}
+	st, err := catalogue.LoadHealth(catalogue.HealthPath(home))
+	if err != nil || st.Providers == nil {
+		return []catalogue.ProviderHealth{}
+	}
+	return st.Providers
+}
+
+// probeUserHome is the home of the User= in a systemd unit file, or "".
+func probeUserHome(unit string) string {
+	b, err := os.ReadFile(unit)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if name, ok := strings.CutPrefix(strings.TrimSpace(line), "User="); ok && name != "" {
+			if u, err := user.Lookup(name); err == nil {
+				return u.HomeDir
+			}
+		}
+	}
+	return ""
 }
 
 // runnersOp serves OpRunners: host-wide and read-only, so it is checked
@@ -41,5 +88,9 @@ func (s *Server) runnersOp(w http.ResponseWriter, r *http.Request, a *access, id
 		s.refuse(w, a, http.StatusNotImplemented, safesend.ReasonForbidden, "this host cannot report runners")
 		return
 	}
-	s.reply(w, a, http.StatusOK, gatewayapi.RunnersResponse{Host: s.backend.Host(), Runners: rb.Runners(r.Context())})
+	probes := []catalogue.ProviderHealth{}
+	if pb, ok := s.backend.(ProbeBackend); ok {
+		probes = pb.ProviderHealth()
+	}
+	s.reply(w, a, http.StatusOK, gatewayapi.RunnersResponse{Host: s.backend.Host(), Runners: rb.Runners(r.Context()), Probes: probes})
 }
