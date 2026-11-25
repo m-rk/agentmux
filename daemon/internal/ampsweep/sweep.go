@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"time"
+
+	"github.com/m-rk/agentmux/daemon/internal/probe"
 )
 
 // Thresholds for the junk rules. A thread younger than the rule's age, or
@@ -185,6 +187,11 @@ func classify(ex *ExportedThread, live map[string]bool, now time.Time) (reason s
 	}
 	first := ex.FirstText
 	switch {
+	case strings.HasPrefix(first, probe.AmpThreadPrefix):
+		// The host's standing provider-probe thread is continued every
+		// hour; archiving it would make the next probe start a new
+		// thread, which Mark would have to mute again.
+		return "", true
 	case strings.HasPrefix(first, dispatchedPrefix):
 		// A dispatched worker belongs to a task instance — retire
 		// archives it with the instance, never the sweep.

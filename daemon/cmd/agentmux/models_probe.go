@@ -58,7 +58,11 @@ func runModelsProbe(args []string) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	opts := probe.Options{
-		Try:     probe.Exec(session.ProbeSetup),
+		Try: probe.Exec(session.ProbeSetup, &probe.AmpStanding{
+			Path: probe.AmpThreadPath(runas.CurrentUserHome()),
+			Now:  time.Now,
+			Log:  func(line string) { fmt.Fprintln(os.Stderr, "models probe: "+line) },
+		}),
 		Sleep:   sleepCtx,
 		Now:     time.Now,
 		Backoff: probe.DefaultBackoff,

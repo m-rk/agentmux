@@ -60,12 +60,18 @@ type SetupFunc func(instance, dir string) ([]string, error)
 // directory, as the current user. opencode and kilo get the provider
 // config of the target's instance written there, and their own data and
 // state directories inside it, so the probe's session lands nowhere an
-// instance looks.
-func Exec(setup SetupFunc) TryFunc {
-	return func(ctx context.Context, t Target) Attempt { return execOnce(ctx, setup, t) }
+// instance looks. With amp set, amp tries continue the host's standing
+// thread (AmpStanding) instead of starting a new one.
+func Exec(setup SetupFunc, amp *AmpStanding) TryFunc {
+	return func(ctx context.Context, t Target) Attempt {
+		if amp.isAmp(t) {
+			return amp.try(t, func(args []string) Attempt { return execOnce(ctx, setup, t, args) })
+		}
+		return execOnce(ctx, setup, t, Args(t))
+	}
 }
 
-func execOnce(ctx context.Context, setup SetupFunc, t Target) Attempt {
+func execOnce(ctx context.Context, setup SetupFunc, t Target, args []string) Attempt {
 	bin := binaries[t.Runner]
 	if _, err := runas.CurrentUserLookPath(bin); bin == "" || err != nil {
 		return Attempt{Err: &Failure{Kind: catalogue.ErrKindOther, Words: t.Runner + " is not installed"}}
@@ -77,7 +83,7 @@ func execOnce(ctx context.Context, setup SetupFunc, t Target) Attempt {
 	defer os.RemoveAll(dir)
 	cctx, cancel := context.WithTimeout(ctx, TryTimeout)
 	defer cancel()
-	cmd := runas.CurrentUserCommandContext(cctx, bin, Args(t)...)
+	cmd := runas.CurrentUserCommandContext(cctx, bin, args...)
 	cmd.Dir = dir
 	cmd.Env = probeEnv(cmd.Env)
 	if t.Runner == catalogue.RunnerOpencode || t.Runner == catalogue.RunnerKilo {
@@ -97,6 +103,9 @@ func execOnce(ctx context.Context, setup SetupFunc, t Target) Attempt {
 	runErr := cmd.Run()
 	a := Parse(t.Runner, stdout.Bytes())
 	a.Latency = time.Since(start)
+	if t.Runner == catalogue.RunnerAmp && a.Err != nil {
+		a.threadGone = threadGone(stdout.String() + "\n" + stderr.String())
+	}
 	timedOut := errors.Is(cctx.Err(), context.DeadlineExceeded)
 	a.Err = Judge(a.Err, runErr, timedOut, stderr.String())
 	return a

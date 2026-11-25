@@ -33,7 +33,8 @@ temporary directory that is deleted afterwards:
 - claude: `claude -p` with `--no-session-persistence`, no tools, no MCP
   servers, no slash commands, and a one-line system prompt.
 - codex: `codex exec --json --ephemeral --sandbox read-only`.
-- amp: `amp --stream-json -m <mode> -x`.
+- amp: every amp probe on a host continues one standing thread (see
+  [The standing amp thread](#the-standing-amp-thread)).
 - opencode and kilo: `opencode run --format json` (or `kilo run`). An opencode
   or kilo provider is defined per instance, so the probe borrows the provider
   config of the first instance the catalogue lists for that entry. It reads
@@ -44,6 +45,33 @@ temporary directory that is deleted afterwards:
   sessions are never touched.
 
 The probe never launches an instance and never touches a tmux session.
+
+### The standing amp thread
+
+Amp sends a phone notification for each new thread, so a new probe thread
+every hour can't be muted. Instead, every amp probe on a host continues one
+standing thread, titled "agentmux provider probe" and labeled
+`agentmux-probe`. Mute it once in the Amp app.
+
+- The first probe starts it with
+  `amp --stream-json -m <mode> --title ... -l agentmux-probe --no-archive-after-execute -x "[agentmux provider probe] Reply with the single word OK."`.
+  Each later probe runs
+  `amp threads continue <id> --stream-json -m <mode> --no-archive-after-execute -x ...`.
+  `--no-archive-after-execute` keeps the thread continuable, because amp can't
+  continue an archived thread.
+- The thread's id, start time and turn count are kept in
+  `~/.local/state/agentmux/amp-probe-thread.json`.
+- If amp says the thread doesn't exist or is archived, the probe starts a new
+  one in the same try.
+- A new thread is also started after 30 days or 1000 turns, whichever comes
+  first, so its context stays small. Each new thread has to be muted again.
+- Each event is logged as one line on stderr, which goes to the timer's log.
+  For example: `models probe: amp probe thread T-...: continued (turn 2)`.
+- `agentmux amp sweep` never archives a thread whose first message starts
+  with `[agentmux provider probe]`.
+- `--no-notifications` doesn't help here. It only controls local alerts (a
+  sound, or a terminal bell over SSH), and those are already off in `-x`
+  mode. The phone notification comes from Amp's servers.
 
 ## Retries and status
 
