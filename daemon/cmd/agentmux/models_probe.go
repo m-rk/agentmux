@@ -21,7 +21,7 @@ import (
 const modelsProbeUsage = "usage: agentmux models probe [-json] [-host H] [-catalogue PATH]"
 
 // runModelsProbe is `agentmux models probe`: one tiny request to each
-// provider tank this host's catalogue lists, saved for `models list`. It
+// provider tank this host's catalogue lists (for amp, only `amp usage`), saved for `models list`. It
 // probes this host only; other hosts run their own and report through
 // their gateway.
 func runModelsProbe(args []string) {
@@ -57,12 +57,10 @@ func runModelsProbe(args []string) {
 	eventsPath, evErr := usagehook.EventsPath()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	probe.RetireAmpThread(ctx, probe.AmpThreadPath(runas.CurrentUserHome()), probe.ArchiveAmpThread,
+		func(line string) { fmt.Fprintln(os.Stderr, "models probe: "+line) })
 	opts := probe.Options{
-		Try: probe.Exec(session.ProbeSetup, &probe.AmpStanding{
-			Path: probe.AmpThreadPath(runas.CurrentUserHome()),
-			Now:  time.Now,
-			Log:  func(line string) { fmt.Fprintln(os.Stderr, "models probe: "+line) },
-		}),
+		Try:     probe.Exec(session.ProbeSetup),
 		Sleep:   sleepCtx,
 		Now:     time.Now,
 		Backoff: probe.DefaultBackoff,

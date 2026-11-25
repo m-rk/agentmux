@@ -210,8 +210,7 @@ func TestParseReadsEachRunner(t *testing.T) {
 		{"claude-code", `{"type":"result","is_error":true,"result":"Invalid API key · Please run /login","session_id":"s2"}`, false, usagehook.Tokens{Requests: 1}, "s2"},
 		{"codex", "{\"type\":\"thread.started\",\"thread_id\":\"th\"}\n{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"OK\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":120,\"cached_input_tokens\":100,\"output_tokens\":5,\"reasoning_output_tokens\":3}}\n",
 			true, usagehook.Tokens{Input: 20, CacheRead: 100, Output: 5, Reasoning: 3}, "th"},
-		{"amp", "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"T-1\"}\n{\"type\":\"assistant\",\"message\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":1,\"cache_creation_input_tokens\":50}}}\n{\"type\":\"result\",\"is_error\":false,\"result\":\"OK.\"}\n",
-			true, usagehook.Tokens{Requests: 1, Input: 3, Output: 1, CacheWrite: 50}, "T-1"},
+		{"amp", "Signed in as a@example.com (a)\n**Individual credits:** $2.00 remaining\n", true, usagehook.Tokens{}, ""},
 		{"opencode", "{\"type\":\"step_start\",\"sessionID\":\"ses\"}\n{\"type\":\"text\",\"sessionID\":\"ses\",\"part\":{\"text\":\"OK\"}}\n{\"type\":\"step_finish\",\"sessionID\":\"ses\",\"part\":{\"tokens\":{\"input\":7,\"output\":1,\"reasoning\":0,\"cache\":{\"read\":2,\"write\":0}}}}\n",
 			true, usagehook.Tokens{Requests: 1, Input: 7, Output: 1, CacheRead: 2}, "ses"},
 		{"opencode", "{\"type\":\"text\",\"part\":{\"text\":\"I cannot do that\"}}\n", false, usagehook.Tokens{}, ""},
@@ -272,9 +271,6 @@ func TestArgsAreHeadlessAndToolless(t *testing.T) {
 		if !strings.Contains(codex, want) {
 			t.Errorf("codex args %q lack %q", codex, want)
 		}
-	}
-	if amp := Args(Target{Runner: "amp", Model: "rush"}); amp[0] != "--stream-json" || amp[len(amp)-2] != "-x" {
-		t.Errorf("amp args = %q", amp)
 	}
 }
 

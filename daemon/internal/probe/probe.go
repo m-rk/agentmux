@@ -59,9 +59,6 @@ type Attempt struct {
 	Session string
 	// Err is nil when the provider answered OK.
 	Err *Failure
-	// threadGone is set when amp refused to continue the standing
-	// thread because it no longer exists or is archived.
-	threadGone bool
 }
 
 // TryFunc asks a target once.

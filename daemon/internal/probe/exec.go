@@ -28,8 +28,9 @@ var binaries = map[string]string{
 	catalogue.RunnerKilo:       "kilo",
 }
 
-// Args is the command line of one try. Every runner is asked once,
-// headless, with no tools and nothing saved where agentmux looks.
+// Args is the command line of one try. Every runner but amp is asked
+// once, headless, with no tools and nothing saved where agentmux looks;
+// amp is only asked for its usage.
 func Args(t Target) []string {
 	switch t.Runner {
 	case catalogue.RunnerClaudeCode:
@@ -43,9 +44,9 @@ func Args(t Target) []string {
 		}
 		return append(a, Prompt)
 	case catalogue.RunnerAmp:
-		// --stream-json must come before -x, which takes the next word
-		// as its message (see session/amprun.go).
-		return []string{"--stream-json", "-m", t.Model, "-x", Prompt}
+		// No inference: amp pushes a phone notification for every
+		// thread turn, so amp is checked by its sign-in and credit.
+		return []string{"usage"}
 	case catalogue.RunnerOpencode, catalogue.RunnerKilo:
 		return []string{"run", "--format", "json", "-m", t.Model, Prompt}
 	}
@@ -60,18 +61,12 @@ type SetupFunc func(instance, dir string) ([]string, error)
 // directory, as the current user. opencode and kilo get the provider
 // config of the target's instance written there, and their own data and
 // state directories inside it, so the probe's session lands nowhere an
-// instance looks. With amp set, amp tries continue the host's standing
-// thread (AmpStanding) instead of starting a new one.
-func Exec(setup SetupFunc, amp *AmpStanding) TryFunc {
-	return func(ctx context.Context, t Target) Attempt {
-		if amp.isAmp(t) {
-			return amp.try(t, func(args []string) Attempt { return execOnce(ctx, setup, t, args) })
-		}
-		return execOnce(ctx, setup, t, Args(t))
-	}
+// instance looks.
+func Exec(setup SetupFunc) TryFunc {
+	return func(ctx context.Context, t Target) Attempt { return execOnce(ctx, setup, t) }
 }
 
-func execOnce(ctx context.Context, setup SetupFunc, t Target, args []string) Attempt {
+func execOnce(ctx context.Context, setup SetupFunc, t Target) Attempt {
 	bin := binaries[t.Runner]
 	if _, err := runas.CurrentUserLookPath(bin); bin == "" || err != nil {
 		return Attempt{Err: &Failure{Kind: catalogue.ErrKindOther, Words: t.Runner + " is not installed"}}
@@ -83,7 +78,7 @@ func execOnce(ctx context.Context, setup SetupFunc, t Target, args []string) Att
 	defer os.RemoveAll(dir)
 	cctx, cancel := context.WithTimeout(ctx, TryTimeout)
 	defer cancel()
-	cmd := runas.CurrentUserCommandContext(cctx, bin, args...)
+	cmd := runas.CurrentUserCommandContext(cctx, bin, Args(t)...)
 	cmd.Dir = dir
 	cmd.Env = probeEnv(cmd.Env)
 	if t.Runner == catalogue.RunnerOpencode || t.Runner == catalogue.RunnerKilo {
@@ -103,9 +98,6 @@ func execOnce(ctx context.Context, setup SetupFunc, t Target, args []string) Att
 	runErr := cmd.Run()
 	a := Parse(t.Runner, stdout.Bytes())
 	a.Latency = time.Since(start)
-	if t.Runner == catalogue.RunnerAmp && a.Err != nil {
-		a.threadGone = threadGone(stdout.String() + "\n" + stderr.String())
-	}
 	timedOut := errors.Is(cctx.Err(), context.DeadlineExceeded)
 	a.Err = Judge(a.Err, runErr, timedOut, stderr.String())
 	return a
@@ -167,7 +159,7 @@ var classes = []struct {
 	needles     []string
 }{
 	{catalogue.ErrKindQuota, "usage limit or quota reached", []string{"429", "rate limit", "rate_limit", "usage limit", "quota", "insufficient", "credit", "billing", "limit reached", "too many requests", "overloaded"}},
-	{catalogue.ErrKindAuth, "not signed in, or the login was refused", []string{"401", "403", "unauthorized", "unauthenticated", "not logged in", "log in", "login", "authentication", "api key", "invalid_api_key", "credentials", "token expired", "expired token", "forbidden", "permission denied"}},
+	{catalogue.ErrKindAuth, "not signed in, or the login was refused", []string{"401", "403", "unauthorized", "unauthenticated", "not logged in", "log in", "login", "authentication", "api key", "invalid_api_key", "credentials", "not signed in", "token expired", "expired token", "forbidden", "permission denied"}},
 	{catalogue.ErrKindNetwork, "provider unreachable over the network", []string{"econnrefused", "connection refused", "econnreset", "connection reset", "no such host", "enotfound", "dial tcp", "network", "tls handshake", "socket hang up", "could not resolve", "503", "502", "bad gateway", "service unavailable"}},
 	{catalogue.ErrKindTimeout, "the provider timed out", []string{"timed out", "timeout", "deadline exceeded", "504"}},
 }
@@ -255,47 +247,9 @@ func Parse(runner string, out []byte) Attempt {
 			}
 		})
 	case catalogue.RunnerAmp:
-		eachLine(out, func(line []byte) {
-			var r struct {
-				Type      string `json:"type"`
-				Subtype   string `json:"subtype"`
-				SessionID string `json:"session_id"`
-				IsError   bool   `json:"is_error"`
-				Result    string `json:"result"`
-				Error     string `json:"error"`
-				Message   *struct {
-					Usage   *anthropicUse `json:"usage"`
-					Content []struct {
-						Type string `json:"type"`
-						Text string `json:"text"`
-					} `json:"content"`
-				} `json:"message"`
-			}
-			if json.Unmarshal(line, &r) != nil {
-				return
-			}
-			switch r.Type {
-			case "system":
-				if r.SessionID != "" {
-					a.Session = r.SessionID
-				}
-			case "assistant":
-				if r.Message != nil && r.Message.Usage != nil {
-					u := r.Message.Usage.tokens()
-					a.Tokens.Input += u.Input
-					a.Tokens.Output += u.Output
-					a.Tokens.CacheRead += u.CacheRead
-					a.Tokens.CacheWrite += u.CacheWrite
-					a.Tokens.Requests++
-				}
-			case "result":
-				if r.IsError {
-					errText = r.Error + "\n" + r.Result
-				} else {
-					reply = r.Result
-				}
-			}
-		})
+		// `amp usage`, not a model run: see ampusage.go.
+		a.Err = parseAmpUsage(out)
+		return a
 	case catalogue.RunnerOpencode, catalogue.RunnerKilo:
 		eachLine(out, func(line []byte) {
 			var r struct {

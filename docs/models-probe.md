@@ -4,7 +4,7 @@
 config are present. That does not mean the provider answers. `agentmux models
 probe` checks that directly. It sends each provider tank on this host one tiny
 request ("Reply with the single word OK.") on its cheapest model and records
-the result.
+the result. Amp is the exception: it gets no request (see below).
 
 ```sh
 agentmux models probe [-json] [-host H] [-catalogue PATH]
@@ -19,7 +19,7 @@ on this host (`local` or the host's own name):
 |---|---|---|
 | `claude` | claude-code | `haiku`, the CLI's alias for the current Haiku |
 | `chatgpt` | codex | the cheapest codex entry, at its lowest effort |
-| `amp` | amp | the cheapest amp mode |
+| `amp` | amp | none: `amp usage` only |
 | an opencode or kilo provider (such as `ollama`) | opencode or kilo | the cheapest entry for that provider |
 
 "Cheapest" means the lowest tier (easy, then hard, then hardest), and the first
@@ -33,8 +33,14 @@ temporary directory that is deleted afterwards:
 - claude: `claude -p` with `--no-session-persistence`, no tools, no MCP
   servers, no slash commands, and a one-line system prompt.
 - codex: `codex exec --json --ephemeral --sandbox read-only`.
-- amp: every amp probe on a host continues one standing thread (see
-  [The standing amp thread](#the-standing-amp-thread)).
+- amp: `amp usage`, which runs no model and makes no thread. The Amp phone
+  app pushes a notification for every thread turn and cannot mute one
+  thread, so an hourly model run would ping the phone every hour. Amp is
+  `ok` when it says "Signed in as" and any credit balance it lists is above
+  zero. It is `down` with `auth` when it is not signed in or exits with a
+  login error, and `down` with `quota` when every balance is at or below
+  zero. The "Signed in as" line carries the account email; only the line's
+  presence is read and none of the output is kept.
 - opencode and kilo: `opencode run --format json` (or `kilo run`). An opencode
   or kilo provider is defined per instance, so the probe borrows the provider
   config of the first instance the catalogue lists for that entry. It reads
@@ -46,32 +52,11 @@ temporary directory that is deleted afterwards:
 
 The probe never launches an instance and never touches a tmux session.
 
-### The standing amp thread
-
-Amp sends a phone notification for each new thread, so a new probe thread
-every hour can't be muted. Instead, every amp probe on a host continues one
-standing thread, titled "agentmux provider probe" and labeled
-`agentmux-probe`. Mute it once in the Amp app.
-
-- The first probe starts it with
-  `amp --stream-json -m <mode> --title ... -l agentmux-probe --no-archive-after-execute -x "[agentmux provider probe] Reply with the single word OK."`.
-  Each later probe runs
-  `amp threads continue <id> --stream-json -m <mode> --no-archive-after-execute -x ...`.
-  `--no-archive-after-execute` keeps the thread continuable, because amp can't
-  continue an archived thread.
-- The thread's id, start time and turn count are kept in
-  `~/.local/state/agentmux/amp-probe-thread.json`.
-- If amp says the thread doesn't exist or is archived, the probe starts a new
-  one in the same try.
-- A new thread is also started after 30 days or 1000 turns, whichever comes
-  first, so its context stays small. Each new thread has to be muted again.
-- Each event is logged as one line on stderr, which goes to the timer's log.
-  For example: `models probe: amp probe thread T-...: continued (turn 2)`.
-- `agentmux amp sweep` never archives a thread whose first message starts
-  with `[agentmux provider probe]`.
-- `--no-notifications` doesn't help here. It only controls local alerts (a
-  sound, or a terminal bell over SSH), and those are already off in `-x`
-  mode. The phone notification comes from Amp's servers.
+Before amp was checked this way, amp probes continued one standing thread,
+named in `~/.local/state/agentmux/amp-probe-thread.json`. If that file is
+there, the next probe archives the thread (`amp threads archive`) and
+deletes the file. If archiving fails, the file stays and the next probe
+tries again.
 
 ## Retries and status
 

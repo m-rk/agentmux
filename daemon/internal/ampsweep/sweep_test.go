@@ -6,8 +6,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/m-rk/agentmux/daemon/internal/probe"
 )
 
 // fakeRunner is the test Runner: canned list/exports, recorded archives
@@ -171,22 +169,6 @@ func TestSweepKeepsYoungProbe(t *testing.T) {
 	}
 	if len(res.Candidates) != 0 {
 		t.Fatalf("young probe archived: %+v", res)
-	}
-}
-
-func TestSweepKeepsStandingProbeThread(t *testing.T) {
-	id := "T-00000000-0000-4000-8000-000000000015"
-	first := probe.AmpThreadPrefix + " " + probe.Prompt
-	f := &fakeRunner{
-		listed:  []ListedThread{listed(id, "Single word OK", 48*time.Hour, 2)},
-		exports: map[string]*ExportedThread{id: exported(id, "Single word OK", first, "idle", 48*time.Hour, 2)},
-	}
-	res, err := Sweep(context.Background(), f, nil, false, sweepNow)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Candidates) != 0 || res.Kept != 1 {
-		t.Fatalf("standing probe thread archived: %+v", res)
 	}
 }
 
