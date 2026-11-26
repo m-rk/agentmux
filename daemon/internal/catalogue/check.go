@@ -1,9 +1,10 @@
 package catalogue
 
 import (
-	"os/exec"
 	"sort"
 	"time"
+
+	"github.com/m-rk/agentmux/daemon/internal/runas"
 )
 
 // runnerBinaries maps a runner to the executable that launches it.
@@ -16,11 +17,16 @@ var runnerBinaries = map[string]string{
 }
 
 // LocalRunners reports which runners are installed on this machine, by
-// looking for their executable on PATH. It runs nothing.
+// looking for their executable the way agentmux starts them: the current
+// user's install dirs (~/.local/bin, ~/.npm-global/bin, /opt/homebrew/bin,
+// /usr/local/bin and the system dirs) ahead of PATH. A daemon or gateway
+// under launchd gets only /usr/bin:/bin:/usr/sbin:/sbin as PATH, so a plain
+// PATH lookup reported every runner on a Mac as not installed (AMUX-144).
+// It runs nothing.
 func LocalRunners() map[string]bool {
 	out := map[string]bool{}
 	for r, bin := range runnerBinaries {
-		_, err := exec.LookPath(bin)
+		_, err := runas.CurrentUserLookPath(bin)
 		out[r] = err == nil
 	}
 	return out

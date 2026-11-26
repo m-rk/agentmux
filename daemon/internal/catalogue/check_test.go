@@ -1,6 +1,8 @@
 package catalogue
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -47,5 +49,24 @@ func TestHostsSortedUnique(t *testing.T) {
 	c := Config{Offerings: []Offering{{Hosts: []string{"b", "a"}}, {Hosts: []string{"a", "c"}}}}
 	if got := strings.Join(c.Hosts(), ","); got != "a,b,c" {
 		t.Errorf("hosts = %s", got)
+	}
+}
+
+// A daemon or gateway under launchd has only the system dirs on PATH; a
+// runner installed in the user's own bin dir must still count (AMUX-144).
+func TestLocalRunnersFindsUserInstallDirsWithMinimalPath(t *testing.T) {
+	home := t.TempDir()
+	bin := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+	got := LocalRunners()
+	if !got[RunnerClaudeCode] {
+		t.Errorf("claude in ~/.local/bin was not found with launchd's PATH: %v", got)
 	}
 }
