@@ -30,8 +30,8 @@ orchestrator's shipped commit moved, builds in a temporary worktree
 and installs atomically (temp file, then rename). See AMUX-29.
 
 - agentmux: install to the pinned daemon bin (`~/.agentmux/bin`),
-  rewrite and reload the daemon, doctor and gc jobs, re-register the existing
-  gateway LaunchAgent, kickstart the daemon, then smoke
+  rewrite the daemon, doctor, gc and probe plists, reload only the ones
+  whose content changed, kickstart the daemon and gateway, then smoke
   check. mergentic: install into `~/.local/bin` and the agents local
   bin, then `--version` check. No restart: it is a CLI, not a service.
 - The ship gate: install only a commit the orchestrator recorded as
@@ -113,9 +113,36 @@ itself (the gateway adds a `warnings` list to its versions reply):
 - agentmux launchd jobs that are not running and last exited non-zero, such
   as exit 78 after a binary swap left a job pinned to the old binary.
 
-After installing agentmux, a run started by the self-update job re-registers
-that job from a detached shell a few seconds later, so the job is not left
-pinned to the replaced binary.
+### Launchd jobs and macOS background activity
+
+Every agentmux LaunchAgent (daemon, doctor, gc, probe, gateway,
+self-update, paseo update, and each instance and instance-update job)
+starts the binary through a fixed launcher:
+
+```
+/bin/sh -c 'exec "$0" "$@"' ~/.agentmux/bin/agentmux <args>
+```
+
+The shell replaces itself with agentmux, keeping the pid launchd watches.
+agentmux is ad-hoc signed, so each build has a new code identity. A job
+that started the binary directly was tied to that identity: after an update
+it failed to spawn with exit 78 until re-registered (AMUX-125), and each
+re-registration made macOS post an "App Background Activity" notification,
+one per job per update (AMUX-143). Through the launcher, launchd only sees
+`/bin/sh`, which changes only with macOS itself.
+
+An install re-registers (boots out and bootstraps) only a plist whose
+content changed, or a loaded job launchd still runs agentmux for directly.
+Otherwise it kickstarts the daemon and gateway onto the new binary and
+leaves the rest alone: the scheduled jobs and instance jobs pick the new
+binary up the next time they start.
+
+The first install with the launcher moves each existing job onto it, once,
+so that update can still notify once per job. The self-update job cannot
+reload itself from its own run: `daemon install` rewrites its plist, and the
+run then re-registers it from a detached shell a few seconds later. After
+that, the run only re-registers the self-update job if launchd still runs
+agentmux for it directly.
 
 Follow-up once this works (not here): remove the "deploy pending"
 lines and the console observer's Mac-deploy watch.

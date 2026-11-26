@@ -5,9 +5,10 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
+
+	"github.com/m-rk/agentmux/daemon/internal/launchagent"
 )
 
 // installPaseoUpdateSchedule writes and loads a per-user LaunchAgent. Like
@@ -33,13 +34,10 @@ func installPaseoUpdateSchedule(_ /*runUser*/, home, bin, at string, print bool)
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, []byte(plist), 0o644); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
-	}
+	// Only a changed plist is re-registered (AMUX-143).
 	domain := "gui/" + strconv.Itoa(os.Getuid())
-	_ = exec.Command("launchctl", "bootout", domain, path).Run() // may not be loaded yet
-	if out, err := exec.Command("launchctl", "bootstrap", domain, path).CombinedOutput(); err != nil {
-		return fmt.Errorf("launchctl bootstrap: %w: %s", err, out)
+	if _, err := launchagent.Apply(launchagent.Run, domain, path, []byte(plist)); err != nil {
+		return err
 	}
 	fmt.Printf("Installed %s at %s local time (binary: %s)\n", paseoUpdateLabel, at, bin)
 	return nil

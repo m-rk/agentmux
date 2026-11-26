@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"html"
 	"strings"
+
+	"github.com/m-rk/agentmux/daemon/internal/launchagent"
 )
 
 const (
@@ -72,6 +74,7 @@ func renderGatewayUnit(runUser, bin string, runArgs []string) string {
 
 func renderGatewayPlist(bin string, runArgs []string, logDir string) string {
 	var args strings.Builder
+	args.WriteString(launchagent.LauncherXML)
 	for _, a := range append([]string{bin}, runArgs...) {
 		fmt.Fprintf(&args, "        <string>%s</string>\n", html.EscapeString(a))
 	}

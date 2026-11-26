@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/m-rk/agentmux/daemon/internal/launchagent"
 )
 
 const (
@@ -45,7 +47,7 @@ const paseoUpdatePlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
     <string>%s</string>
     <key>ProgramArguments</key>
     <array>
-        <string>%s</string>
+` + launchagent.LauncherXML + `        <string>%s</string>
         <string>paseo</string>
         <string>update</string>
     </array>

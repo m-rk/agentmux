@@ -170,11 +170,10 @@ func selfUpdateInstallAgentmux(home string, cfg selfUpdateHostConfig, built stri
 }
 
 // selfUpdateRestartAgentmux restarts the daemon and gateway on the new
-// binary, exactly once each. Either branch fully reloads the daemon
-// (bootout+bootstrap+kickstart), so the caller then only kickstarts the
-// gateway — whose plist is never rewritten here, so a kick is enough to
-// pick up the new binary bytes at the unchanged path. Failures are
-// returned, never fatal here: the caller decides rollback.
+// binary, exactly once each, through `daemon install`: it re-registers only
+// a plist whose content changed and otherwise kickstarts the daemon and
+// gateway, so an ordinary update adds no launchd registrations (AMUX-143).
+// Failures are returned, never fatal here: the caller decides rollback.
 func selfUpdateRestartAgentmux(bin string) error {
 	self, err := os.Executable()
 	if err != nil {
@@ -185,18 +184,15 @@ func selfUpdateRestartAgentmux(bin string) error {
 		doctor = daemoninstall.DefaultDoctorTime
 	}
 	if self != bin {
-		// daemon install bootouts+bootstraps+kickstarts the daemon and
-		// reloads the doctor/gc jobs; pass the preserved doctor time so
-		// a customized schedule survives the update.
+		// daemon install restarts the daemon and gateway and rewrites
+		// the doctor/gc/probe jobs; pass the preserved doctor time so a
+		// customized schedule survives the update.
 		cmd := exec.Command(bin, "daemon", "install", "-doctor-time", doctor)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("daemon install: %w: %s", err, strings.TrimSpace(string(out)))
 		}
 	} else if err := daemoninstall.Install(doctor); err != nil {
 		return fmt.Errorf("reloading daemon: %w", err)
-	}
-	if out, err := exec.Command("launchctl", "kickstart", "-k", "gui/"+selfUpdateUID()+"/"+gatewayLabel).CombinedOutput(); err != nil {
-		return fmt.Errorf("kickstart %s: %w: %s", gatewayLabel, err, strings.TrimSpace(string(out)))
 	}
 	// Give launchd a moment to respawn before the smoke check probes.
 	time.Sleep(5 * time.Second)

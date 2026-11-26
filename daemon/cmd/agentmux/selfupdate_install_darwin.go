@@ -5,10 +5,10 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 
+	"github.com/m-rk/agentmux/daemon/internal/launchagent"
 	"github.com/m-rk/agentmux/daemon/internal/selfupdate"
 )
 
@@ -39,13 +39,10 @@ func installSelfUpdateSchedule(home, bin string, cfg selfUpdateHostConfig, print
 			return err
 		}
 	}
-	if err := os.WriteFile(path, []byte(plist), 0o644); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
-	}
+	// Only a changed plist is re-registered (AMUX-143).
 	domain := "gui/" + strconv.Itoa(os.Getuid())
-	_ = exec.Command("launchctl", "bootout", domain, path).Run() // may not be loaded yet
-	if out, err := exec.Command("launchctl", "bootstrap", domain, path).CombinedOutput(); err != nil {
-		return fmt.Errorf("launchctl bootstrap: %w: %s", err, out)
+	if _, err := launchagent.Apply(launchagent.Run, domain, path, []byte(plist)); err != nil {
+		return err
 	}
 	fmt.Printf("Installed %s every %d seconds (binary: %s, state: %s)\n", selfUpdateLabel, selfUpdateInterval, bin, selfupdate.BaseDir(home))
 	return nil

@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+
+	"github.com/m-rk/agentmux/daemon/internal/launchagent"
 )
 
 const (
@@ -17,6 +19,8 @@ const (
 	gcLabel = "com.m-rk.agentmux.gc"
 	// probeLabel is the hourly provider probe (AMUX-139).
 	probeLabel = "com.m-rk.agentmux.probe"
+	// gatewayLabel is `agentmux gateway install`'s job (cmd/agentmux).
+	gatewayLabel = "com.m-rk.agentmux.gateway"
 )
 
 const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
@@ -27,7 +31,7 @@ const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
     <string>%s</string>
     <key>ProgramArguments</key>
     <array>
-        <string>%s</string>
+` + launchagent.LauncherXML + `        <string>%s</string>
         <string>daemon</string>
         <string>run</string>
         <string>-socket</string>
@@ -53,7 +57,7 @@ const doctorPlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
     <string>%s</string>
     <key>ProgramArguments</key>
     <array>
-        <string>%s</string>
+` + launchagent.LauncherXML + `        <string>%s</string>
         <string>doctor</string>
     </array>
     <key>StartCalendarInterval</key>
@@ -81,7 +85,7 @@ const gcPlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
     <string>%s</string>
     <key>ProgramArguments</key>
     <array>
-        <string>%s</string>
+` + launchagent.LauncherXML + `        <string>%s</string>
         <string>gc</string>
     </array>
     <key>StartCalendarInterval</key>
@@ -112,7 +116,7 @@ const probePlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
     <string>%s</string>
     <key>ProgramArguments</key>
     <array>
-        <string>%s</string>
+` + launchagent.LauncherXML + `        <string>%s</string>
         <string>models</string>
         <string>probe</string>
     </array>
@@ -182,8 +186,48 @@ func launchAgentPath(agentLabel string) (string, error) {
 // backends/*/install-macos.sh, which explicitly refuse sudo), so agentmuxd
 // itself stays in the same unprivileged, per-user world — no root needed
 // anywhere in the macOS path.
+//
+// Every plist starts the binary through the /bin/sh launcher, and only a
+// plist whose content changed is booted out and back in (AMUX-143): a
+// re-registration is what macOS reports as new background activity. On an
+// ordinary update nothing is re-registered; the daemon and gateway are
+// kickstarted onto the new binary and the scheduled jobs pick it up on
+// their next run.
 func Install(doctorTime string) error {
-	if err := InstallForDeploy(doctorTime); err != nil {
+	plists, err := pinAndRender(doctorTime)
+	if err != nil {
+		return err
+	}
+	domain := "gui/" + strconv.Itoa(os.Getuid())
+	for _, p := range plists {
+		if _, err := launchagent.Apply(launchctl, domain, p.path, p.content); err != nil {
+			return err
+		}
+	}
+	if err := runCmd("launchctl", "kickstart", "-k", domain+"/"+label); err != nil {
+		return err
+	}
+	gatewayPlist, err := launchAgentPath(gatewayLabel)
+	if err != nil {
+		return err
+	}
+	if err := refreshGatewayAgent(domain, gatewayPlist); err != nil {
+		return err
+	}
+	// Every other agentmux job still starting the binary directly moves onto
+	// the launcher, once: instance jobs, their .update jobs and the
+	// self-update job (AMUX-125, AMUX-143).
+	plist, err := plistPath()
+	if err != nil {
+		return err
+	}
+	migrated, err := migrateAgentJobs(domain, filepath.Dir(plist), map[string]bool{
+		label: true, doctorLabel: true, gcLabel: true, probeLabel: true, gatewayLabel: true,
+	})
+	if len(migrated) > 0 {
+		fmt.Printf("Moved %d other launchd jobs onto the launcher\n", len(migrated))
+	}
+	if err != nil {
 		return err
 	}
 
@@ -191,147 +235,83 @@ func Install(doctorTime string) error {
 	if err != nil {
 		return err
 	}
-	plist, err := plistPath()
-	if err != nil {
-		return err
-	}
-	doctorPlist, err := doctorPlistPath()
-	if err != nil {
-		return err
-	}
-	gcPlist, err := gcPlistPath()
-	if err != nil {
-		return err
-	}
-	probePlist, err := probePlistPath()
-	if err != nil {
-		return err
-	}
-	gatewayPlist, err := launchAgentPath("com.m-rk.agentmux.gateway")
-	if err != nil {
-		return err
-	}
-
-	domain := "gui/" + strconv.Itoa(os.Getuid())
-	_ = runCmd("launchctl", "bootout", domain, plist) // ignore error: may not be loaded yet
-	if err := runCmd("launchctl", "bootstrap", domain, plist); err != nil {
-		return err
-	}
-	if err := runCmd("launchctl", "kickstart", "-k", domain+"/"+label); err != nil {
-		return err
-	}
-	_ = runCmd("launchctl", "bootout", domain, doctorPlist)
-	if err := runCmd("launchctl", "bootstrap", domain, doctorPlist); err != nil {
-		return err
-	}
-	_ = runCmd("launchctl", "bootout", domain, gcPlist)
-	if err := runCmd("launchctl", "bootstrap", domain, gcPlist); err != nil {
-		return err
-	}
-	_ = runCmd("launchctl", "bootout", domain, probePlist)
-	if err := runCmd("launchctl", "bootstrap", domain, probePlist); err != nil {
-		return err
-	}
-	// Re-register an installed gateway after replacing the binary. On macOS
-	// launchd can retain the old executable's code-signing constraint.
-	if err := reloadGatewayAgent(domain, gatewayPlist); err != nil {
-		return err
-	}
-	// The same goes for every other agentmux job still pinned to the old
-	// binary: instance jobs, their .update jobs and the self-update job.
-	// Without this they fail to spawn silently after a swap (AMUX-125).
-	agentsDir := filepath.Dir(plist)
-	reloaded, err := reloadLoadedAgentJobs(domain, agentsDir, map[string]bool{
-		label: true, doctorLabel: true, gcLabel: true, probeLabel: true, "com.m-rk.agentmux.gateway": true,
-	})
-	if len(reloaded) > 0 {
-		fmt.Printf("Re-registered %d other launchd jobs against the new binary\n", len(reloaded))
-	}
-	if err != nil {
-		return err
-	}
-
 	sock := filepath.Join(dir, "run", "agentmuxd.sock")
 	bin := filepath.Join(dir, "bin", "agentmux")
 	fmt.Printf("Installed and started %s plus %s at %s local time plus %s and %s (binary: %s, socket: %s)\n", label, doctorLabel, doctorTime, gcLabel, probeLabel, bin, sock)
 	return nil
 }
 
-func reloadGatewayAgent(domain, plist string) error {
-	if _, err := os.Stat(plist); os.IsNotExist(err) {
-		return nil
-	} else if err != nil {
-		return err
-	}
-	_ = runCmd("launchctl", "bootout", domain, plist)
-	return runCmd("launchctl", "bootstrap", domain, plist)
+// agentPlist is one rendered LaunchAgent and where it goes.
+type agentPlist struct {
+	path    string
+	content []byte
 }
 
 // InstallForDeploy pins the current binary under ~/.agentmux/bin and
-// rewrites the daemon, doctor and gc plists without loading anything, so
-// `agentmux deploy` can refresh every unit before restarting all the
-// services itself (see AMUX-24). doctorTime is still parsed, so a bad
-// value fails the same way Install would.
+// rewrites the daemon, doctor, gc and probe plists without loading
+// anything, so `agentmux deploy` can refresh every unit before restarting
+// all the services itself (see AMUX-24). doctorTime is still parsed, so a
+// bad value fails the same way Install would. An unchanged plist is not
+// rewritten.
 func InstallForDeploy(doctorTime string) error {
+	plists, err := pinAndRender(doctorTime)
+	if err != nil {
+		return err
+	}
+	for _, p := range plists {
+		if err := launchagent.WriteIfChanged(p.path, p.content); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// pinAndRender pins the current binary under ~/.agentmux/bin and renders
+// the daemon, doctor, gc and probe plists, daemon first, without writing
+// them.
+func pinAndRender(doctorTime string) ([]agentPlist, error) {
 	if os.Geteuid() == 0 {
-		return fmt.Errorf("must not be run as root/sudo on macOS; run as your normal user")
+		return nil, fmt.Errorf("must not be run as root/sudo on macOS; run as your normal user")
 	}
 
 	dir, err := agentmuxDir()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	doctorHour, doctorMinute, err := ParseDoctorTime(doctorTime)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, sub := range []string{"bin", "run", "log"} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	bin := filepath.Join(dir, "bin", "agentmux")
 	if err := installSelf(bin); err != nil {
-		return fmt.Errorf("installing binary to %s: %w", bin, err)
+		return nil, fmt.Errorf("installing binary to %s: %w", bin, err)
 	}
 
 	sock := filepath.Join(dir, "run", "agentmuxd.sock")
-	plist, err := plistPath()
-	if err != nil {
-		return err
-	}
 	logDir := filepath.Join(dir, "log")
-	content := fmt.Sprintf(plistTemplate, label, bin, sock, logDir, logDir)
-	if err := os.WriteFile(plist, []byte(content), 0o644); err != nil {
-		return fmt.Errorf("writing %s: %w", plist, err)
+	var plists []agentPlist
+	for _, r := range []struct {
+		path    func() (string, error)
+		content string
+	}{
+		{plistPath, fmt.Sprintf(plistTemplate, label, bin, sock, logDir, logDir)},
+		{doctorPlistPath, fmt.Sprintf(doctorPlistTemplate, doctorLabel, bin, doctorHour, doctorMinute, logDir, logDir)},
+		{gcPlistPath, fmt.Sprintf(gcPlistTemplate, gcLabel, bin, logDir, logDir)},
+		{probePlistPath, fmt.Sprintf(probePlistTemplate, probeLabel, bin, logDir, logDir)},
+	} {
+		path, err := r.path()
+		if err != nil {
+			return nil, err
+		}
+		plists = append(plists, agentPlist{path, []byte(r.content)})
 	}
-	doctorPlist, err := doctorPlistPath()
-	if err != nil {
-		return err
-	}
-	doctorContent := fmt.Sprintf(doctorPlistTemplate, doctorLabel, bin, doctorHour, doctorMinute, logDir, logDir)
-	if err := os.WriteFile(doctorPlist, []byte(doctorContent), 0o644); err != nil {
-		return fmt.Errorf("writing %s: %w", doctorPlist, err)
-	}
-	gcPlist, err := gcPlistPath()
-	if err != nil {
-		return err
-	}
-	gcContent := fmt.Sprintf(gcPlistTemplate, gcLabel, bin, logDir, logDir)
-	if err := os.WriteFile(gcPlist, []byte(gcContent), 0o644); err != nil {
-		return fmt.Errorf("writing %s: %w", gcPlist, err)
-	}
-	probePlist, err := probePlistPath()
-	if err != nil {
-		return err
-	}
-	probeContent := fmt.Sprintf(probePlistTemplate, probeLabel, bin, logDir, logDir)
-	if err := os.WriteFile(probePlist, []byte(probeContent), 0o644); err != nil {
-		return fmt.Errorf("writing %s: %w", probePlist, err)
-	}
-
-	return nil
+	return plists, nil
 }
 
 func Uninstall() error {

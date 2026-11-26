@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+
+	"github.com/m-rk/agentmux/daemon/internal/launchagent"
 )
 
 // installGatewayService writes and loads a per-user LaunchAgent that keeps
@@ -30,13 +32,17 @@ func installGatewayService(_ /*runUser*/, home, bin string, runArgs []string, pr
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, []byte(plist), 0o644); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
-	}
+	// Only a changed plist is re-registered (AMUX-143); an unchanged one is
+	// kickstarted so the gateway still restarts on the current binary.
 	domain := "gui/" + strconv.Itoa(os.Getuid())
-	_ = exec.Command("launchctl", "bootout", domain, path).Run() // may not be loaded yet
-	if out, err := exec.Command("launchctl", "bootstrap", domain, path).CombinedOutput(); err != nil {
-		return fmt.Errorf("launchctl bootstrap: %w: %s", err, out)
+	changed, err := launchagent.Apply(launchagent.Run, domain, path, []byte(plist))
+	if err != nil {
+		return err
+	}
+	if !changed {
+		if out, err := exec.Command("launchctl", "kickstart", "-k", domain+"/"+gatewayLabel).CombinedOutput(); err != nil {
+			return fmt.Errorf("launchctl kickstart: %w: %s", err, out)
+		}
 	}
 	fmt.Printf("Installed %s (binary: %s, logs: %s)\n", gatewayLabel, bin, logDir)
 	return nil

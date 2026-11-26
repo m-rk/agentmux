@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/m-rk/agentmux/daemon/internal/launchagent"
 	"github.com/m-rk/agentmux/daemon/internal/runas"
 )
 
@@ -38,7 +39,7 @@ const claudeCodePlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
     <string>%[1]s</string>
     <key>ProgramArguments</key>
     <array>
-        <string>%[2]s</string>
+` + launchagent.LauncherXML + `        <string>%[2]s</string>
         <string>session</string>
         <string>run</string>
         <string>--instance</string>
@@ -64,7 +65,7 @@ const claudeCodeUpdatePlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
     <string>%[1]s</string>
     <key>ProgramArguments</key>
     <array>
-        <string>%[2]s</string>
+` + launchagent.LauncherXML + `        <string>%[2]s</string>
         <string>session</string>
         <string>update</string>
         <string>--instance</string>

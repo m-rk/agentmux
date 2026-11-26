@@ -1,6 +1,10 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/m-rk/agentmux/daemon/internal/launchagent"
+)
 
 // selfUpdateLabel is the per-user LaunchAgent that pulls new main every
 // 10 minutes (AMUX-29). The com.m-rk namespace keeps it beside the
@@ -33,7 +37,7 @@ const selfUpdatePlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
     <string>%s</string>
     <key>ProgramArguments</key>
     <array>
-        <string>%s</string>
+` + launchagent.LauncherXML + `        <string>%s</string>
         <string>%s</string>
         <string>%s</string>
     </array>
