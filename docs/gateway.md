@@ -449,7 +449,14 @@ host, or one with `-host`):
 ```sh
 agentmux gc -dry-run
 agentmux gc -dry-run -host build-box
+agentmux gc -dry-run -host local
 ```
+
+`-host local` (or this machine's own name) collects this machine only and
+does not read `hosts.yaml`. The daily gc job on each host runs
+`agentmux gc -host local`: every host collects itself, so a `hosts.yaml`
+that lists other hosts never sends the job to their gateways, which refuse
+`gc` to a peer without the grant.
 
 ### Sweeping junk amp threads
 

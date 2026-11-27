@@ -47,11 +47,33 @@ func TestStuckJobWarnings(t *testing.T) {
 		t.Fatalf("parsed %d jobs, want 7: %+v", len(jobs), jobs)
 	}
 	got := StuckJobWarnings(jobs)
-	want := "3 launchd jobs failed to start and are not running: com.agentmux.beta (exit 78), com.agentmux.beta.update (exit 78), com.m-rk.agentmux.self-update (exit -9)"
+	want := "3 launchd jobs last exited non-zero and are not running: com.agentmux.beta (exit 78), com.agentmux.beta.update (exit 78), com.m-rk.agentmux.self-update (exit -9)"
 	if len(got) != 1 || got[0] != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 	if got := StuckJobWarnings(ParseLaunchctlList("PID\tStatus\tLabel\n10\t0\tcom.agentmux.a\n")); got != nil {
 		t.Errorf("healthy host warned: %v", got)
+	}
+}
+
+// A failed scheduled job says why, from the last line of its stderr log
+// (AMUX-145: the gc job's warning gave only "exit 1").
+func TestStuckJobWarningsQuoteLastError(t *testing.T) {
+	jobs := []Job{{Label: "com.m-rk.agentmux.gc", Status: 1,
+		LastErr: LastLine([]byte("collected on local\ngc on hub: forbidden: gc is not permitted\n\n"))}}
+	want := "1 launchd jobs last exited non-zero and are not running: com.m-rk.agentmux.gc (exit 1: gc on hub: forbidden: gc is not permitted)"
+	if got := StuckJobWarnings(jobs); len(got) != 1 || got[0] != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestLastLine(t *testing.T) {
+	if got := LastLine(nil); got != "" {
+		t.Errorf("empty log = %q", got)
+	}
+	long := strings.Repeat("x", 500)
+	got := LastLine([]byte("first\n" + long + "\n"))
+	if len([]rune(got)) != maxLastErr+3 || !strings.HasSuffix(got, "...") {
+		t.Errorf("long line not cut: %d runes", len([]rune(got)))
 	}
 }

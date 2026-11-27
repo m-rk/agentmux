@@ -87,6 +87,8 @@ const gcPlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
     <array>
 ` + launchagent.LauncherXML + `        <string>%s</string>
         <string>gc</string>
+        <string>-host</string>
+        <string>local</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>

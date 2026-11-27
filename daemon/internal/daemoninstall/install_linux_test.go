@@ -42,7 +42,7 @@ func TestGCSystemdSchedule(t *testing.T) {
 	for _, want := range []string{
 		"After=agentmuxd.service network-online.target",
 		"Requires=agentmuxd.service",
-		"ExecStart=/usr/local/bin/agentmux gc",
+		"ExecStart=/usr/local/bin/agentmux gc -host local\n",
 		"TimeoutStartSec=15min",
 	} {
 		if !strings.Contains(service, want) {

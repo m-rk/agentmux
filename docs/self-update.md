@@ -111,7 +111,10 @@ itself (the gateway adds a `warnings` list to its versions reply):
 - an installed commit that differs from the shipped one for more than 30
   minutes (the age is when `shipped.json` was last written);
 - agentmux launchd jobs that are not running and last exited non-zero, such
-  as exit 78 after a binary swap left a job pinned to the old binary.
+  as exit 78 after a binary swap left a job pinned to the old binary, or a
+  scheduled job (doctor, gc, probe) whose last run failed. Each job is
+  followed by the last line of its own stderr log, when the host can read
+  it, so the warning says why.
 
 ### Launchd jobs and macOS background activity
 

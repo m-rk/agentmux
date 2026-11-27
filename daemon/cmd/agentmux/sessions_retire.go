@@ -117,6 +117,34 @@ func failRetire(jsonOut bool, addr string, reason, detail any) {
 // shown to the operator for approval. The -run-user selects whose amp
 // account and swept records the local sweep pass uses (default:
 // auto-detected like doctor). Exit 0 done, 1 failed, 2 usage.
+// gcHosts picks the hosts gc collects. "local" (or this machine's own
+// name) is this machine alone, without reading hosts.yaml: the daily gc
+// job on each host collects only itself (AMUX-145). A hosts.yaml that
+// lists other hosts must not make that job reach their gateways, which
+// refuse gc to a peer and failed the job every day.
+func gcHosts(host, hostsPath, socketPath string) ([]hostsconfig.Host, error) {
+	if host == "local" || host == address.LocalHostName() {
+		return []hostsconfig.Host{{Name: "local", Address: "unix://" + socketPath}}, nil
+	}
+	hosts, err := loadHosts(hostsPath, socketPath)
+	if err != nil {
+		return nil, err
+	}
+	if host == "all" {
+		return hosts, nil
+	}
+	var filtered []hostsconfig.Host
+	for _, h := range hosts {
+		if h.Name == host {
+			filtered = append(filtered, h)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil, fmt.Errorf("host %q not found", host)
+	}
+	return filtered, nil
+}
+
 func runGCCmd(args []string) {
 	fs := flag.NewFlagSet("gc", flag.ExitOnError)
 	jsonOut := fs.Bool("json", false, "print machine-readable JSON")
@@ -124,27 +152,15 @@ func runGCCmd(args []string) {
 	runUser := fs.String("run-user", "", "OS user whose amp account the local sweep pass uses (default: auto-detected like doctor)")
 	socketPath := fs.String("socket", daemoninstall.SocketPath(), "Unix socket of the local agentmuxd")
 	hostsPath := fs.String("hosts", hostsconfig.DefaultPath(), "hosts.yaml listing agentmuxd hosts to connect to")
-	host := fs.String("host", "all", "host to collect (a name from hosts.yaml, \"local\", or \"all\")")
+	host := fs.String("host", "all", "host to collect (a name from hosts.yaml, \"local\" for this machine only, or \"all\")")
 	fs.Parse(args)
 	if fs.NArg() != 0 {
 		fmt.Fprintln(os.Stderr, "usage: agentmux gc [-json] [-dry-run] [-run-user USER] [-socket PATH] [-hosts PATH] [-host NAME]")
 		os.Exit(2)
 	}
-	hosts, err := loadHosts(*hostsPath, *socketPath)
+	hosts, err := gcHosts(*host, *hostsPath, *socketPath)
 	if err != nil {
 		log.Fatalf("gc: %v", err)
-	}
-	if *host != "all" {
-		var filtered []hostsconfig.Host
-		for _, h := range hosts {
-			if h.Name == *host {
-				filtered = append(filtered, h)
-			}
-		}
-		if len(filtered) == 0 {
-			log.Fatalf("gc: host %q not found", *host)
-		}
-		hosts = filtered
 	}
 	type hostResult struct {
 		host string

@@ -71,7 +71,7 @@ Requires=agentmuxd.service
 
 [Service]
 Type=oneshot
-ExecStart=%s gc
+ExecStart=%s gc -host local
 TimeoutStartSec=15min
 `
 

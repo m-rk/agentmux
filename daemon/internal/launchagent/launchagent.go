@@ -91,6 +91,40 @@ func ProgramArguments(plist []byte) []string {
 	}
 }
 
+// StringValue returns the <string> value right after <key>name</key> in a
+// plist, such as StandardErrorPath, or "" when there is none.
+func StringValue(plist []byte, name string) string {
+	dec := xml.NewDecoder(bytes.NewReader(plist))
+	dec.Strict = false
+	afterKey := false
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return ""
+		}
+		t, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if t.Name.Local == "key" {
+			var k string
+			if dec.DecodeElement(&k, &t) != nil {
+				return ""
+			}
+			afterKey = strings.TrimSpace(k) == name
+			continue
+		}
+		if afterKey && t.Name.Local == "string" {
+			var v string
+			if dec.DecodeElement(&v, &t) != nil {
+				return ""
+			}
+			return strings.TrimSpace(v)
+		}
+		afterKey = false
+	}
+}
+
 // RunsAgentmuxDirectly reports whether a plist starts the agentmux binary
 // itself rather than through the launcher.
 func RunsAgentmuxDirectly(plist []byte) bool {

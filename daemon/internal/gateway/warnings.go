@@ -2,11 +2,15 @@ package gateway
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
+	"github.com/m-rk/agentmux/daemon/internal/launchagent"
 	"github.com/m-rk/agentmux/daemon/internal/selfupdate"
 )
 
@@ -43,5 +47,45 @@ func ListLaunchdJobs() []selfupdate.Job {
 	if err != nil {
 		return nil
 	}
-	return selfupdate.ParseLaunchctlList(string(out))
+	jobs := selfupdate.ParseLaunchctlList(string(out))
+	home, _ := os.UserHomeDir()
+	for i, j := range jobs {
+		if !j.Running && j.Status != 0 && home != "" {
+			jobs[i].LastErr = jobLastErr(filepath.Join(home, "Library", "LaunchAgents"), j.Label)
+		}
+	}
+	return jobs
+}
+
+// lastErrBytes is how much of a job's stderr log is read for its last line.
+const lastErrBytes = 4096
+
+// jobLastErr is the last line of a launchd job's stderr log, found through
+// its plist's StandardErrorPath in agentsDir, or "" when either is missing.
+// Only agentmux-owned labels are looked up.
+func jobLastErr(agentsDir, label string) string {
+	if !strings.HasPrefix(label, "com.agentmux.") && !strings.HasPrefix(label, "com.m-rk.agentmux.") {
+		return ""
+	}
+	if strings.ContainsAny(label, "/\\") {
+		return ""
+	}
+	plist, err := os.ReadFile(filepath.Join(agentsDir, label+".plist"))
+	if err != nil {
+		return ""
+	}
+	path := launchagent.StringValue(plist, "StandardErrorPath")
+	if path == "" {
+		return ""
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	if st, err := f.Stat(); err == nil && st.Size() > lastErrBytes {
+		_, _ = f.Seek(st.Size()-lastErrBytes, io.SeekStart)
+	}
+	b, _ := io.ReadAll(io.LimitReader(f, lastErrBytes))
+	return selfupdate.LastLine(b)
 }

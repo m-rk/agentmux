@@ -48,6 +48,29 @@ type Job struct {
 	Label   string
 	Running bool // a PID is shown
 	Status  int  // last exit status, or the negated signal
+	// LastErr is the last line of the job's own stderr log, when it could
+	// be read: why the last run failed (AMUX-145).
+	LastErr string
+}
+
+// maxLastErr bounds the stderr line quoted in a warning.
+const maxLastErr = 200
+
+// LastLine is the last non-empty line of a log, cut to a warning-sized
+// length.
+func LastLine(log []byte) string {
+	lines := strings.Split(strings.TrimRight(string(log), "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if r := []rune(line); len(r) > maxLastErr {
+			line = string(r[:maxLastErr]) + "..."
+		}
+		return line
+	}
+	return ""
 }
 
 // ParseLaunchctlList parses `launchctl list` output: a header line, then
@@ -70,8 +93,10 @@ func ParseLaunchctlList(out string) []Job {
 
 // StuckJobWarnings names agentmux-owned launchd jobs that are not running and
 // last exited non-zero, such as exit 78 (EX_CONFIG) after a binary swap left
-// the job pinned to the old code signature (AMUX-125). It is one line, so a
-// host with forty stuck jobs doesn't bury the rest of the output.
+// the job pinned to the old code signature (AMUX-125), or a scheduled job
+// whose last run failed. It is one line, so a host with forty stuck jobs
+// doesn't bury the rest of the output; each job's last stderr line, when
+// known, says why.
 func StuckJobWarnings(jobs []Job) []string {
 	var stuck []string
 	for _, j := range jobs {
@@ -79,12 +104,16 @@ func StuckJobWarnings(jobs []Job) []string {
 			continue
 		}
 		if strings.HasPrefix(j.Label, "com.agentmux.") || strings.HasPrefix(j.Label, "com.m-rk.agentmux.") {
-			stuck = append(stuck, fmt.Sprintf("%s (exit %d)", j.Label, j.Status))
+			if j.LastErr != "" {
+				stuck = append(stuck, fmt.Sprintf("%s (exit %d: %s)", j.Label, j.Status, j.LastErr))
+			} else {
+				stuck = append(stuck, fmt.Sprintf("%s (exit %d)", j.Label, j.Status))
+			}
 		}
 	}
 	if len(stuck) == 0 {
 		return nil
 	}
 	sort.Strings(stuck)
-	return []string{fmt.Sprintf("%d launchd jobs failed to start and are not running: %s", len(stuck), strings.Join(stuck, ", "))}
+	return []string{fmt.Sprintf("%d launchd jobs last exited non-zero and are not running: %s", len(stuck), strings.Join(stuck, ", "))}
 }

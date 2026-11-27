@@ -213,3 +213,26 @@ func TestWriteIfChangedKeepsUnchangedFile(t *testing.T) {
 		t.Errorf("content = %q", got)
 	}
 }
+
+func TestStringValue(t *testing.T) {
+	plist := []byte(`<plist version="1.0"><dict>
+    <key>Label</key>
+    <string>com.example.job</string>
+    <key>ProgramArguments</key>
+    <array><string>/opt/agentmux/bin/agentmux</string></array>
+    <key>StandardErrorPath</key>
+    <string>/var/empty/log/job.err.log</string>
+</dict></plist>`)
+	if got := StringValue(plist, "StandardErrorPath"); got != "/var/empty/log/job.err.log" {
+		t.Errorf("StandardErrorPath = %q", got)
+	}
+	if got := StringValue(plist, "Label"); got != "com.example.job" {
+		t.Errorf("Label = %q", got)
+	}
+	if got := StringValue(plist, "ProgramArguments"); got != "" {
+		t.Errorf("ProgramArguments (an array) = %q, want empty", got)
+	}
+	if got := StringValue(plist, "Missing"); got != "" {
+		t.Errorf("Missing = %q", got)
+	}
+}

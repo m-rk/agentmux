@@ -61,3 +61,18 @@ func TestLaunchAgentsUseLauncher(t *testing.T) {
 		}
 	}
 }
+
+// The daily gc job collects this host only: a hosts.yaml listing other
+// hosts must not send it to their gateways, which refuse gc (AMUX-145).
+func TestGCJobCollectsLocalHostOnly(t *testing.T) {
+	plist := fmt.Sprintf(gcPlistTemplate, gcLabel, "/opt/agentmux/bin/agentmux", "/var/empty/log", "/var/empty/log")
+	argv := launchagent.ProgramArguments([]byte(plist))
+	if !launchagent.Launched(argv) {
+		t.Fatalf("gc job does not use the launcher: %q", argv)
+	}
+	got := argv[3:]
+	want := []string{"/opt/agentmux/bin/agentmux", "gc", "-host", "local"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("gc job args = %q, want %q", got, want)
+	}
+}
