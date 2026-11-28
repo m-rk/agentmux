@@ -19,7 +19,6 @@ import (
 )
 
 const (
-	paseoUnit             = "paseo-daemon.service"
 	defaultPaseoUpdateAt  = "04:00"
 	defaultPaseoUpdateBin = "/usr/local/bin/agentmux"
 )

@@ -655,10 +655,10 @@ func ensureClaudeAuthNotified(name, runUser, displayName string) {
 
 	switch {
 	case expired && !notifiedExpired:
-		notify(fmt.Sprintf("🔴 %s: Claude Code's refresh token has expired — the session will stop working on its next token refresh. Re-authenticate with: agentmux auth login -instance %s", displayName, name))
+		notify(fmt.Sprintf("🔴 %s: Claude Code's refresh token has expired — the session will stop working on its next token refresh. Re-authenticate with: agentmux auth login -instance %s -force", displayName, name))
 		_ = SetRegistryField(name, "AGENTMUX_AUTH_NOTIFIED_EXPIRED", "true")
 	case expiringSoon && !notifiedSoon:
-		notify(fmt.Sprintf("🟡 %s: Claude Code's refresh token expires %s — re-authenticate soon with `agentmux auth login -instance %s` to avoid an interruption.", displayName, status.RefreshExpiresAt.Format(time.RFC1123), name))
+		notify(fmt.Sprintf("🟡 %s: Claude Code's refresh token expires %s — re-authenticate soon with `agentmux auth login -instance %s -force` to avoid an interruption.", displayName, status.RefreshExpiresAt.Format(time.RFC1123), name))
 		_ = SetRegistryField(name, "AGENTMUX_AUTH_NOTIFIED_EXPIRING", "true")
 	case !expired && !expiringSoon:
 		// Healthy again (e.g. the user re-authenticated) — clear both
